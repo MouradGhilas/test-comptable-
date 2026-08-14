@@ -1,0 +1,17 @@
+# Données comptables — ne doivent jamais être versionnées
+donnees/
+donnees_*/
+configuration.json
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Système
+.DS_Store
+Thumbs.db
