@@ -1,0 +1,77 @@
+{
+  "_avertissement": "IMPORTANT — Les taux et barèmes ci-dessous sont des VALEURS PAR DÉFAUT destinées à faire fonctionner l'application. La fiscalité algérienne est modifiée chaque année par la loi de finances. Le comptable DOIT vérifier et ajuster ces paramètres pour chaque exercice dans l'écran « Paramètres > Fiscalité » avant d'établir une déclaration. L'application ne fait aucune mise à jour automatique.",
+  "_usage": "Chaque valeur exprimée en pourcentage est en CENTIÈMES DE POUR-CENT (19 % => 1900 ; 1,5 % => 150). Les montants sont en centimes de dinar (1 000 DA => 100000).",
+
+  "annees": {
+
+    "2024": {
+      "_libelle": "Paramètres par défaut — à valider avec la loi de finances applicable",
+
+      "tva_taux_normal":            {"valeur": 1900, "unite": "pourcentage", "libelle": "TVA — taux normal", "source": "Code des TCA"},
+      "tva_taux_reduit":            {"valeur": 900,  "unite": "pourcentage", "libelle": "TVA — taux réduit", "source": "Code des TCA"},
+      "tva_taux_zero":              {"valeur": 0,    "unite": "pourcentage", "libelle": "TVA — exonéré / 0 %", "source": "Code des TCA"},
+
+      "tap_applicable":             {"valeur": 0,    "unite": "booleen",     "libelle": "TAP applicable cet exercice ?", "source": "À VÉRIFIER : la TAP a fait l'objet de suppressions/aménagements successifs (LF 2022 et suivantes). Mettre 1 et renseigner le taux si elle s'applique encore à votre activité."},
+      "tap_taux":                   {"valeur": 0,    "unite": "pourcentage", "libelle": "TAP — taux", "source": "À renseigner selon la loi de finances en vigueur"},
+      "tap_refaction":              {"valeur": 0,    "unite": "pourcentage", "libelle": "TAP — réfaction sur la base", "source": "À renseigner le cas échéant"},
+
+      "ibs_production":             {"valeur": 1900, "unite": "pourcentage", "libelle": "IBS — production de biens", "source": "Art. 150 CIDTA"},
+      "ibs_btph_tourisme":          {"valeur": 2300, "unite": "pourcentage", "libelle": "IBS — bâtiment, travaux publics et hydraulique / tourisme", "source": "Art. 150 CIDTA — régime généralement applicable à la promotion immobilière"},
+      "ibs_autres":                 {"valeur": 2600, "unite": "pourcentage", "libelle": "IBS — commerce et services", "source": "Art. 150 CIDTA — régime généralement applicable à l'agence immobilière"},
+      "ibs_acompte_taux":           {"valeur": 3000, "unite": "pourcentage", "libelle": "IBS — taux de chaque acompte provisionnel", "source": "3 acomptes de 30 % assis sur le bénéfice de l'exercice précédent"},
+      "ibs_minimum":                {"valeur": 1000000, "unite": "montant",  "libelle": "IBS — minimum d'imposition (DA × 100)", "source": "À VÉRIFIER selon la loi de finances"},
+
+      "cnas_part_salariale":        {"valeur": 900,  "unite": "pourcentage", "libelle": "CNAS — part salariale", "source": "Cotisation de sécurité sociale"},
+      "cnas_part_patronale":        {"valeur": 2600, "unite": "pourcentage", "libelle": "CNAS — part patronale", "source": "Cotisation de sécurité sociale"},
+      "oeuvres_sociales":           {"valeur": 0,    "unite": "pourcentage", "libelle": "Fonds des œuvres sociales (si applicable)", "source": "Convention d'entreprise"},
+
+      "irg_abattement_taux":        {"valeur": 4000, "unite": "pourcentage", "libelle": "IRG salaires — taux d'abattement", "source": "À VÉRIFIER"},
+      "irg_abattement_min_mois":    {"valeur": 100000, "unite": "montant",   "libelle": "IRG salaires — abattement mensuel minimum", "source": "À VÉRIFIER"},
+      "irg_abattement_max_mois":    {"valeur": 150000, "unite": "montant",   "libelle": "IRG salaires — abattement mensuel maximum", "source": "À VÉRIFIER"},
+      "irg_seuil_exoneration":      {"valeur": 3000000, "unite": "montant",  "libelle": "IRG salaires — salaire mensuel en deçà duquel il n'y a pas d'IRG", "source": "À VÉRIFIER"},
+      "irg_bareme_mensuel": {
+        "unite": "bareme",
+        "libelle": "IRG salaires — barème mensuel progressif (tranches en centimes, taux en centièmes de %)",
+        "source": "À VÉRIFIER ET ADAPTER à la loi de finances de l'exercice",
+        "tranches": [
+          {"plafond": 2000000,   "taux": 0},
+          {"plafond": 4000000,   "taux": 2300},
+          {"plafond": 8000000,   "taux": 2700},
+          {"plafond": 16000000,  "taux": 3000},
+          {"plafond": 32000000,  "taux": 3300},
+          {"plafond": null,      "taux": 3500}
+        ]
+      },
+
+      "timbre_taux":                {"valeur": 100,  "unite": "pourcentage", "libelle": "Droit de timbre sur paiements en espèces", "source": "Code du timbre — à vérifier"},
+      "timbre_minimum":             {"valeur": 500,  "unite": "montant",     "libelle": "Droit de timbre — minimum par quittance", "source": "Code du timbre — à vérifier"},
+      "timbre_seuil_espece":        {"valeur": 0,    "unite": "montant",     "libelle": "Seuil au-delà duquel le timbre s'applique", "source": ""},
+
+      "irg_location_habitation":    {"valeur": 700,  "unite": "pourcentage", "libelle": "IRG locatif — location à usage d'habitation", "source": "Art. 42 CIDTA — À VÉRIFIER"},
+      "irg_location_commercial":    {"valeur": 1500, "unite": "pourcentage", "libelle": "IRG locatif — location à usage commercial/professionnel", "source": "Art. 42 CIDTA — À VÉRIFIER"},
+
+      "g50_jour_limite":            {"valeur": 20,   "unite": "jour",        "libelle": "G50 — jour limite de dépôt du mois suivant", "source": "Art. 76 Code des TCA"},
+      "bilan_date_limite":          {"valeur": "04-30", "unite": "texte",    "libelle": "Liasse fiscale — date limite de dépôt", "source": "Art. 151 CIDTA"},
+      "das_date_limite":            {"valeur": "04-30", "unite": "texte",    "libelle": "Déclaration annuelle des salaires — date limite", "source": "À VÉRIFIER"},
+      "cnas_jour_limite":           {"valeur": 30,   "unite": "jour",        "libelle": "Déclaration CNAS — jour limite du mois suivant", "source": "À VÉRIFIER"}
+    }
+  },
+
+  "commissions_usuelles": {
+    "_note": "Valeurs de départ paramétrables par dossier, sans valeur réglementaire.",
+    "vente_taux_defaut":        {"valeur": 200, "unite": "pourcentage", "libelle": "Commission agence sur vente (% du prix)"},
+    "location_honoraires_mois": {"valeur": 1000, "unite": "millieme",    "libelle": "Honoraires d'entremise location (en millièmes de mois de loyer : 1000 = 1 mois)"},
+    "gestion_taux_defaut":      {"valeur": 500, "unite": "pourcentage", "libelle": "Honoraires de gestion locative (% du loyer encaissé)"}
+  },
+
+  "echeances_annuelles": [
+    {"code": "g50",          "libelle": "Déclaration mensuelle G n° 50", "periodicite": "mensuelle", "jour": 20, "decalage_mois": 1},
+    {"code": "cnas_dsm",     "libelle": "Déclaration de cotisations CNAS", "periodicite": "mensuelle", "jour": 30, "decalage_mois": 1},
+    {"code": "ibs_acompte1", "libelle": "1er acompte provisionnel IBS (30 %)", "periodicite": "annuelle", "date": "03-20"},
+    {"code": "ibs_acompte2", "libelle": "2e acompte provisionnel IBS (30 %)", "periodicite": "annuelle", "date": "06-20"},
+    {"code": "ibs_acompte3", "libelle": "3e acompte provisionnel IBS (30 %)", "periodicite": "annuelle", "date": "11-20"},
+    {"code": "bilan",        "libelle": "Dépôt de la liasse fiscale (bilan) et solde IBS", "periodicite": "annuelle", "date": "04-30"},
+    {"code": "das",          "libelle": "Déclaration annuelle des salaires (DAS)", "periodicite": "annuelle", "date": "04-30"},
+    {"code": "cnas_dac",     "libelle": "Déclaration annuelle des salaires CNAS (DAS/DAC)", "periodicite": "annuelle", "date": "01-31"}
+  ]
+}

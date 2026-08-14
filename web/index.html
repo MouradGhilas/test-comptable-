@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cabinet Immo — Comptabilité agence & promotion immobilières</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏢</text></svg>">
+</head>
+<body>
+
+<div id="chargement" class="ecran-chargement">
+  <div class="logo-grand">🏢</div>
+  <div>Cabinet Immo</div>
+  <div class="petit">Chargement…</div>
+</div>
+
+<!-- Écran de connexion / installation -->
+<div id="ecran-auth" class="ecran-auth" hidden>
+  <div class="carte-auth">
+    <div class="entete-auth">
+      <div class="logo-grand">🏢</div>
+      <h1>Cabinet Immo</h1>
+      <p>Comptabilité — agence immobilière &amp; promotion immobilière</p>
+      <p class="petit">Système Comptable Financier algérien · données 100 % locales</p>
+    </div>
+    <div id="zone-auth"></div>
+  </div>
+</div>
+
+<!-- Application -->
+<div id="application" class="application" hidden>
+
+  <aside class="barre-laterale">
+    <div class="marque">
+      <span class="logo">🏢</span>
+      <div>
+        <strong>Cabinet Immo</strong>
+        <span class="petit" id="version-app"></span>
+      </div>
+    </div>
+
+    <div class="selecteur-dossier">
+      <label class="petit">Dossier</label>
+      <select id="choix-societe"></select>
+      <label class="petit">Exercice</label>
+      <select id="choix-exercice"></select>
+    </div>
+
+    <nav id="menu"></nav>
+
+    <div class="pied-laterale">
+      <div id="info-utilisateur" class="petit"></div>
+      <button class="lien-discret" id="bouton-theme" title="Basculer le thème">◐ Thème</button>
+      <button class="lien-discret" id="bouton-deconnexion">Se déconnecter</button>
+    </div>
+  </aside>
+
+  <main class="zone-principale">
+    <header class="barre-haute">
+      <div>
+        <h1 id="titre-page">Tableau de bord</h1>
+        <div class="fil-ariane petit" id="sous-titre-page"></div>
+      </div>
+      <div class="actions-haut" id="actions-page"></div>
+    </header>
+    <div class="contenu" id="contenu"></div>
+  </main>
+</div>
+
+<div id="notifications" class="notifications"></div>
+<div id="fenetre" class="fond-modale" hidden><div class="modale" id="corps-modale"></div></div>
+
+<script src="/noyau.js"></script>
+<script src="/pages-base.js"></script>
+<script src="/pages-compta.js"></script>
+<script src="/pages-agence.js"></script>
+<script src="/pages-promotion.js"></script>
+<script src="/pages-fisc.js"></script>
+<script src="/demarrage.js"></script>
+</body>
+</html>
