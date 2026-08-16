@@ -44,7 +44,14 @@ async function vueG50(zone, route) {
       <div class="pile"><span class="petit">Statut</span>${etiquette(enr?.statut || 'brouillon')}</div>
     </div>
 
-    ${(d.avertissements || []).map((a) => `<div class="message alerte">${ech(a)}</div>`).join('')}
+    ${bandeauPerimetre('declare',
+      "Une déclaration ne peut porter que sur les opérations déclarées.")}
+    ${d.hors_declaration && d.hors_declaration.nb_ecritures ? `
+      <div class="message alerte"><strong>Hors de cette déclaration</strong>
+        ${d.hors_declaration.nb_ecritures} opération(s) marquée(s) « hors déclaration »
+        sur la période, pour ${fm(d.hors_declaration.produits, true)} de produits.
+        Elles ne sont pas reprises ci-dessous.</div>` : ''}
+    ${(d.avertissements || []).map((a) => `<div class="message info">${ech(a)}</div>`).join('')}
 
     <div class="grille c4" style="margin-bottom:16px">
       ${indicateur('TVA à payer', fm(d.tva_a_payer, true))}
@@ -194,6 +201,11 @@ async function vueIbs(zone, route) {
     `<tr class="${gras ? 'total' : ''}"><td>${libelle}</td><td class="num">${fm(valeur)}</td></tr>`;
 
   zone.innerHTML = `
+    ${bandeauPerimetre('declare', "L'IBS est assis sur le résultat déclaré.")}
+    ${d.hors_declaration && d.hors_declaration.nb_ecritures ? `
+      <div class="message alerte">${d.hors_declaration.nb_ecritures} opération(s)
+        hors déclaration sur l'exercice (${fm(d.hors_declaration.produits, true)} de
+        produits) ne sont pas comprises dans ce calcul.</div>` : ''}
     <div class="grille c4" style="margin-bottom:16px">
       ${indicateur('Résultat comptable', fm(d.resultat_comptable, true))}
       ${indicateur('Résultat fiscal', fm(d.resultat_fiscal, true))}

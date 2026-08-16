@@ -572,6 +572,10 @@ def api_genere_quittances(ctx):
         "AND date_debut <= ? AND (date_fin IS NULL OR date_fin >= ?)",
         (societe_id, fin_periode, debut_periode),
     )
+    perimetre_defaut = compta.normalise_perimetre(
+        ctx.champ("perimetre"),
+        db.valeur("SELECT perimetre_defaut FROM societes WHERE id = ?",
+                  (societe_id,), "declare"))
     creees, ignorees = 0, 0
     with db.transaction():
         for bail in baux:
@@ -603,7 +607,8 @@ def api_genere_quittances(ctx):
                 "tva_honoraires": tva_honoraires,
                 "net_proprietaire": total - honoraires_ht - tva_honoraires,
                 "montant_encaisse": 0, "montant_reverse": 0,
-                "statut": "a_encaisser", "cree_le": util.maintenant(),
+                "statut": "a_encaisser", "perimetre": perimetre_defaut,
+                "cree_le": util.maintenant(),
             })
             creees += 1
         db.trace("generation", "quittances", None,
@@ -688,6 +693,7 @@ def api_encaisse_quittance(ctx):
             q["societe_id"], _journal(tresorerie), date, libelle, lignes,
             piece=q["numero"], module="agence", source_type="quittance",
             source_id=identifiant, utilisateur=ctx.nom_utilisateur,
+            perimetre=ctx.champ("perimetre") or q["perimetre"],
         )
         db.modifie("quittances", identifiant, {
             "montant_encaisse": solde_apres,
@@ -764,6 +770,7 @@ def api_reverse_proprietaire(ctx):
             ],
             piece=util.nettoie(ctx.champ("reference")), module="agence",
             source_type="reversement", utilisateur=ctx.nom_utilisateur,
+            perimetre=ctx.champ("perimetre"),
         )
         for q in quittances:
             if q["_a_reverser"] > 0:

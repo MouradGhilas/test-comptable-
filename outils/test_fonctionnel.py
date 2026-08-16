@@ -122,7 +122,7 @@ def equilibre_general(societe_id):
 def executer():
     from modules import (systeme, comptabilite as compta, tiers as mod_tiers,
                          facturation, agence, promotion, fiscalite, paie,
-                         immobilisations, etats, tresorerie)
+                         immobilisations, etats, tresorerie)  # noqa: F401
 
     titre("1. Utilitaires monétaires")
     verifie("Conversion « 1 234,56 » → 123456 centimes",
@@ -635,7 +635,82 @@ def executer():
     except ErreurApplicative as err:
         verifie("Écriture refusée sur exercice clôturé", "clôturé" in str(err))
 
-    titre("18. Sauvegarde et intégrité")
+    titre("18. Déclaré / hors déclaration")
+    # On repart d'un exercice ouvert : 2027, créé à la clôture ci-dessus.
+    with db.transaction():
+        compta.enregistre_ecriture(
+            societe_id, "VE", "2027-02-10", "Commission encaissée — déclarée", [
+                {"compte": "4112", "debit": 11900000, "credit": 0, "tiers_id": acheteur_id},
+                {"compte": "7061", "debit": 0, "credit": 10000000},
+                {"compte": "4457", "debit": 0, "credit": 1900000},
+            ], utilisateur="test", perimetre="declare")
+        compta.enregistre_ecriture(
+            societe_id, "CA", "2027-02-12", "Commission encaissée — hors déclaration", [
+                {"compte": "531", "debit": 5000000, "credit": 0},
+                {"compte": "7061", "debit": 0, "credit": 5000000},
+            ], utilisateur="test", perimetre="hors_declaration")
+
+    declare = compta.solde_compte(societe_id, "7061", "2027-01-01", "2027-12-31",
+                                  perimetre="declare")
+    hors = compta.solde_compte(societe_id, "7061", "2027-01-01", "2027-12-31",
+                               perimetre="hors_declaration")
+    tous = compta.solde_compte(societe_id, "7061", "2027-01-01", "2027-12-31")
+    verifie("Produits déclarés isolés", declare["credit"] == 10000000,
+            util.formate_montant(declare["credit"]))
+    verifie("Produits hors déclaration isolés", hors["credit"] == 5000000,
+            util.formate_montant(hors["credit"]))
+    verifie("Vue réelle = somme des deux", tous["credit"] == 15000000,
+            util.formate_montant(tous["credit"]))
+
+    g50_2027 = fiscalite.calcule_g50(societe_id, "2027-02")
+    verifie("La G50 ne retient que la TVA déclarée",
+            g50_2027["tva_collectee"] == 1900000,
+            util.formate_montant(g50_2027["tva_collectee"]))
+    verifie("La G50 signale ce qui en est exclu",
+            g50_2027["hors_declaration"]["nb_ecritures"] == 1
+            and g50_2027["hors_declaration"]["produits"] == 5000000,
+            str(g50_2027["hors_declaration"]))
+    verifie("La G50 déclare son périmètre", g50_2027["perimetre"] == "declare")
+
+    bilan_declare = etats.construit_bilan(societe_id, "2027-01-01", "2027-12-31",
+                                          perimetre="declare")
+    bilan_reel = etats.construit_bilan(societe_id, "2027-01-01", "2027-12-31")
+    verifie("Bilan déclaré équilibré", bilan_declare["equilibre"],
+            util.formate_montant(bilan_declare["ecart"]))
+    verifie("Bilan réel équilibré", bilan_reel["equilibre"],
+            util.formate_montant(bilan_reel["ecart"]))
+    verifie("Le résultat réel dépasse le résultat déclaré",
+            bilan_reel["resultat"] > bilan_declare["resultat"],
+            f"{util.formate_montant(bilan_reel['resultat'])} vs "
+            f"{util.formate_montant(bilan_declare['resultat'])}")
+
+    titre("19. Résumé envoyé au dirigeant")
+    from modules import rapports
+    resume = rapports.construit_resume(societe_id)
+    verifie("Résumé calculé", resume["societe"] and "tresorerie" in resume)
+    texte = rapports.resume_en_texte(resume, False)
+    verifie("Résumé lisible sur téléphone",
+            "TRÉSORERIE" in texte and "DA" in texte and len(texte) < 4000,
+            f"{len(texte)} caractères")
+    verifie("Pas de devise en double dans le résumé", "DA DA" not in texte)
+    resume_reel = rapports.construit_resume(societe_id, None, jour="2027-02-15")
+    resume_declare = rapports.construit_resume(societe_id, "declare", jour="2027-02-15")
+    verifie("Le résumé respecte le périmètre demandé",
+            resume_declare["chiffre_affaires"] == 10000000
+            and resume_reel["chiffre_affaires"] == 15000000,
+            f"déclaré {resume_declare['chiffre_affaires']} / "
+            f"réel {resume_reel['chiffre_affaires']}")
+
+    titre("20. Migration de schéma")
+    verifie("Base au dernier schéma", db.version_schema() == db.VERSION_SCHEMA,
+            f"v{db.version_schema()} / v{db.VERSION_SCHEMA}")
+    rapport = db.initialise()
+    verifie("Réinitialisation sans effet (idempotence)", rapport["migrations"] == [],
+            str(rapport["migrations"]))
+    verifie("Ajout de colonne idempotent",
+            db.ajoute_colonne("ecritures", "perimetre", "TEXT") is False)
+
+    titre("21. Sauvegarde et intégrité")
     from modules.fichiers import cree_sauvegarde
     archive = cree_sauvegarde("test")
     verifie("Archive de sauvegarde créée", archive.exists() and archive.stat().st_size > 1000,

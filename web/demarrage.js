@@ -18,6 +18,7 @@ const MENU = [
       { route: '/comptabilite/balance', libelle: 'Balance', ico: '⚖️' },
       { route: '/comptabilite/lettrage', libelle: 'Lettrage', ico: '🔗' },
       { route: '/comptabilite/etats', libelle: 'États financiers', ico: '📈' },
+      { route: '/perimetres', libelle: 'Déclaré / hors décl.', ico: '⚖️' },
     ],
   },
   {
@@ -177,6 +178,8 @@ async function demarre() {
   if (!etat.connecte) { afficheAuth(true); return; }
 
   App.etat.utilisateur = etat.utilisateur;
+  App.etat.perimetre = localStorage.getItem('perimetre') || 'tous';
+  $('#choix-perimetre').value = App.etat.perimetre;
   $('#version-app').textContent = `v${etat.version}`;
   $('#info-utilisateur').innerHTML =
     `${ech(etat.utilisateur.nom_complet)}<br><span class="tres-petit">${ech(etat.utilisateur.role)}</span>`;
@@ -204,6 +207,12 @@ $('#choix-societe').onchange = async (ev) => {
   localStorage.setItem('societe_courante', ev.target.value);
   videCache();
   await chargeSocietes();
+  await afficheRoute();
+};
+
+$('#choix-perimetre').onchange = async (ev) => {
+  App.etat.perimetre = ev.target.value;
+  localStorage.setItem('perimetre', ev.target.value);
   await afficheRoute();
 };
 

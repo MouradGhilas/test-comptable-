@@ -17,6 +17,47 @@ from noyau.serveur import ErreurApplicative, route, Reponse
 from noyau import tableur
 
 # ---------------------------------------------------------------------------
+# Périmètre déclaratif
+# ---------------------------------------------------------------------------
+
+#: 'declare'          : entre dans la G50, le bilan et la liasse fiscale.
+#: 'hors_declaration' : comptabilisé et suivi, mais exclu des déclarations.
+PERIMETRES = {
+    "declare": "Déclaré",
+    "hors_declaration": "Hors déclaration",
+}
+
+LIBELLES_VUE = {
+    "declare": "Périmètre déclaré",
+    "hors_declaration": "Hors déclaration",
+    "tous": "Vue réelle (déclaré + hors déclaration)",
+}
+
+
+def normalise_perimetre(valeur, defaut="declare") -> str:
+    """Normalise une valeur de périmètre saisie ou reçue de l'interface."""
+    if valeur in (None, ""):
+        return defaut
+    valeur = str(valeur).strip().lower()
+    if valeur in ("hors", "hors_declaration", "non_declare", "noir"):
+        return "hors_declaration"
+    if valeur in ("declare", "declaree", "officiel"):
+        return "declare"
+    return defaut
+
+
+def clause_perimetre(perimetre, alias: str = "e") -> tuple[str, list]:
+    """Fragment SQL filtrant les écritures sur le périmètre demandé.
+
+    `tous` (ou None) ne filtre rien : c'est la vue réelle, celle qui sert à
+    piloter la trésorerie effective.
+    """
+    if perimetre in (None, "", "tous"):
+        return "", []
+    return f" AND {alias}.perimetre = ?", [normalise_perimetre(perimetre)]
+
+
+# ---------------------------------------------------------------------------
 # Contexte : société et exercice courants
 # ---------------------------------------------------------------------------
 
@@ -104,12 +145,15 @@ def enregistre_ecriture(
     utilisateur: str | None = None,
     valider: bool = True,
     exercice_id: int | None = None,
+    perimetre: str | None = None,
 ) -> int:
     """Enregistre une écriture équilibrée. À appeler dans une transaction.
 
     `lignes` : liste de dicts {compte, debit, credit, libelle, tiers_id,
     echeance, programme_id, lot_id, bien_id, poste_budget}. Les montants sont
     en centimes.
+
+    `perimetre` : 'declare' (défaut du dossier) ou 'hors_declaration'.
     """
     date = util.date_iso(date)
     if not date:
@@ -126,6 +170,12 @@ def enregistre_ecriture(
         )
 
     jrn = journal_par_code(societe_id, journal_code)
+
+    if perimetre is None:
+        perimetre = db.valeur(
+            "SELECT perimetre_defaut FROM societes WHERE id = ?", (societe_id,),
+            "declare")
+    perimetre = normalise_perimetre(perimetre)
 
     # -- normalisation et contrôles des lignes -----------------------------
     propres = []
@@ -191,6 +241,7 @@ def enregistre_ecriture(
         "source_type": source_type,
         "source_id": source_id,
         "validee": 1 if valider else 0,
+        "perimetre": perimetre,
         "cree_le": util.maintenant(),
         "cree_par": utilisateur,
     })
@@ -199,8 +250,8 @@ def enregistre_ecriture(
         db.insere("lignes", ligne_propre)
 
     db.trace("creation", "ecriture", ecriture_id,
-             {"journal": jrn["code"], "montant": total_debit, "libelle": libelle},
-             utilisateur)
+             {"journal": jrn["code"], "montant": total_debit, "libelle": libelle,
+              "perimetre": perimetre}, utilisateur)
     return ecriture_id
 
 
@@ -246,6 +297,7 @@ def extourne_ecriture(ecriture_id: int, date: str | None = None,
         f"Extourne de {ecr['numero']} — {ecr['libelle']}", inversees,
         piece=ecr["piece"], reference=ecr["numero"], module="manuel",
         source_type="extourne", source_id=ecriture_id, utilisateur=utilisateur,
+        perimetre=ecr.get("perimetre"),
     )
 
 
@@ -274,9 +326,14 @@ def annule_ecritures_de_source(source_type: str, source_id: int,
 # ---------------------------------------------------------------------------
 
 def solde_compte(societe_id: int, compte: str, date_debut: str | None = None,
-                 date_fin: str | None = None, prefixe: bool = True) -> dict:
+                 date_fin: str | None = None, prefixe: bool = True,
+                 perimetre=None) -> dict:
     conditions = ["e.societe_id = ?"]
     params: list = [societe_id]
+    fragment, params_perimetre = clause_perimetre(perimetre)
+    if fragment:
+        conditions.append(fragment.replace(" AND ", "", 1))
+        params += params_perimetre
     if prefixe:
         conditions.append("l.compte LIKE ?")
         params.append(compte + "%")
@@ -300,9 +357,13 @@ def solde_compte(societe_id: int, compte: str, date_debut: str | None = None,
 
 
 def soldes_par_compte(societe_id: int, date_debut: str, date_fin: str,
-                      prefixe: str | None = None) -> list[dict]:
+                      prefixe: str | None = None, perimetre=None) -> list[dict]:
     conditions = ["e.societe_id = ?", "e.date >= ?", "e.date <= ?"]
     params: list = [societe_id, date_debut, date_fin]
+    fragment, params_perimetre = clause_perimetre(perimetre)
+    if fragment:
+        conditions.append(fragment.replace(" AND ", "", 1))
+        params += params_perimetre
     if prefixe:
         conditions.append("l.compte LIKE ?")
         params.append(prefixe + "%")
@@ -317,16 +378,17 @@ def soldes_par_compte(societe_id: int, date_debut: str, date_fin: str,
 
 
 def balance(societe_id: int, date_debut: str, date_fin: str,
-            date_debut_exercice: str | None = None) -> list[dict]:
+            date_debut_exercice: str | None = None, perimetre=None) -> list[dict]:
     """Balance générale : reports à nouveau, mouvements de la période, soldes."""
     debut_ex = date_debut_exercice or date_debut
-    mouvements = {r["compte"]: r for r in soldes_par_compte(societe_id, date_debut, date_fin)}
+    mouvements = {r["compte"]: r for r in soldes_par_compte(
+        societe_id, date_debut, date_fin, perimetre=perimetre)}
     anterieurs = {}
     if debut_ex < date_debut:
         anterieurs = {
             r["compte"]: r
-            for r in soldes_par_compte(societe_id, debut_ex,
-                                       _veille(date_debut))
+            for r in soldes_par_compte(societe_id, debut_ex, _veille(date_debut),
+                                       perimetre=perimetre)
         }
     numeros = sorted(set(mouvements) | set(anterieurs))
     intitules = {
@@ -363,9 +425,13 @@ def _veille(date: str) -> str:
 
 def grand_livre(societe_id: int, compte_debut: str | None, compte_fin: str | None,
                 date_debut: str, date_fin: str, tiers_id: int | None = None,
-                non_lettrees: bool = False) -> list[dict]:
+                non_lettrees: bool = False, perimetre=None) -> list[dict]:
     conditions = ["e.societe_id = ?", "e.date >= ?", "e.date <= ?"]
     params: list = [societe_id, date_debut, date_fin]
+    fragment, params_perimetre = clause_perimetre(perimetre)
+    if fragment:
+        conditions.append(fragment.replace(" AND ", "", 1))
+        params += params_perimetre
     if compte_debut:
         conditions.append("l.compte >= ?")
         params.append(compte_debut)
@@ -379,7 +445,8 @@ def grand_livre(societe_id: int, compte_debut: str | None, compte_fin: str | Non
         conditions.append("(l.lettrage IS NULL OR l.lettrage = '')")
     return db.lignes(
         "SELECT l.*, e.date, e.numero AS num_ecriture, e.piece, e.libelle AS libelle_ecriture, "
-        "       j.code AS journal, t.raison_sociale AS tiers, c.intitule AS intitule_compte "
+        "       e.perimetre, j.code AS journal, t.raison_sociale AS tiers, "
+        "       c.intitule AS intitule_compte "
         "FROM lignes l "
         "JOIN ecritures e ON e.id = l.ecriture_id "
         "JOIN journaux j ON j.id = e.journal_id "
@@ -532,6 +599,10 @@ def api_ecritures(ctx):
                           "OR e.reference LIKE ?)")
         motif = "%" + ctx.arg("q") + "%"
         params += [motif, motif, motif, motif]
+    fragment, params_perimetre = clause_perimetre(ctx.perimetre())
+    if fragment:
+        conditions.append(fragment.replace(" AND ", "", 1))
+        params += params_perimetre
     limite = min(ctx.arg_int("limite", 200) or 200, 2000)
     ecritures = db.lignes(
         "SELECT e.*, j.code AS journal, j.libelle AS journal_libelle, "
@@ -602,6 +673,7 @@ def api_cree_ecriture(ctx):
             module="manuel",
             utilisateur=ctx.nom_utilisateur,
             valider=bool(ctx.booleen("valider", True)),
+            perimetre=ctx.champ("perimetre"),
         )
     return {"id": identifiant}
 
@@ -645,6 +717,7 @@ def api_modifie_ecriture(ctx):
             module="manuel",
             utilisateur=ctx.nom_utilisateur,
             valider=bool(ctx.booleen("valider", False)),
+            perimetre=ctx.champ("perimetre"),
         )
         db.trace("modification", "ecriture", nouvel_id,
                  f"remplace #{identifiant}", ctx.nom_utilisateur)
@@ -692,6 +765,7 @@ def api_grand_livre(ctx):
         societe_id, ctx.arg("compte_debut"), ctx.arg("compte_fin"),
         ctx.arg("du") or ex["date_debut"], ctx.arg("au") or ex["date_fin"],
         ctx.arg_int("tiers"), ctx.arg("non_lettrees") == "1",
+        perimetre=ctx.perimetre(),
     )
     # Regroupement par compte avec solde progressif
     groupes: list[dict] = []
@@ -716,7 +790,8 @@ def api_balance(ctx):
     ex = exercice(ctx.arg_int("exercice"))
     du = ctx.arg("du") or ex["date_debut"]
     au = ctx.arg("au") or ex["date_fin"]
-    donnees = balance(societe_id, du, au, ex["date_debut"])
+    perimetre = ctx.perimetre()
+    donnees = balance(societe_id, du, au, ex["date_debut"], perimetre=perimetre)
     niveau = ctx.arg_int("niveau")
     if niveau:
         agrege: dict[str, dict] = {}
@@ -746,6 +821,8 @@ def api_balance(ctx):
         "solde_credit": sum(l["solde_credit"] for l in donnees),
     }
     return {"lignes": donnees, "totaux": totaux, "du": du, "au": au,
+            "perimetre": perimetre or "tous",
+            "libelle_perimetre": LIBELLES_VUE.get(perimetre or "tous", ""),
             "equilibree": totaux["debit"] == totaux["credit"]}
 
 
@@ -1033,6 +1110,54 @@ def _resultat_exercice(societe_id: int, ex: dict) -> int:
     produits = solde_compte(societe_id, "7", ex["date_debut"], ex["date_fin"])
     charges = solde_compte(societe_id, "6", ex["date_debut"], ex["date_fin"])
     return (produits["credit"] - produits["debit"]) - (charges["debit"] - charges["credit"])
+
+
+@route("GET", "/api/perimetres/synthese")
+def api_synthese_perimetres(ctx):
+    """Compare le déclaré et le hors déclaration sur la période.
+
+    Sert à mesurer l'écart entre la comptabilité déposée et l'activité réelle,
+    et à voir depuis combien de temps il court.
+    """
+    societe_id = ctx.arg_int("societe")
+    ex = exercice(ctx.arg_int("exercice"))
+    du = ctx.arg("du") or ex["date_debut"]
+    au = ctx.arg("au") or ex["date_fin"]
+
+    resultat = {"du": du, "au": au, "perimetres": {}}
+    for cle in ("declare", "hors_declaration"):
+        produits = solde_compte(societe_id, "7", du, au, perimetre=cle)
+        charges = solde_compte(societe_id, "6", du, au, perimetre=cle)
+        tresorerie = solde_compte(societe_id, "5", du, au, perimetre=cle)
+        resultat["perimetres"][cle] = {
+            "libelle": PERIMETRES[cle],
+            "produits": produits["credit"] - produits["debit"],
+            "charges": charges["debit"] - charges["credit"],
+            "resultat": (produits["credit"] - produits["debit"])
+                        - (charges["debit"] - charges["credit"]),
+            "tresorerie": tresorerie["solde"],
+            "nb_ecritures": db.valeur(
+                "SELECT COUNT(*) FROM ecritures WHERE societe_id = ? "
+                "AND date BETWEEN ? AND ? AND perimetre = ?",
+                (societe_id, du, au, cle), 0),
+        }
+
+    hors = resultat["perimetres"]["hors_declaration"]
+    total_produits = (resultat["perimetres"]["declare"]["produits"] + hors["produits"])
+    resultat["part_hors_declaration"] = (
+        util.part_proportionnelle(util.BASE_TAUX, hors["produits"], total_produits)
+        if total_produits else 0)
+    resultat["plus_ancienne"] = db.valeur(
+        "SELECT MIN(date) FROM ecritures WHERE societe_id = ? AND perimetre = "
+        "'hors_declaration' AND date BETWEEN ? AND ?", (societe_id, du, au))
+    resultat["par_mois"] = db.lignes(
+        "SELECT substr(e.date,1,7) AS periode, e.perimetre, "
+        "  COALESCE(SUM(CASE WHEN l.compte LIKE '7%' THEN l.credit - l.debit END),0) AS produits "
+        "FROM ecritures e JOIN lignes l ON l.ecriture_id = e.id "
+        "WHERE e.societe_id = ? AND e.date BETWEEN ? AND ? "
+        "GROUP BY periode, e.perimetre ORDER BY periode",
+        (societe_id, du, au))
+    return resultat
 
 
 @route("GET", "/api/exercices/<id>/controles")

@@ -136,6 +136,10 @@ def principal():
 
     serveur_http = serveur.demarre(hote, port)
 
+    # Écoute Telegram et envoi des résumés à heure fixe.
+    from modules import rapports
+    rapports.demarre_taches_de_fond()
+
     if config.get("ouvrir_navigateur", True) and not arguments.sans_navigateur:
         threading.Timer(0.8, lambda: webbrowser.open(adresse)).start()
 
@@ -143,6 +147,7 @@ def principal():
         serveur_http.serve_forever()
     except KeyboardInterrupt:
         print("\nArrêt en cours…")
+        rapports.arrete_taches_de_fond()
         if config.get("sauvegarde_auto", True):
             try:
                 from modules.fichiers import cree_sauvegarde

@@ -414,23 +414,30 @@ def api_tableau_de_bord(ctx):
         raise ErreurApplicative("Aucun exercice n'est défini pour ce dossier.")
 
     debut, fin = ex["date_debut"], ex["date_fin"]
-    produits = compta.solde_compte(societe_id, "7", debut, fin)
-    charges = compta.solde_compte(societe_id, "6", debut, fin)
-    chiffre_affaires = compta.solde_compte(societe_id, "70", debut, fin)
-    tresorerie_banque = compta.solde_compte(societe_id, "512", debut, fin)
-    tresorerie_ccp = compta.solde_compte(societe_id, "515", debut, fin)
-    caisse = compta.solde_compte(societe_id, "53", debut, fin)
-    clients = compta.solde_compte(societe_id, "411", debut, fin)
-    fournisseurs = compta.solde_compte(societe_id, "40", debut, fin)
-    tva_collectee = compta.solde_compte(societe_id, "4457", debut, fin)
-    tva_deductible = compta.solde_compte(societe_id, "4456", debut, fin)
-    avances_vsp = compta.solde_compte(societe_id, "419", debut, fin)
-    mandants = compta.solde_compte(societe_id, "4671", debut, fin)
+    perimetre = ctx.perimetre()
+
+    def solde(prefixe):
+        return compta.solde_compte(societe_id, prefixe, debut, fin, perimetre=perimetre)
+
+    produits = solde("7")
+    charges = solde("6")
+    chiffre_affaires = solde("70")
+    tresorerie_banque = solde("512")
+    tresorerie_ccp = solde("515")
+    caisse = solde("53")
+    clients = solde("411")
+    fournisseurs = solde("40")
+    tva_collectee = solde("4457")
+    tva_deductible = solde("4456")
+    avances_vsp = solde("419")
+    mandants = solde("4671")
 
     tableau = {
         "societe": {"id": soc["id"], "raison_sociale": soc["raison_sociale"],
                     "activite": soc["activite"], "code": soc["code"]},
         "exercice": ex,
+        "perimetre": perimetre or "tous",
+        "libelle_perimetre": compta.LIBELLES_VUE.get(perimetre or "tous", ""),
         "indicateurs": {
             "chiffre_affaires": chiffre_affaires["credit"] - chiffre_affaires["debit"],
             "produits": produits["credit"] - produits["debit"],
@@ -452,15 +459,31 @@ def api_tableau_de_bord(ctx):
     }
 
     # Évolution mensuelle du chiffre d'affaires et des charges
+    fragment, params_perimetre = compta.clause_perimetre(perimetre)
     tableau["evolution"] = db.lignes(
         "SELECT substr(e.date,1,7) AS periode, "
         "  COALESCE(SUM(CASE WHEN l.compte LIKE '7%' THEN l.credit - l.debit END),0) AS produits, "
         "  COALESCE(SUM(CASE WHEN l.compte LIKE '6%' THEN l.debit - l.credit END),0) AS charges "
         "FROM ecritures e JOIN lignes l ON l.ecriture_id = e.id "
-        "WHERE e.societe_id = ? AND e.date BETWEEN ? AND ? "
+        "WHERE e.societe_id = ? AND e.date BETWEEN ? AND ?" + fragment + " "
         "GROUP BY periode ORDER BY periode",
-        (societe_id, debut, fin),
+        [societe_id, debut, fin] + params_perimetre,
     )
+
+    # Poids du hors déclaration, affiché sans détour
+    hors = compta.solde_compte(societe_id, "7", debut, fin,
+                               perimetre="hors_declaration")
+    produits_hors = hors["credit"] - hors["debit"]
+    produits_declares = compta.solde_compte(
+        societe_id, "7", debut, fin, perimetre="declare")
+    produits_declares = produits_declares["credit"] - produits_declares["debit"]
+    tableau["repartition_perimetres"] = {
+        "declare": produits_declares,
+        "hors_declaration": produits_hors,
+        "part_hors": util.part_proportionnelle(
+            util.BASE_TAUX, produits_hors, produits_declares + produits_hors)
+        if (produits_declares + produits_hors) else 0,
+    }
 
     # Alertes du comptable
     alertes = []

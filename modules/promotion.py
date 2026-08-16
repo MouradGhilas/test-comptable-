@@ -833,7 +833,7 @@ def api_encaisse_echeance(ctx):
             contrat["societe_id"], journal, date, libelle, lignes,
             piece=util.nettoie(ctx.champ("reference")), reference=contrat["numero"],
             module="promotion", source_type="echeance_vsp", source_id=identifiant,
-            utilisateur=ctx.nom_utilisateur,
+            utilisateur=ctx.nom_utilisateur, perimetre=ctx.champ("perimetre"),
         )
         regle = echeance["montant_regle"] + montant
         db.modifie("echeances_vsp", identifiant, {

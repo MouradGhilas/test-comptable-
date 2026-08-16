@@ -88,8 +88,26 @@ def api_modifie_parametres(ctx):
 # Calcul de la G50
 # ---------------------------------------------------------------------------
 
+#: Les déclarations fiscales ne portent que sur les opérations déclarées.
+PERIMETRE_FISCAL = "declare"
+
+
 def _mouvement(societe_id: int, prefixe: str, du: str, au: str) -> dict:
-    return compta.solde_compte(societe_id, prefixe, du, au)
+    return compta.solde_compte(societe_id, prefixe, du, au,
+                               perimetre=PERIMETRE_FISCAL)
+
+
+def hors_declaration_periode(societe_id: int, du: str, au: str) -> dict:
+    """Ce qui n'entre pas dans la déclaration, pour le dire explicitement."""
+    produits = compta.solde_compte(societe_id, "7", du, au,
+                                   perimetre="hors_declaration")
+    return {
+        "nb_ecritures": db.valeur(
+            "SELECT COUNT(*) FROM ecritures WHERE societe_id = ? "
+            "AND date BETWEEN ? AND ? AND perimetre = 'hors_declaration'",
+            (societe_id, du, au), 0),
+        "produits": produits["credit"] - produits["debit"],
+    }
 
 
 def calcule_g50(societe_id: int, periode: str) -> dict:
@@ -113,8 +131,10 @@ def calcule_g50(societe_id: int, periode: str) -> dict:
     )
     precompte_anterieur = precedente["precompte_reporte"] if precedente else 0
     if not precedente:
-        solde_precompte = compta.solde_compte(societe_id, COMPTE_PRECOMPTE, None,
-                                              util.fin_de_mois(util.mois_precedent(periode)))
+        solde_precompte = compta.solde_compte(
+            societe_id, COMPTE_PRECOMPTE, None,
+            util.fin_de_mois(util.mois_precedent(periode)),
+            perimetre=PERIMETRE_FISCAL)
         precompte_anterieur = max(solde_precompte["solde"], 0)
 
     solde_tva = tva_collectee - tva_deductible_bs - tva_deductible_immo - precompte_anterieur
@@ -168,12 +188,18 @@ def calcule_g50(societe_id: int, periode: str) -> dict:
         "irg_salaires": irg_salaires, "irg_ras_autres": irg_ras_autres,
         "acompte_ibs": 0, "droit_timbre": droit_timbre,
         "total_a_payer": total,
+        "perimetre": PERIMETRE_FISCAL,
+        "hors_declaration": hors_declaration_periode(societe_id, du, au),
         "avertissements": _avertissements_g50(annee, tap_applicable),
     }
 
 
 def _avertissements_g50(annee: int, tap_applicable: int) -> list[str]:
-    messages = []
+    messages = [
+        "Cette déclaration ne reprend que les opérations marquées « déclaré ». "
+        "Les opérations hors déclaration de la période sont listées séparément "
+        "et n'y figurent pas."
+    ]
     if not tap_applicable:
         messages.append(
             "La TAP est désactivée pour cet exercice dans les paramètres fiscaux. "
@@ -447,8 +473,8 @@ def api_livre_tva(ctx):
         "LEFT JOIN tiers t ON t.id = ("
         "  SELECT tiers_id FROM lignes WHERE ecriture_id = e.id AND tiers_id IS NOT NULL LIMIT 1) "
         "WHERE e.societe_id = ? AND l.compte LIKE ? AND e.date BETWEEN ? AND ? "
-        f"AND l.{colonne} > 0 ORDER BY e.date, e.id",
-        (societe_id, compte_tva + "%", du, au),
+        f"AND l.{colonne} > 0 AND e.perimetre = ? ORDER BY e.date, e.id",
+        (societe_id, compte_tva + "%", du, au, PERIMETRE_FISCAL),
     )
     for op in operations:
         base = db.valeur(
@@ -507,10 +533,13 @@ def api_ibs(ctx):
     soc = compta.societe(societe_id)
     annee = int(ex["date_fin"][:4])
 
-    produits = compta.solde_compte(societe_id, "7", ex["date_debut"], ex["date_fin"])
-    charges = compta.solde_compte(societe_id, "6", ex["date_debut"], ex["date_fin"])
+    produits = compta.solde_compte(societe_id, "7", ex["date_debut"], ex["date_fin"],
+                                   perimetre=PERIMETRE_FISCAL)
+    charges = compta.solde_compte(societe_id, "6", ex["date_debut"], ex["date_fin"],
+                                  perimetre=PERIMETRE_FISCAL)
     # L'IBS lui-même (695) ne fait pas partie du résultat imposable
-    ibs_deja = compta.solde_compte(societe_id, "695", ex["date_debut"], ex["date_fin"])
+    ibs_deja = compta.solde_compte(societe_id, "695", ex["date_debut"], ex["date_fin"],
+                                   perimetre=PERIMETRE_FISCAL)
     resultat_comptable = ((produits["credit"] - produits["debit"])
                           - (charges["debit"] - charges["credit"]))
     resultat_avant_impot = resultat_comptable + (ibs_deja["debit"] - ibs_deja["credit"])
@@ -526,8 +555,9 @@ def api_ibs(ctx):
     minimum = db.parametre_fiscal_int(annee, "ibs_minimum", 0)
     ibs_du = max(ibs_brut, minimum) if minimum else ibs_brut
 
-    acomptes_verses = compta.solde_compte(societe_id, COMPTE_IBS_ACOMPTE,
-                                          ex["date_debut"], ex["date_fin"])["solde"]
+    acomptes_verses = compta.solde_compte(
+        societe_id, COMPTE_IBS_ACOMPTE, ex["date_debut"], ex["date_fin"],
+        perimetre=PERIMETRE_FISCAL)["solde"]
     taux_acompte = db.parametre_fiscal_int(annee, "ibs_acompte_taux", 3000)
 
     return {
@@ -543,6 +573,9 @@ def api_ibs(ctx):
         "solde_a_payer": ibs_du - acomptes_verses,
         "acompte_suivant": util.applique_taux(ibs_du, taux_acompte),
         "taux_acompte": taux_acompte,
+        "perimetre": PERIMETRE_FISCAL,
+        "hors_declaration": hors_declaration_periode(
+            societe_id, ex["date_debut"], ex["date_fin"]),
         "note": "Le résultat fiscal doit être ajusté des réintégrations et déductions "
                 "extra-comptables propres à votre situation (amortissements excédentaires, "
                 "amendes, provisions non déductibles, déficits reportables…). "

@@ -199,6 +199,10 @@ def api_cree(ctx):
             "timbre": timbre, "net_a_payer": ttc + timbre, "montant_regle": 0,
             "mode_reglement": mode,
             "statut": "brouillon",
+            "perimetre": compta.normalise_perimetre(
+                ctx.champ("perimetre"),
+                db.valeur("SELECT perimetre_defaut FROM societes WHERE id = ?",
+                          (societe_id,), "declare")),
             "notes": util.nettoie(ctx.champ("notes")),
             "conditions": util.nettoie(ctx.champ("conditions")),
             "cree_le": util.maintenant(), "cree_par": ctx.nom_utilisateur,
@@ -248,6 +252,8 @@ def api_modifie(ctx):
             "montant_ht": total_ht, "montant_tva": total_tva, "montant_ttc": ttc,
             "timbre": timbre, "net_a_payer": ttc + timbre,
             "mode_reglement": mode,
+            "perimetre": compta.normalise_perimetre(
+                ctx.champ("perimetre"), f["perimetre"]),
             "notes": util.nettoie(ctx.champ("notes")),
             "conditions": util.nettoie(ctx.champ("conditions")),
         })
@@ -342,6 +348,7 @@ def _valide(facture_id: int, utilisateur: str | None) -> int | None:
         f["societe_id"], journal, f["date"], libelle, lignes_ecriture,
         piece=f["numero"], reference=f["reference"], module="facturation",
         source_type="facture", source_id=facture_id, utilisateur=utilisateur,
+        perimetre=f.get("perimetre"),
     )
     db.modifie("factures", facture_id, {"statut": "validee", "ecriture_id": ecriture_id})
     db.trace("validation", "facture", facture_id, f["numero"], utilisateur)
@@ -408,8 +415,8 @@ def api_cree_avoir(ctx):
             "montant_ht": f["montant_ht"], "montant_tva": f["montant_tva"],
             "montant_ttc": f["montant_ttc"], "timbre": f["timbre"],
             "net_a_payer": f["net_a_payer"], "montant_regle": 0,
-            "statut": "brouillon", "cree_le": util.maintenant(),
-            "cree_par": ctx.nom_utilisateur,
+            "statut": "brouillon", "perimetre": f["perimetre"],
+            "cree_le": util.maintenant(), "cree_par": ctx.nom_utilisateur,
         })
         for l in lignes_origine:
             db.insere("facture_lignes", {
@@ -471,6 +478,11 @@ def api_cree_reglement(ctx):
         + (f" — facture {facture['numero']}" if facture else "")
     )
 
+    perimetre = compta.normalise_perimetre(
+        ctx.champ("perimetre") or (facture["perimetre"] if facture else None),
+        db.valeur("SELECT perimetre_defaut FROM societes WHERE id = ?",
+                  (societe_id,), "declare"))
+
     if sens == "encaissement":
         lignes_ecriture = [
             {"compte": tresorerie["compte"], "debit": montant, "credit": 0,
@@ -492,7 +504,7 @@ def api_cree_reglement(ctx):
             piece=util.nettoie(ctx.champ("reference")),
             reference=facture["numero"] if facture else None,
             module="reglement", source_type="reglement", source_id=None,
-            utilisateur=ctx.nom_utilisateur,
+            utilisateur=ctx.nom_utilisateur, perimetre=perimetre,
         )
         reglement_id = db.insere("reglements", {
             "societe_id": societe_id, "exercice_id": ex["id"], "sens": sens,
@@ -500,6 +512,7 @@ def api_cree_reglement(ctx):
             "montant": montant, "mode": ctx.champ("mode", "virement"),
             "reference": util.nettoie(ctx.champ("reference")),
             "libelle": libelle, "facture_id": facture_id,
+            "perimetre": perimetre,
             "ecriture_id": ecriture_id, "cree_le": util.maintenant(),
         })
         db.execute("UPDATE ecritures SET source_id = ? WHERE id = ?",

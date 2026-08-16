@@ -139,19 +139,156 @@ class transaction:
 
 SCHEMA = Path(__file__).parent / "schema.sql"
 
+#: Version du schéma attendue par cette version du programme.
+#: À incrémenter dès qu'une migration est ajoutée ci-dessous.
+VERSION_SCHEMA = 3
 
-def initialise() -> None:
+
+def colonnes(table: str) -> set[str]:
+    cur = connexion().execute(f"PRAGMA table_info({table})")
+    try:
+        return {r[1] for r in cur.fetchall()}
+    finally:
+        cur.close()
+
+
+def table_existe(table: str) -> bool:
+    return bool(valeur(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)))
+
+
+def ajoute_colonne(table: str, colonne: str, definition: str) -> bool:
+    """Ajoute une colonne si elle manque. Idempotent : ne fait rien sinon.
+
+    C'est le cœur des mises à jour sans perte de données — une base existante
+    reçoit les nouvelles colonnes, une base neuve les a déjà par le schéma.
+    """
+    if not table_existe(table) or colonne in colonnes(table):
+        return False
+    execute(f"ALTER TABLE {table} ADD COLUMN {colonne} {definition}")
+    return True
+
+
+def _migration_2() -> None:
+    """Périmètre déclaratif : chaque opération est marquée « déclaré » ou
+    « hors déclaration », afin de séparer nettement ce qui entre dans les
+    déclarations fiscales de ce qui n'y entre pas.
+
+    Les opérations déjà saisies sont réputées déclarées (valeur par défaut) :
+    aucune donnée existante n'est modifiée ni perdue.
+    """
+    for table in ("ecritures", "factures", "reglements", "quittances"):
+        ajoute_colonne(table, "perimetre", "TEXT NOT NULL DEFAULT 'declare'")
+    ajoute_colonne("societes", "perimetre_defaut", "TEXT NOT NULL DEFAULT 'declare'")
+    ajoute_colonne("societes", "suivi_hors_declaration", "INTEGER NOT NULL DEFAULT 1")
+
+
+#: Index portant sur des colonnes introduites par migration. Créés une fois les
+#: migrations appliquées, et seulement si la colonne existe réellement.
+INDEX_COMPLEMENTAIRES = [
+    ("idx_ecr_perimetre", "ecritures", "societe_id, perimetre", ["perimetre"]),
+]
+
+
+def _cree_index_complementaires() -> None:
+    for nom, table, expression, requises in INDEX_COMPLEMENTAIRES:
+        if not table_existe(table):
+            continue
+        if not set(requises) <= colonnes(table):
+            continue
+        execute(f"CREATE INDEX IF NOT EXISTS {nom} ON {table}({expression})")
+
+
+def _migration_3() -> None:
+    """Canaux de notification : la table est créée par le schéma ; cette
+    migration ne sert qu'à marquer le palier de version."""
+    return None
+
+
+#: version -> fonction de migration. Exécutées dans l'ordre croissant.
+MIGRATIONS = {
+    2: _migration_2,
+    3: _migration_3,
+}
+
+
+def version_schema() -> int:
+    brut = valeur("SELECT valeur FROM meta WHERE cle = 'version_schema'")
+    try:
+        return int(brut) if brut is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def initialise(sauvegarde_avant_migration: bool = True) -> dict:
+    """Crée ou met à niveau la base, sans jamais toucher aux données existantes.
+
+    Retourne un rapport : version de départ, version d'arrivée, migrations
+    appliquées, sauvegarde éventuellement créée.
+    """
     config.prepare_dossiers()
     conn = connexion()
+
+    base_neuve = not config.base_de_donnees.exists() or not table_existe("meta")
+    depart = 0 if base_neuve else version_schema()
+
+    # `CREATE TABLE IF NOT EXISTS` : ajoute les tables manquantes sans rien
+    # écraser. Les colonnes ajoutées à des tables existantes relèvent des
+    # migrations ci-dessous.
     conn.executescript(SCHEMA.read_text(encoding="utf-8"))
-    version = valeur("SELECT valeur FROM meta WHERE cle = 'version_schema'")
-    if version is None:
-        execute("INSERT INTO meta (cle, valeur) VALUES ('version_schema', '1')")
-        execute(
-            "INSERT INTO meta (cle, valeur) VALUES ('cree_le', ?)",
-            (util.maintenant(),),
+
+    rapport = {"version_depart": depart, "version_arrivee": depart,
+               "migrations": [], "sauvegarde": None, "base_neuve": base_neuve}
+
+    if base_neuve:
+        with transaction():
+            execute("INSERT OR REPLACE INTO meta (cle, valeur) VALUES "
+                    "('version_schema', ?)", (str(VERSION_SCHEMA),))
+            execute("INSERT OR REPLACE INTO meta (cle, valeur) VALUES (?, ?)",
+                    ("cree_le", util.maintenant()))
+        rapport["version_arrivee"] = VERSION_SCHEMA
+    elif depart < VERSION_SCHEMA:
+        # Filet de sécurité : on archive la base avant toute transformation.
+        if sauvegarde_avant_migration:
+            try:
+                rapport["sauvegarde"] = _archive_avant_migration(depart)
+            except Exception as err:                      # noqa: BLE001
+                print(f"[migration] Sauvegarde préalable impossible : {err}")
+
+        for version in sorted(MIGRATIONS):
+            if version <= depart:
+                continue
+            with transaction():
+                MIGRATIONS[version]()
+                execute("INSERT OR REPLACE INTO meta (cle, valeur) VALUES "
+                        "('version_schema', ?)", (str(version),))
+                trace("migration", "base", None, {"version": version})
+            rapport["migrations"].append(version)
+            print(f"[migration] Base mise à niveau en version {version}.")
+        rapport["version_arrivee"] = version_schema()
+    elif depart > VERSION_SCHEMA:
+        raise RuntimeError(
+            f"Cette base a été créée par une version plus récente du programme "
+            f"(schéma {depart} > {VERSION_SCHEMA}). Mettez l'application à jour "
+            "avant de l'ouvrir, sous peine de corrompre les données."
         )
+
+    _cree_index_complementaires()
     charge_parametres_fiscaux_par_defaut()
+    return rapport
+
+
+def _archive_avant_migration(version: int) -> str:
+    """Copie la base telle quelle avant migration, dans les sauvegardes."""
+    horodatage = util.maintenant().replace(":", "").replace("-", "").replace(" ", "_")
+    cible = (config.dossier_sauvegardes
+             / f"avant_migration_v{version}_{horodatage}.db")
+    destination = sqlite3.connect(str(cible))
+    try:
+        connexion().backup(destination)
+    finally:
+        destination.close()
+    return cible.name
 
 
 def charge_parametres_fiscaux_par_defaut() -> None:

@@ -40,6 +40,7 @@ App.pages['comptabilite/ecritures'] = {
         { titre: 'Libellé', rendu: (e) => ech(e.libelle) },
         { titre: 'Montant', classe: 'num', rendu: (e) => fm(e.montant) },
         { titre: 'État', rendu: (e) => e.validee ? etiquette('validee') : etiquette('brouillon') },
+        { titre: 'Périmètre', rendu: (e) => badgePerimetre(e.perimetre) },
         { titre: 'Origine', rendu: (e) => `<span class="tres-petit">${ech(e.module || '')}</span>` },
       ], d.ecritures, {
         clic: true, icone: '📒',
@@ -73,6 +74,7 @@ async function detailEcriture(id) {
         <dt>Origine</dt><dd>${ech(e.module || 'saisie manuelle')}
           ${e.source_type ? `(${ech(e.source_type)})` : ''}</dd>
         <dt>État</dt><dd>${e.validee ? etiquette('validee') : etiquette('brouillon')}</dd>
+        <dt>Périmètre</dt><dd>${badgePerimetre(e.perimetre)}</dd>
         <dt>Saisie</dt><dd>${ech(e.cree_par || '—')} le ${e.cree_le}</dd>
       </div>
       ${tableau([
@@ -119,6 +121,10 @@ async function saisieEcriture(prefill = {}) {
       </select></label>
       <label class="champ"><span>Date *</span><input type="date" id="e-date" value="${prefill.date || aujourdhui()}"></label>
       <label class="champ"><span>N° de pièce</span><input id="e-piece" value="${ech(prefill.piece || '')}"></label>
+      <label class="champ"><span>Périmètre</span><select id="e-perimetre">
+        <option value="declare">Déclaré</option>
+        <option value="hors_declaration">Hors déclaration</option>
+      </select></label>
       <label class="champ" style="grid-column:1/-1"><span>Libellé *</span>
         <input id="e-libelle" value="${ech(prefill.libelle || '')}" placeholder="Ex : Facture fournisseur ETP El Amel"></label>
     </div>
@@ -196,6 +202,9 @@ async function saisieEcriture(prefill = {}) {
   $('#e-journal', conteneur).value = prefill.journal
     || (journaux.journaux.some((j) => j.code === 'OD') ? 'OD' : journaux.journaux[0]?.code);
   $('#ajout-ligne', conteneur).onclick = () => ajouteLigne();
+  if (App.etat.perimetre && App.etat.perimetre !== 'tous') {
+    $('#e-perimetre', conteneur).value = App.etat.perimetre;
+  }
   recalcule();
 
   modale({
@@ -222,6 +231,7 @@ async function enregistreEcriture(conteneur, litLignes, valider) {
     date: $('#e-date', conteneur).value,
     piece: $('#e-piece', conteneur).value,
     libelle: $('#e-libelle', conteneur).value,
+    perimetre: $('#e-perimetre', conteneur).value,
     lignes: litLignes(),
     valider,
   });
@@ -293,6 +303,7 @@ App.pages['comptabilite/balance'] = {
     sousTitre(`Du ${fdate(d.du)} au ${fdate(d.au)}`);
 
     zone.innerHTML = `
+      ${bandeauPerimetre(d.perimetre)}
       <div class="barre-outils">
         <label class="champ"><span>Regroupement</span><select id="b-niveau" onchange="navigue('/comptabilite/balance?niveau='+this.value)">
           <option value="">Compte détaillé</option>
@@ -431,6 +442,9 @@ async function afficheBilan(zone) {
     <tr class="sous-total"><td>Total ${ech(s.titre.toLowerCase())}</td><td class="num">${fm(s.total)}</td></tr>`;
 
   zone.innerHTML = `
+    ${bandeauPerimetre(d.perimetre, d.perimetre === 'declare'
+      ? "Ce bilan correspond à ce qui est déposé à l'administration."
+      : (d.perimetre === 'tous' ? "Vue de gestion : déclaré et hors déclaration confondus." : ''))}
     ${d.equilibre ? '' : `<div class="message danger"><strong>Bilan déséquilibré</strong>
       Écart de ${fm(d.ecart, true)} entre l'actif et le passif.</div>`}
     <div class="grille c2">
@@ -449,7 +463,8 @@ async function afficheBilan(zone) {
 
 async function afficheTcr(zone) {
   const d = await charge('/api/etats/tcr');
-  zone.innerHTML = carte(`Compte de résultat par nature — exercice ${d.exercice.libelle}`, `
+  zone.innerHTML = bandeauPerimetre(d.perimetre)
+    + carte(`Compte de résultat par nature — exercice ${d.exercice.libelle}`, `
     <div class="enveloppe-table"><table class="donnees">
       <thead><tr><th>Libellé</th><th class="num">Montant</th></tr></thead>
       <tbody>${d.lignes.map((l) => {
@@ -590,6 +605,7 @@ App.pages.factures = {
         { titre: 'Net à payer', classe: 'num', rendu: (f) => `<strong>${fm(f.net_a_payer)}</strong>` },
         { titre: 'Réglé', classe: 'num', rendu: (f) => fm(f.montant_regle) },
         { titre: 'Statut', rendu: (f) => etiquette(f.statut) },
+        { titre: 'Périmètre', rendu: (f) => badgePerimetre(f.perimetre) },
       ], d.factures, {
         clic: true, icone: '🧾', messageVide: 'Aucune facture.',
         attributsLigne: (f) => `onclick="navigue('/factures/${f.id}')"`,
@@ -678,6 +694,10 @@ async function editeFacture(id, sens = 'vente') {
         ${[['virement', 'Virement'], ['cheque', 'Chèque'], ['espece', 'Espèces'], ['traite', 'Traite']]
           .map(([v, l]) => `<option value="${v}" ${existante?.mode_reglement === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select><div class="aide">Espèces : le droit de timbre est ajouté automatiquement.</div></label>
+      <label class="champ"><span>Périmètre</span><select id="f-perimetre">
+        <option value="declare">Déclaré</option>
+        <option value="hors_declaration">Hors déclaration</option>
+      </select></label>
       <label class="champ" style="grid-column:1/-1"><span>Objet</span>
         <input id="f-objet" value="${ech(existante?.objet || '')}"></label>
     </div>
@@ -743,6 +763,8 @@ async function editeFacture(id, sens = 'vente') {
   }
 
   (existante?.lignes?.length ? existante.lignes : [{}]).forEach(ajouteLigne);
+  $('#f-perimetre', conteneur).value = existante?.perimetre
+    || (App.etat.perimetre !== 'tous' ? App.etat.perimetre : 'declare');
   $('#f-ajout', conteneur).onclick = () => ajouteLigne();
   recalcule();
 
@@ -754,6 +776,7 @@ async function editeFacture(id, sens = 'vente') {
     date_echeance: $('#f-echeance', conteneur).value,
     mode_reglement: $('#f-mode', conteneur).value,
     objet: $('#f-objet', conteneur).value,
+    perimetre: $('#f-perimetre', conteneur).value,
     lignes: litLignes(),
   });
 

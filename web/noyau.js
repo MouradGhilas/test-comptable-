@@ -10,6 +10,7 @@ const App = {
     societe: null,
     exercices: [],
     exercice: null,
+    perimetre: 'tous',
     version: '',
   },
   pages: {},
@@ -47,6 +48,9 @@ function requete(chemin, parametres = {}) {
   const p = new URLSearchParams();
   if (App.etat.societe) p.set('societe', App.etat.societe.id);
   if (App.etat.exercice) p.set('exercice', App.etat.exercice.id);
+  if (App.etat.perimetre && App.etat.perimetre !== 'tous') {
+    p.set('perimetre', App.etat.perimetre);
+  }
   for (const [cle, valeur] of Object.entries(parametres)) {
     if (valeur !== undefined && valeur !== null && valeur !== '') p.set(cle, valeur);
   }
@@ -318,6 +322,27 @@ function indicateur(libelle, valeur, detail = '', genre = '') {
     <div class="libelle">${ech(libelle)}</div>
     <div class="valeur">${valeur}</div>
     ${detail ? `<div class="detail">${detail}</div>` : ''}</div>`;
+}
+
+const PERIMETRES = {
+  declare: ['Déclaré', 'info'],
+  hors_declaration: ['Hors déclaration', 'alerte'],
+  tous: ['Vue réelle', ''],
+};
+
+/** Pastille de périmètre, affichée sans détour à côté des opérations. */
+function badgePerimetre(perimetre) {
+  const [libelle, genre] = PERIMETRES[perimetre] || PERIMETRES.declare;
+  return `<span class="etiquette ${genre}">${ech(libelle)}</span>`;
+}
+
+/** Bandeau rappelant le périmètre couvert par un état ou une déclaration. */
+function bandeauPerimetre(perimetre, complement = '') {
+  const [libelle] = PERIMETRES[perimetre] || PERIMETRES.tous;
+  const genre = perimetre === 'declare' ? 'info'
+    : (perimetre === 'hors_declaration' ? 'alerte' : '');
+  return `<div class="message ${genre}"><strong>Périmètre : ${ech(libelle)}</strong>
+    ${complement ? ech(complement) : ''}</div>`;
 }
 
 const ETIQUETTES = {

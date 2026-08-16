@@ -55,7 +55,7 @@ PASSIF = [
         ("Primes et réserves", ["103", "106"], [], None),
         ("Écarts de réévaluation", ["104", "105"], [], None),
         ("Écart d'équivalence", ["107"], [], None),
-        ("Résultat net de l'exercice", ["12"], [], None),
+        ("Résultat en instance d'affectation", ["12"], [], None),
         ("Report à nouveau", ["11", "108"], [], None),
     ]),
     ("passif_non_courant", "PASSIFS NON COURANTS", [
@@ -77,10 +77,12 @@ PASSIF = [
 ]
 
 
-def _soldes(societe_id: int, date_debut: str, date_fin: str) -> dict[str, int]:
+def _soldes(societe_id: int, date_debut: str, date_fin: str,
+            perimetre=None) -> dict[str, int]:
     return {
         r["compte"]: r["debit"] - r["credit"]
-        for r in compta.soldes_par_compte(societe_id, date_debut, date_fin)
+        for r in compta.soldes_par_compte(societe_id, date_debut, date_fin,
+                                          perimetre=perimetre)
     }
 
 
@@ -99,13 +101,13 @@ def _agrege(soldes: dict[str, int], prefixes, exclus, sens) -> int:
     return total
 
 
-def construit_bilan(societe_id: int, date_debut: str, date_fin: str) -> dict:
-    soldes = _soldes(societe_id, date_debut, date_fin)
+def construit_bilan(societe_id: int, date_debut: str, date_fin: str,
+                    perimetre=None) -> dict:
+    soldes = _soldes(societe_id, date_debut, date_fin, perimetre)
 
+    # Résultat dégagé par les comptes de gestion de la période. Après clôture il
+    # vaut zéro : le résultat a été viré au compte 12, qui a sa propre ligne.
     resultat = _resultat(soldes)
-    # Le résultat de l'exercice n'est viré en compte 12 qu'à la clôture :
-    # tant qu'il ne l'est pas, on l'affiche pour que le bilan s'équilibre.
-    resultat_deja_vire = -sum(s for c, s in soldes.items() if c.startswith("12"))
 
     sections_actif = []
     total_actif = 0
@@ -126,10 +128,13 @@ def construit_bilan(societe_id: int, date_debut: str, date_fin: str) -> dict:
         lignes_section = []
         for libelle, prefixes, exclus, sens in postes:
             montant = -_agrege(soldes, prefixes, exclus, sens)
-            if libelle == "Résultat net de l'exercice" and not resultat_deja_vire:
-                montant = resultat
             if montant:
                 lignes_section.append({"libelle": libelle, "montant": montant})
+        # Le résultat de la période s'ajoute aux capitaux propres tant qu'il
+        # n'a pas été viré au compte 12 par la clôture.
+        if cle == "capitaux_propres" and resultat:
+            lignes_section.append({"libelle": "Résultat net de l'exercice",
+                                   "montant": resultat})
         sous_total = sum(l["montant"] for l in lignes_section)
         total_passif += sous_total
         sections_passif.append({"cle": cle, "titre": titre, "lignes": lignes_section,
@@ -184,8 +189,9 @@ TCR = [
 ]
 
 
-def construit_tcr(societe_id: int, date_debut: str, date_fin: str) -> dict:
-    soldes = _soldes(societe_id, date_debut, date_fin)
+def construit_tcr(societe_id: int, date_debut: str, date_fin: str,
+                  perimetre=None) -> dict:
+    soldes = _soldes(societe_id, date_debut, date_fin, perimetre)
 
     def montant_produit(prefixes, exclus):
         return -_agrege(soldes, prefixes, exclus, None)
@@ -277,8 +283,9 @@ FLUX_FINANCEMENT = (["1"], [])
 FLUX_EXPLOITATION = (["28", "29", "3", "4", "59", "6", "7"], [])
 
 
-def construit_flux(societe_id: int, date_debut: str, date_fin: str) -> dict:
-    soldes = _soldes(societe_id, date_debut, date_fin)
+def construit_flux(societe_id: int, date_debut: str, date_fin: str,
+                   perimetre=None) -> dict:
+    soldes = _soldes(societe_id, date_debut, date_fin, perimetre)
 
     def variation(prefixes, exclus=()):
         return _agrege(soldes, list(prefixes), list(exclus), None)
@@ -302,7 +309,8 @@ def construit_flux(societe_id: int, date_debut: str, date_fin: str) -> dict:
 
     tresorerie_debut = 0
     if date_debut:
-        avant = compta.soldes_par_compte(societe_id, "0001-01-01", _veille(date_debut))
+        avant = compta.soldes_par_compte(societe_id, "0001-01-01", _veille(date_debut),
+                                         perimetre=perimetre)
         tresorerie_debut = sum(
             r["debit"] - r["credit"] for r in avant
             if r["compte"][0] == "5" and not r["compte"].startswith("59")
@@ -349,9 +357,12 @@ def api_bilan(ctx):
     ex = compta.exercice(ctx.arg_int("exercice"))
     du = ctx.arg("du") or ex["date_debut"]
     au = ctx.arg("au") or ex["date_fin"]
-    resultat = construit_bilan(societe_id, du, au)
+    perimetre = ctx.perimetre()
+    resultat = construit_bilan(societe_id, du, au, perimetre=perimetre)
     resultat["societe"] = compta.societe(societe_id)
     resultat["exercice"] = ex
+    resultat["perimetre"] = perimetre or "tous"
+    resultat["libelle_perimetre"] = compta.LIBELLES_VUE.get(perimetre or "tous", "")
     return resultat
 
 
@@ -361,9 +372,12 @@ def api_tcr(ctx):
     ex = compta.exercice(ctx.arg_int("exercice"))
     du = ctx.arg("du") or ex["date_debut"]
     au = ctx.arg("au") or ex["date_fin"]
-    resultat = construit_tcr(societe_id, du, au)
+    perimetre = ctx.perimetre()
+    resultat = construit_tcr(societe_id, du, au, perimetre=perimetre)
     resultat["societe"] = compta.societe(societe_id)
     resultat["exercice"] = ex
+    resultat["perimetre"] = perimetre or "tous"
+    resultat["libelle_perimetre"] = compta.LIBELLES_VUE.get(perimetre or "tous", "")
     return resultat
 
 
@@ -373,9 +387,12 @@ def api_flux(ctx):
     ex = compta.exercice(ctx.arg_int("exercice"))
     du = ctx.arg("du") or ex["date_debut"]
     au = ctx.arg("au") or ex["date_fin"]
-    resultat = construit_flux(societe_id, du, au)
+    perimetre = ctx.perimetre()
+    resultat = construit_flux(societe_id, du, au, perimetre=perimetre)
     resultat["societe"] = compta.societe(societe_id)
     resultat["exercice"] = ex
+    resultat["perimetre"] = perimetre or "tous"
+    resultat["libelle_perimetre"] = compta.LIBELLES_VUE.get(perimetre or "tous", "")
     return resultat
 
 
@@ -405,9 +422,10 @@ def api_export_etats(ctx):
     soc = compta.societe(societe_id)
     du, au = ex["date_debut"], ex["date_fin"]
 
-    bilan = construit_bilan(societe_id, du, au)
-    tcr = construit_tcr(societe_id, du, au)
-    flux = construit_flux(societe_id, du, au)
+    perimetre = ctx.perimetre("declare")
+    bilan = construit_bilan(societe_id, du, au, perimetre=perimetre)
+    tcr = construit_tcr(societe_id, du, au, perimetre=perimetre)
+    flux = construit_flux(societe_id, du, au, perimetre=perimetre)
 
     classeur = tableur.Classeur()
 
@@ -416,6 +434,7 @@ def api_export_etats(ctx):
         (f"NIF : {soc['nif'] or '—'}", f"RC : {soc['rc'] or '—'}"),
         (f"Exercice : {ex['libelle']}",
          f"Du {util.date_fr(du)} au {util.date_fr(au)}"),
+        (f"Périmètre : {compta.LIBELLES_VUE.get(perimetre or 'tous', '')}", ""),
     ]
 
     f = classeur.feuille("Bilan")

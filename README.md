@@ -13,7 +13,18 @@ déclaration **G n° 50**, gestion des **ventes sur plan (loi n° 11-04)** et de
 
 ---
 
+> **Vous installez pour quelqu'un d'autre ?** Le [GUIDE.md](GUIDE.md) contient
+> les marches à suivre, séparées par public : installation sur le PC, accès à
+> distance depuis l'étranger, et réception des chiffres sur le téléphone du
+> dirigeant.
+
 ## Démarrer
+
+**Windows** — double-cliquez sur `INSTALLER.bat`. Il trouve Python, ou le
+télécharge tout seul si le poste n'en a pas, crée le raccourci du Bureau et
+propose le démarrage automatique. Aucun droit administrateur.
+
+**Linux / macOS**
 
 ```bash
 python3 app.py
@@ -22,8 +33,8 @@ python3 app.py
 Le navigateur s'ouvre sur `http://127.0.0.1:8781`. Au premier lancement, vous
 créez votre compte et le dossier comptable de votre entreprise.
 
-Sous Windows : double-cliquez sur `LANCER.bat`.
-Sous Linux ou macOS : double-cliquez sur `lancer.sh` (ou `./lancer.sh`).
+Ensuite, pour ouvrir l'application : le raccourci **Cabinet Immo** du Bureau
+(Windows), ou `./lancer.sh` (Linux, macOS).
 
 ### Découvrir avec un jeu d'essai
 
@@ -104,6 +115,21 @@ on la corrige par extourne, ce qui préserve la piste d'audit.
 > chantier sont stockées en travaux en cours (332 / 723) puis transférées en
 > produits finis (355 / 724) à l'achèvement.
 
+### Déclaré et hors déclaration
+
+Chaque écriture porte un **périmètre** : `déclaré` ou `hors déclaration`.
+
+* Les déclarations fiscales (G50, IBS, livres de TVA) ne retiennent que le
+  périmètre déclaré, et **le disent en tête de document**. La G50 indique en
+  clair combien d'opérations en sont exclues et pour quel montant.
+* Le bilan, le compte de résultat et la balance se calculent sur le périmètre
+  choisi et le mentionnent sur l'export.
+* Un sélecteur global bascule entre la vue déclarée, la vue hors déclaration
+  et la vue réelle qui additionne les deux — celle qui sert à piloter la
+  trésorerie effective.
+* L'écran **Déclaré / hors décl.** compare les deux, mois par mois, et donne
+  la part que représente le hors déclaration.
+
 ### Fiscalité algérienne
 
 * **Déclaration G n° 50** calculée depuis la comptabilité : TVA collectée et déductible,
@@ -125,6 +151,21 @@ on la corrige par extourne, ce qui préserve la piste d'audit.
 
 * Registre, plans d'amortissement linéaire et dégressif, prorata temporis au mois
 * Écriture d'acquisition, dotations de l'exercice, cession avec plus ou moins-value
+
+### Résumés sur téléphone
+
+Le dirigeant reçoit la situation sans se connecter à l'application :
+trésorerie, chiffre d'affaires, résultat, loyers impayés, échéances VSP,
+avancement des programmes et prochaine échéance déclarative.
+
+* **Telegram** — gratuit et instantané. Le destinataire s'appaire avec un code
+  à six caractères, puis reçoit le résumé à l'heure choisie. Il peut écrire
+  « situation », « trésorerie » ou « loyers » et obtenir la réponse dans la
+  seconde. Un téléphone non appairé n'obtient aucune donnée.
+* **Courriel** — via le serveur SMTP de votre choix.
+
+Le message part du poste du comptable. Aucune donnée n'est hébergée ailleurs,
+aucun service payant n'intervient.
 
 ---
 
@@ -174,6 +215,25 @@ synchronisé) et le désigner au lancement :
 python3 app.py --donnees /chemin/vers/le/dossier
 ```
 
+### Mises à jour
+
+Le code et les données vivent séparément : une mise à jour remplace le
+programme, jamais le dossier `donnees/`.
+
+```bash
+python3 outils/mise_a_jour.py nouvelle_version.zip   # ou METTRE-A-JOUR.bat
+python3 outils/mise_a_jour.py --annuler              # retour arrière
+```
+
+L'outil sauvegarde les données, met la version actuelle de côté, installe la
+nouvelle, applique les **migrations de schéma** puis vérifie l'intégrité et
+l'équilibre de la comptabilité. Si l'un de ces contrôles échoue, il restaure
+automatiquement la version précédente.
+
+Les migrations sont versionnées et idempotentes : une base existante reçoit
+les nouvelles colonnes et tables sans qu'aucune donnée saisie ne soit modifiée,
+et une copie de la base est prise avant toute transformation.
+
 ### Sauvegardes
 
 * Une sauvegarde automatique est créée à chaque fermeture propre de l'application.
@@ -199,7 +259,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 ## Vérifier que tout fonctionne
 
 ```bash
-python3 outils/test_fonctionnel.py   # 80 contrôles métier et comptables
+python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
 python3 outils/test_http.py          # 40 contrôles du serveur et de l'interface
 python3 app.py --verifier            # intégrité de vos données
 ```
@@ -234,12 +294,18 @@ modules/
 ├── immobilisations.py      amortissements et cessions
 ├── etats.py                bilan, TCR, flux de trésorerie
 ├── documents.py            éditions imprimables
-└── fichiers.py             pièces jointes, sauvegarde, restauration
+├── fichiers.py             pièces jointes, sauvegarde, restauration
+└── rapports.py             résumés Telegram et courriel
 reference/
 ├── plan_comptable_scf.json nomenclature SCF et modèles d'échéancier
 └── parametres_fiscaux.json taux et barèmes par année
 web/                        interface (HTML, CSS et JavaScript sans dépendance)
-outils/                     tests et générateur de données de démonstration
+outils/
+├── test_fonctionnel.py     96 contrôles métier
+├── test_http.py            40 contrôles serveur et interface
+├── donnees_demonstration.py jeu d'essai complet
+├── installer.ps1           installation Windows sans droits administrateur
+└── mise_a_jour.py          mise à jour avec migrations et retour arrière
 ```
 
 ### Deux règles internes
@@ -250,7 +316,12 @@ et calculé en centimes entiers ; les taux sont en centièmes de pour-cent
 
 **Il n'existe qu'un seul chemin d'écriture comptable.** Tous les modules passent
 par `comptabilite.enregistre_ecriture`, qui contrôle l'équilibre, l'existence des
-comptes, l'ouverture de l'exercice et enregistre l'origine du mouvement.
+comptes, l'ouverture de l'exercice, enregistre l'origine du mouvement et son
+périmètre déclaratif.
+
+**Le schéma est versionné.** `noyau/base.py` porte un numéro de version et une
+liste de migrations idempotentes. Toute évolution de structure passe par là,
+ce qui rend les mises à jour sûres sur une base contenant déjà des écritures.
 
 ---
 
@@ -282,6 +353,18 @@ la saisie.
 **Comment corriger une facture déjà validée ?** Par un avoir. Les écritures
 validées ne sont pas modifiables afin de préserver la piste d'audit exigée en cas
 de contrôle.
+
+**Comment mon père voit-il les chiffres sans utiliser l'application ?**
+Paramètres → Notifications : il reçoit un résumé sur Telegram, automatiquement
+ou à la demande. Voir le [GUIDE.md](GUIDE.md), section 3.
+
+**Puis-je consulter depuis l'étranger ?** Oui, via un réseau privé Tailscale
+entre les deux ordinateurs — rien n'est exposé sur Internet. Voir le
+[GUIDE.md](GUIDE.md), section 2.
+
+**Une mise à jour peut-elle effacer mes données ?** Non. Le dossier `donnees/`
+n'est jamais touché, une sauvegarde est prise avant chaque mise à jour, et
+l'outil revient automatiquement en arrière si un contrôle échoue.
 
 **Puis-je rouvrir un exercice clôturé ?** Oui, un administrateur le peut
 (Paramètres → Exercices). Vérifiez ensuite les écritures de clôture et

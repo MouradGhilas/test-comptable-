@@ -129,6 +129,15 @@ class Contexte:
     def date(self, nom, defaut=None):
         return util.date_iso(self.corps.get(nom), defaut)
 
+    def perimetre(self, defaut=None):
+        """Périmètre déclaratif demandé : declare | hors_declaration | tous.
+
+        Transmis par l'interface sur chaque requête. `defaut` sert aux écrans
+        qui imposent leur propre périmètre (les déclarations fiscales, par
+        exemple, ne portent que sur le déclaré).
+        """
+        return self.arg("perimetre") or self.corps.get("perimetre") or defaut
+
     @property
     def nom_utilisateur(self):
         return self.utilisateur["identifiant"] if self.utilisateur else None

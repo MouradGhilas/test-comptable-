@@ -13,9 +13,10 @@ from . import immobilisations  # noqa: F401  amortissements
 from . import etats            # noqa: F401  bilan, TCR, flux de trésorerie
 from . import documents        # noqa: F401  éditions imprimables
 from . import fichiers         # noqa: F401  pièces jointes, sauvegardes
+from . import rapports         # noqa: F401  résumés Telegram / courriel
 
 __all__ = [
     "systeme", "comptabilite", "tiers", "facturation", "tresorerie", "agence",
     "promotion", "fiscalite", "paie", "immobilisations", "etats", "documents",
-    "fichiers",
+    "fichiers", "rapports",
 ]

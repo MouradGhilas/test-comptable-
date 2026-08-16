@@ -176,7 +176,7 @@ def api_saisie_rapide(ctx):
             societe_id, journal, date, libelle, lignes,
             piece=util.nettoie(ctx.champ("piece")),
             module="tresorerie", source_type="mouvement",
-            utilisateur=ctx.nom_utilisateur,
+            utilisateur=ctx.nom_utilisateur, perimetre=ctx.champ("perimetre"),
         )
     return {"ecriture_id": ecriture_id}
 

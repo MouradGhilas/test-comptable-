@@ -79,6 +79,10 @@ CREATE TABLE IF NOT EXISTS societes (
     -- Régime & fiscalité
     regime_tva        TEXT NOT NULL DEFAULT 'reel',   -- reel | franchise | exonere
     assujetti_tva     INTEGER NOT NULL DEFAULT 1,
+    -- Périmètre déclaratif appliqué par défaut aux nouvelles opérations
+    perimetre_defaut  TEXT NOT NULL DEFAULT 'declare',
+    -- Le dossier suit-il des opérations hors déclaration ?
+    suivi_hors_declaration INTEGER NOT NULL DEFAULT 1,
     taux_ibs          INTEGER,                  -- en centièmes de % (23 % => 2300)
     -- Spécifique promotion immobilière (loi n° 11-04)
     agrement_promoteur TEXT,                    -- n° d'agrément du promoteur
@@ -202,6 +206,9 @@ CREATE TABLE IF NOT EXISTS ecritures (
     source_type  TEXT,
     source_id    INTEGER,
     validee      INTEGER NOT NULL DEFAULT 0,   -- une écriture validée n'est plus modifiable
+    -- Périmètre déclaratif : 'declare' entre dans la G50, le bilan et la liasse ;
+    -- 'hors_declaration' est comptabilisé et suivi, mais exclu des déclarations.
+    perimetre    TEXT NOT NULL DEFAULT 'declare',
     cree_le      TEXT NOT NULL,
     cree_par     TEXT,
     modifie_le   TEXT
@@ -209,6 +216,8 @@ CREATE TABLE IF NOT EXISTS ecritures (
 CREATE INDEX IF NOT EXISTS idx_ecr_ex_date ON ecritures(exercice_id, date);
 CREATE INDEX IF NOT EXISTS idx_ecr_journal ON ecritures(journal_id, date);
 CREATE INDEX IF NOT EXISTS idx_ecr_source ON ecritures(module, source_type, source_id);
+-- Les index portant sur des colonnes ajoutées par migration sont créés par
+-- noyau/base.py (_cree_index_complementaires), après application des migrations.
 
 CREATE TABLE IF NOT EXISTS lignes (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -306,6 +315,7 @@ CREATE TABLE IF NOT EXISTS factures (
     mode_reglement  TEXT,                         -- espece | cheque | virement | traite
     -- brouillon | validee | payee | partielle | annulee
     statut          TEXT NOT NULL DEFAULT 'brouillon',
+    perimetre       TEXT NOT NULL DEFAULT 'declare',
     ecriture_id     INTEGER REFERENCES ecritures(id) ON DELETE SET NULL,
     notes           TEXT,
     conditions      TEXT,
@@ -348,6 +358,7 @@ CREATE TABLE IF NOT EXISTS reglements (
     facture_id    INTEGER REFERENCES factures(id) ON DELETE SET NULL,
     echeance_id   INTEGER,                     -- échéance VSP réglée
     quittance_id  INTEGER,
+    perimetre     TEXT NOT NULL DEFAULT 'declare',
     ecriture_id   INTEGER REFERENCES ecritures(id) ON DELETE SET NULL,
     cree_le       TEXT NOT NULL
 );
@@ -484,6 +495,7 @@ CREATE TABLE IF NOT EXISTS quittances (
     date_reversement TEXT,
     -- a_encaisser | encaissee | reversee | impayee | annulee
     statut          TEXT NOT NULL DEFAULT 'a_encaisser',
+    perimetre       TEXT NOT NULL DEFAULT 'declare',
     ecriture_id     INTEGER REFERENCES ecritures(id) ON DELETE SET NULL,
     notes           TEXT,
     cree_le         TEXT NOT NULL,
@@ -886,3 +898,25 @@ CREATE TABLE IF NOT EXISTS obligations (
     UNIQUE(societe_id, code, periode)
 );
 CREATE INDEX IF NOT EXISTS idx_oblig_date ON obligations(societe_id, date_limite);
+
+-- ---------------------------------------------------------------------------
+-- 16. Résumés envoyés au dirigeant (Telegram, courriel)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS canaux_notification (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    societe_id     INTEGER NOT NULL REFERENCES societes(id) ON DELETE CASCADE,
+    type           TEXT NOT NULL DEFAULT 'telegram',   -- telegram | email
+    libelle        TEXT NOT NULL,
+    -- identifiant de conversation Telegram, ou adresse de courriel
+    destinataire   TEXT,
+    -- code à envoyer au bot pour autoriser un destinataire
+    code_appairage TEXT,
+    frequence      TEXT NOT NULL DEFAULT 'quotidien',  -- quotidien | hebdomadaire | a_la_demande
+    heure          TEXT NOT NULL DEFAULT '08:00',
+    perimetre      TEXT NOT NULL DEFAULT 'tous',
+    actif          INTEGER NOT NULL DEFAULT 1,
+    dernier_envoi  TEXT,
+    cree_le        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_canaux_soc ON canaux_notification(societe_id, actif);

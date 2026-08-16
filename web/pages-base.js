@@ -481,6 +481,7 @@ App.pages.parametres = {
     const onglet = route.segments[1] || 'dossier';
     const onglets = [['dossier', 'Dossier'], ['exercices', 'Exercices'],
       ['plan', 'Plan comptable'], ['fiscalite', 'Fiscalité'],
+      ['notifications', 'Notifications'],
       ['utilisateurs', 'Utilisateurs'], ['sauvegarde', 'Sauvegarde & données']];
     zone.innerHTML = `<div class="onglets">${onglets.map(([v, l]) =>
       `<button class="${v === onglet ? 'actif' : ''}" onclick="navigue('/parametres/${v}')">${l}</button>`).join('')}</div>
@@ -488,7 +489,8 @@ App.pages.parametres = {
     const cible = $('#zone-onglet');
     const rendus = {
       dossier: ongletDossier, exercices: ongletExercices, plan: ongletPlan,
-      fiscalite: ongletFiscalite, utilisateurs: ongletUtilisateurs, sauvegarde: ongletSauvegarde,
+      fiscalite: ongletFiscalite, notifications: ongletNotifications,
+      utilisateurs: ongletUtilisateurs, sauvegarde: ongletSauvegarde,
     };
     await (rendus[onglet] || ongletDossier)(cible);
   },
@@ -785,4 +787,230 @@ async function restaure(nom) {
       },
     }],
   });
+}
+
+
+/* ------------------------------------------------- Déclaré / hors déclaration */
+
+App.pages.perimetres = {
+  titre: 'Déclaré et hors déclaration',
+  async afficher(zone) {
+    const d = await charge('/api/perimetres/synthese');
+    const dec = d.perimetres.declare;
+    const hors = d.perimetres.hors_declaration;
+    actionsPage('');
+
+    const mois = [...new Set(d.par_mois.map((l) => l.periode))];
+    const parMois = (periode, perimetre) =>
+      (d.par_mois.find((l) => l.periode === periode && l.perimetre === perimetre) || {}).produits || 0;
+    const maxi = Math.max(1, ...d.par_mois.map((l) => l.produits));
+
+    zone.innerHTML = `
+      <div class="message info">Cet écran compare ce qui entre dans les déclarations
+        et ce qui n'y entre pas. Les deux sont comptabilisés : la vue « réelle » du
+        tableau de bord additionne les deux, les états fiscaux ne reprennent que le
+        périmètre déclaré.</div>
+
+      <div class="grille c4" style="margin-bottom:16px">
+        ${indicateur('Produits déclarés', fm(dec.produits, true),
+          `${dec.nb_ecritures} écriture(s)`, 'accent')}
+        ${indicateur('Produits hors déclaration', fm(hors.produits, true),
+          `${hors.nb_ecritures} écriture(s)`, hors.produits ? 'danger' : '')}
+        ${indicateur('Part hors déclaration', ft(d.part_hors_declaration) + ' %',
+          jauge(d.part_hors_declaration, 10000,
+            d.part_hors_declaration > 3000 ? 'danger' : 'alerte'))}
+        ${indicateur('Résultat réel', fm(dec.resultat + hors.resultat, true),
+          `déclaré ${fm(dec.resultat)}`)}
+      </div>
+
+      <div class="grille c2">
+        ${carte('Comparaison', `<div class="enveloppe-table"><table class="donnees">
+          <thead><tr><th>Poste</th><th class="num">Déclaré</th>
+            <th class="num">Hors déclaration</th><th class="num">Réel</th></tr></thead>
+          <tbody>
+            <tr><td>Produits</td><td class="num">${fm(dec.produits)}</td>
+              <td class="num">${fm(hors.produits)}</td>
+              <td class="num gras">${fm(dec.produits + hors.produits)}</td></tr>
+            <tr><td>Charges</td><td class="num">${fm(dec.charges)}</td>
+              <td class="num">${fm(hors.charges)}</td>
+              <td class="num gras">${fm(dec.charges + hors.charges)}</td></tr>
+            <tr class="total"><td>Résultat</td><td class="num">${fm(dec.resultat)}</td>
+              <td class="num">${fm(hors.resultat)}</td>
+              <td class="num">${fm(dec.resultat + hors.resultat)}</td></tr>
+            <tr><td>Trésorerie mouvementée</td><td class="num">${fm(dec.tresorerie)}</td>
+              <td class="num">${fm(hors.tresorerie)}</td>
+              <td class="num gras">${fm(dec.tresorerie + hors.tresorerie)}</td></tr>
+            <tr><td>Nombre d'écritures</td><td class="num">${dec.nb_ecritures}</td>
+              <td class="num">${hors.nb_ecritures}</td>
+              <td class="num gras">${dec.nb_ecritures + hors.nb_ecritures}</td></tr>
+          </tbody></table></div>
+          ${d.plus_ancienne ? `<div class="aide">Opération hors déclaration la plus
+            ancienne sur la période : ${fdate(d.plus_ancienne)}.</div>` : ''}`, '', true)}
+
+        ${carte('Produits mois par mois', mois.length ? `
+          <div class="histogramme">
+            ${mois.map((m) => `
+              <div class="colonne" title="${fperiode(m)} — déclaré ${fm(parMois(m, 'declare'), true)}, hors déclaration ${fm(parMois(m, 'hors_declaration'), true)}">
+                <div class="barre produits" style="height:${Math.max(1, (parMois(m, 'declare') / maxi) * 100)}%"></div>
+                <div class="barre charges" style="height:${Math.max(1, (parMois(m, 'hors_declaration') / maxi) * 100)}%"></div>
+                <div class="etiq">${m.slice(5)}</div>
+              </div>`).join('')}
+          </div>
+          <div class="legende"><span class="p">Déclaré</span><span class="c">Hors déclaration</span></div>`
+          : '<div class="vide">Aucun produit sur la période.</div>')}
+      </div>`;
+  },
+};
+
+
+/* ------------------------------------------------------- Notifications -- */
+
+async function ongletNotifications(zone) {
+  const d = await charge('/api/notifications');
+  const apercu = await charge('/api/notifications/apercu');
+
+  zone.innerHTML = `
+    <div class="message info"><strong>Recevoir la situation sur son téléphone</strong>
+      Le résumé part de ce poste, à l'heure choisie ou à la demande. Aucun service
+      payant, aucune donnée hébergée ailleurs.</div>
+
+    ${carte('Destinataires', tableau([
+      { titre: 'Nom', rendu: (c) => `<strong>${ech(c.libelle)}</strong>` },
+      { titre: 'Canal', rendu: (c) => c.type === 'telegram' ? 'Telegram' : 'Courriel' },
+      {
+        titre: 'État',
+        rendu: (c) => c.destinataire
+          ? '<span class="etiquette succes">Appairé</span>'
+          : `<span class="etiquette alerte">Code : ${ech(c.code_appairage || '—')}</span>`,
+      },
+      { titre: 'Fréquence', rendu: (c) => c.frequence === 'a_la_demande' ? 'À la demande' : `${c.frequence} à ${c.heure}` },
+      { titre: 'Périmètre', rendu: (c) => badgePerimetre(c.perimetre) },
+      { titre: 'Dernier envoi', rendu: (c) => c.dernier_envoi || '—' },
+      { titre: 'Actif', classe: 'centre', rendu: (c) => c.actif ? '✓' : '✗' },
+      {
+        titre: '', classe: 'num',
+        rendu: (c) => `<button class="petit-bouton" onclick="envoieResume(${c.id})">Envoyer</button>
+          <button class="petit-bouton danger" onclick="supprimeCanal(${c.id})">Retirer</button>`,
+      },
+    ], d.canaux, {
+      icone: '📱',
+      messageVide: 'Aucun destinataire. Ajoutez-en un pour envoyer la situation.',
+    }), '<button class="primaire" onclick="ajouteCanal()">+ Destinataire</button>', true)}
+
+    <div class="grille c2">
+      ${carte('Telegram' + (d.telegram_configure ? ' ✓' : ''), `
+        <p class="petit">Créez un bot une seule fois : ouvrez Telegram, cherchez
+          <strong>@BotFather</strong>, envoyez <code>/newbot</code>, choisissez un nom,
+          puis collez ici le jeton qu'il vous donne.</p>
+        <label class="champ"><span>Jeton du bot</span>
+          <input id="tg-token" type="password" placeholder="${d.telegram_configure ? '•••••• (déjà enregistré)' : '123456789:AAE...'}"></label>
+        <button class="primaire" onclick="enregistreReglagesNotif()">Enregistrer</button>
+        <div class="separateur"></div>
+        <p class="petit"><strong>Côté destinataire :</strong> il installe Telegram,
+          ouvre votre bot, et envoie le code d'appairage affiché ci-dessus.
+          Ensuite il peut écrire « situation », « trésorerie » ou « loyers »
+          à tout moment et reçoit la réponse dans la seconde.</p>`)}
+
+      ${carte('Courriel' + (d.smtp_configure ? ' ✓' : ''), `
+        <p class="petit">Facultatif — utile si le destinataire préfère l'e-mail.</p>
+        <div class="ligne-champs">
+          <label class="champ"><span>Serveur SMTP</span>
+            <input id="smtp-hote" value="${ech(d.smtp.hote)}" placeholder="smtp.gmail.com"></label>
+          <label class="champ"><span>Port</span>
+            <input id="smtp-port" value="${ech(d.smtp.port)}" placeholder="587"></label>
+          <label class="champ"><span>Identifiant</span>
+            <input id="smtp-utilisateur" value="${ech(d.smtp.utilisateur)}"></label>
+          <label class="champ"><span>Mot de passe</span>
+            <input id="smtp-mot-de-passe" type="password" placeholder="inchangé"></label>
+          <label class="champ" style="grid-column:1/-1"><span>Adresse d'expédition</span>
+            <input id="smtp-expediteur" value="${ech(d.smtp.expediteur)}"></label>
+        </div>
+        <button class="primaire" onclick="enregistreReglagesNotif()">Enregistrer</button>`)}
+    </div>
+
+    ${carte('Aperçu du message envoyé', `<pre style="white-space:pre-wrap;font-family:inherit;
+      background:var(--fond-doux);padding:13px;border-radius:6px;margin:0;font-size:12.5px">${ech(apercu.texte)}</pre>`)}`;
+}
+
+async function enregistreReglagesNotif() {
+  const donnees = {};
+  const jeton = $('#tg-token')?.value;
+  if (jeton) donnees.telegram_token = jeton;
+  for (const [id, cle] of [['smtp-hote', 'smtp_hote'], ['smtp-port', 'smtp_port'],
+    ['smtp-utilisateur', 'smtp_utilisateur'], ['smtp-expediteur', 'smtp_expediteur']]) {
+    const el = $('#' + id);
+    if (el) donnees[cle] = el.value;
+  }
+  const mdp = $('#smtp-mot-de-passe')?.value;
+  if (mdp) donnees.smtp_mot_de_passe = mdp;
+  try {
+    await envoie('/api/notifications/reglages', donnees, 'PUT');
+    notifie('Réglages enregistrés.', 'succes');
+    afficheRoute();
+  } catch (err) { erreur(err); }
+}
+
+async function ajouteCanal() {
+  const champs = [
+    { nom: 'libelle', libelle: 'Nom du destinataire', requis: true, aide: 'Ex : Papa' },
+    {
+      nom: 'type', libelle: 'Canal', type: 'select', vide: false,
+      options: [['telegram', 'Telegram (instantané, gratuit)'], ['email', 'Courriel']],
+    },
+    {
+      nom: 'destinataire', libelle: 'Adresse (courriel uniquement)',
+      aide: 'Pour Telegram, laissez vide : un code d\'appairage sera généré.',
+    },
+    {
+      nom: 'frequence', libelle: 'Fréquence', type: 'select', vide: false,
+      options: [['quotidien', 'Tous les jours'], ['hebdomadaire', 'Chaque dimanche'],
+        ['a_la_demande', 'Uniquement à la demande']],
+    },
+    { nom: 'heure', libelle: 'Heure d\'envoi', type: 'time', defaut: '08:00' },
+    {
+      nom: 'perimetre', libelle: 'Chiffres transmis', type: 'select', vide: false,
+      options: [['tous', 'Réels (déclaré + hors déclaration)'],
+        ['declare', 'Déclaré uniquement']],
+    },
+    { nom: 'actif', libelle: 'Actif', type: 'case', defaut: true },
+  ];
+  modale({
+    titre: 'Nouveau destinataire',
+    contenu: formulaire(champs), large: true,
+    boutons: [{ libelle: 'Annuler' }, {
+      libelle: 'Ajouter', classe: 'primaire',
+      action: async (r) => {
+        const d = await envoie('/api/notifications', litFormulaire(r, champs));
+        if (d.code_appairage) {
+          notifie(`Destinataire créé. Code d'appairage : ${d.code_appairage}`, 'succes', 15000);
+        } else {
+          notifie('Destinataire créé.', 'succes');
+        }
+        afficheRoute();
+      },
+    }],
+  });
+}
+
+async function envoieResume(canalId) {
+  try {
+    const d = await envoie('/api/notifications/envoyer', { canal_id: canalId });
+    const echecs = d.resultats.filter((r) => !r.ok);
+    if (echecs.length) {
+      notifie(`Échec : ${echecs.map((e) => e.erreur).join(' · ')}`, 'danger', 9000);
+    } else {
+      notifie(`Résumé envoyé (${d.envoyes} destinataire(s)).`, 'succes');
+    }
+    afficheRoute();
+  } catch (err) { erreur(err); }
+}
+
+async function supprimeCanal(id) {
+  if (!await confirme('Retirer ce destinataire ?',
+    'Il ne recevra plus de résumé.', 'Retirer')) return;
+  try {
+    await envoie(`/api/notifications/${id}`, {}, 'DELETE');
+    notifie('Destinataire retiré.', 'succes');
+    afficheRoute();
+  } catch (err) { erreur(err); }
 }
