@@ -65,6 +65,31 @@ def trouve_port(hote: str, depart: int) -> int:
     raise SystemExit(f"Aucun port libre entre {depart} et {depart + 40}.")
 
 
+def hote_joignable(hote: str) -> str:
+    """0.0.0.0 signifie « toutes les interfaces » : on s'y adresse en local."""
+    return "127.0.0.1" if hote in ("0.0.0.0", "", "::") else hote
+
+
+def instance_existante(hote: str, port: int) -> dict | None:
+    """Le port est-il occupé par une autre instance de Cabinet Immo ?
+
+    Sans ce contrôle, un second démarrage ouvrait un serveur sur un autre port :
+    l'onglet déjà ouvert par le premier continuait de viser l'ancienne adresse
+    et tombait en « NetworkError » dès que celle-ci s'arrêtait.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+    from noyau.config import APPLICATION
+    adresse = f"http://{hote_joignable(hote)}:{port}/api/etat"
+    try:
+        with urllib.request.urlopen(adresse, timeout=2) as reponse:
+            etat = json.loads(reponse.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    return etat if etat.get("application") == APPLICATION else None
+
+
 def principal():
     arguments = analyse_arguments()
 
@@ -110,11 +135,22 @@ def principal():
     hote = config["hote"]
     port = config["port"]
     if not port_disponible(hote, port):
+        deja = instance_existante(hote, port)
+        if deja:
+            # Une seule instance : deux serveurs sur la même base feraient
+            # cohabiter deux adresses et deux planificateurs de résumés.
+            adresse = f"http://{hote_joignable(hote)}:{port}/"
+            print(f"{APPLICATION} est déjà en cours d'exécution.")
+            print(f"Ouverture de la fenêtre existante : {adresse}")
+            if config.get("ouvrir_navigateur", True) and not arguments.sans_navigateur:
+                webbrowser.open(adresse)
+            return 0
         nouveau = trouve_port(hote, port + 1)
-        print(f"Le port {port} est occupé, utilisation du port {nouveau}.")
+        print(f"Le port {port} est occupé par un autre programme, "
+              f"utilisation du port {nouveau}.")
         port = nouveau
 
-    adresse = f"http://{hote}:{port}/"
+    adresse = f"http://{hote_joignable(hote)}:{port}/"
     installe = bool(db.valeur("SELECT COUNT(*) FROM utilisateurs", (), 0))
 
     largeur = 68

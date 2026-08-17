@@ -5,6 +5,8 @@ exercices, utilisateurs et tableau de bord.
 from __future__ import annotations
 
 import json
+import platform
+import sys
 
 from noyau import base as db
 from noyau import util
@@ -45,6 +47,33 @@ def api_etat(ctx):
             "WHERE actif = 1 ORDER BY raison_sociale"
         )
     return reponse
+
+
+@route("GET", "/api/diagnostic")
+def api_diagnostic(ctx):
+    """Ce qu'il faut savoir pour dépanner à distance, en une seule page."""
+    ctx.exige_role("admin", "comptable")
+    lignes_journal = []
+    fichier = config.journal_incidents
+    if fichier.exists():
+        try:
+            lignes_journal = fichier.read_text(
+                encoding="utf-8", errors="replace").splitlines()[-200:]
+        except OSError as err:
+            lignes_journal = [f"Journal illisible : {err}"]
+    return {
+        "application": APPLICATION,
+        "version": VERSION,
+        "python": sys.version.split()[0],
+        "systeme": f"{platform.system()} {platform.release()}",
+        "dossier_donnees": str(config.dossier_donnees),
+        "base_de_donnees": str(config.base_de_donnees),
+        "taille_base": (config.base_de_donnees.stat().st_size
+                        if config.base_de_donnees.exists() else 0),
+        "adresse": ctx.handler.headers.get("Host", ""),
+        "journal": lignes_journal,
+        "fichier_journal": str(fichier),
+    }
 
 
 @route("POST", "/api/installation", public=True)

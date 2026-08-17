@@ -209,6 +209,9 @@ CREATE TABLE IF NOT EXISTS ecritures (
     -- Périmètre déclaratif : 'declare' entre dans la G50, le bilan et la liasse ;
     -- 'hors_declaration' est comptabilisé et suivi, mais exclu des déclarations.
     perimetre    TEXT NOT NULL DEFAULT 'declare',
+    -- Deux écritures issues d'une même opération réelle (part déclarée et part
+    -- hors déclaration) partagent cette référence. NULL = opération simple.
+    operation_ref TEXT,
     cree_le      TEXT NOT NULL,
     cree_par     TEXT,
     modifie_le   TEXT

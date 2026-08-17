@@ -23,7 +23,13 @@ from pathlib import Path
 
 from . import base as db
 from . import util
-from .config import config, APPLICATION, VERSION
+from .config import config, journalise, APPLICATION, VERSION
+
+#: Ruptures de connexion normales quand le navigateur change de page.
+#: Windows lève ConnectionAbortedError / ConnectionResetError là où les
+#: systèmes Unix lèvent BrokenPipeError.
+ERREURS_CONNEXION = (BrokenPipeError, ConnectionAbortedError,
+                     ConnectionResetError)
 
 # ---------------------------------------------------------------------------
 # Erreurs applicatives
@@ -231,6 +237,13 @@ class Gestionnaire(BaseHTTPRequestHandler):
     server_version = f"{APPLICATION}/{VERSION}"
     protocol_version = "HTTP/1.1"
 
+    #: Ferme les connexions abandonnées (mise en veille, coupure du réseau
+    #: privé) pour ne pas accumuler un fil par connexion fantôme. Volontairement
+    #: plus long que le délai d'inactivité des navigateurs, qui ferment donc
+    #: les leurs les premiers : une connexion n'est jamais coupée sous leurs
+    #: pieds au moment où ils la réutilisent.
+    timeout = 300
+
     # -- journalisation silencieuse ----------------------------------------
     def log_message(self, format, *args):   # noqa: A002
         if os.environ.get("CABINET_IMMO_DEBUG"):
@@ -285,16 +298,35 @@ class Gestionnaire(BaseHTTPRequestHandler):
             raise ErreurApplicative("Ressource introuvable.", 404)
 
         except ErreurApplicative as err:
-            self._json({"erreur": err.message, "details": err.details}, err.code)
-        except BrokenPipeError:
-            pass
+            self._repond_erreur({"erreur": err.message, "details": err.details},
+                                err.code)
+        except ERREURS_CONNEXION:
+            self.close_connection = True        # le navigateur est parti
         except Exception as err:                        # noqa: BLE001
+            trace = traceback.format_exc()
             traceback.print_exc()
-            self._json(
+            journalise(f"{methode} {self.path}", str(err), trace)
+            self._repond_erreur(
                 {"erreur": "Erreur interne : " + str(err),
-                 "trace": traceback.format_exc() if os.environ.get("CABINET_IMMO_DEBUG") else None},
+                 "trace": trace if os.environ.get("CABINET_IMMO_DEBUG") else None},
                 500,
             )
+
+    def _repond_erreur(self, donnees, code):
+        """Envoie l'erreur — et ferme proprement si l'envoi échoue.
+
+        Une exception qui s'échapperait d'ici laisserait la requête sans
+        aucune réponse : le navigateur n'afficherait qu'un « NetworkError »,
+        sans le message qui explique le problème.
+        """
+        try:
+            self._json(donnees, code)
+        except ERREURS_CONNEXION:
+            self.close_connection = True
+        except Exception:                               # noqa: BLE001
+            journalise("reponse", "envoi de l'erreur impossible",
+                       traceback.format_exc())
+            self.close_connection = True
 
     def _jeton(self):
         entete = self.headers.get("Cookie", "")
@@ -312,6 +344,10 @@ class Gestionnaire(BaseHTTPRequestHandler):
         if longueur <= 0:
             return {}, b""
         if longueur > TAILLE_MAX_CORPS:
+            # Le corps n'est pas lu : la connexion ne peut plus servir à une
+            # requête suivante, sans quoi les octets restants seraient pris
+            # pour la requête d'après.
+            self.close_connection = True
             raise ErreurApplicative("Fichier trop volumineux (32 Mio maximum).", 413)
         brut = self.rfile.read(longueur)
         type_contenu = (self.headers.get("Content-Type") or "").split(";")[0].strip()

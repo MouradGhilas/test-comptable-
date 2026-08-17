@@ -260,6 +260,143 @@ class Classeur:
         return tampon.getvalue()
 
 
+# ---------------------------------------------------------------------------
+# Lecture
+# ---------------------------------------------------------------------------
+
+#: Espace de noms des feuilles de calcul OOXML.
+_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+#: Origine des dates Excel (le système 1900 compte un 29 février fictif, d'où
+#: le décalage de deux jours plutôt qu'un).
+_ORIGINE_EXCEL = datetime.date(1899, 12, 30)
+
+
+def _reference_colonne(reference: str) -> int:
+    """« C12 » -> 2 (index de colonne, à partir de zéro)."""
+    lettres = "".join(c for c in reference if c.isalpha())
+    index = 0
+    for lettre in lettres:
+        index = index * 26 + (ord(lettre.upper()) - 64)
+    return index - 1
+
+
+def _texte_partage(archive: zipfile.ZipFile) -> list[str]:
+    import xml.etree.ElementTree as ET
+    try:
+        racine = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+    except KeyError:
+        return []
+    valeurs = []
+    for element in racine.findall(f"{_NS}si"):
+        # Une chaîne peut être découpée en plusieurs fragments mis en forme.
+        valeurs.append("".join(t.text or "" for t in element.iter(f"{_NS}t")))
+    return valeurs
+
+
+def _noms_feuilles(archive: zipfile.ZipFile) -> list[str]:
+    import xml.etree.ElementTree as ET
+    try:
+        racine = ET.fromstring(archive.read("xl/workbook.xml"))
+    except KeyError:
+        return []
+    return [f.get("name", "") for f in racine.iter(f"{_NS}sheet")]
+
+
+def lit_classeur(donnees: bytes, feuille: int = 0) -> list[list]:
+    """Lit un .xlsx et renvoie la feuille demandée sous forme de lignes.
+
+    Les valeurs sont rendues telles qu'affichées par Excel : texte, nombre
+    (int ou float) ou date ISO. Les cellules vides deviennent des chaînes
+    vides, afin que chaque ligne ait la longueur de la plus large.
+    """
+    import xml.etree.ElementTree as ET
+    with zipfile.ZipFile(io.BytesIO(donnees)) as archive:
+        partages = _texte_partage(archive)
+        noms = [n for n in archive.namelist()
+                if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")]
+        if not noms:
+            raise ValueError("Ce fichier ne contient aucune feuille de calcul.")
+        noms.sort(key=lambda n: int("".join(c for c in n if c.isdigit()) or 0))
+        if feuille >= len(noms):
+            raise ValueError(f"Le fichier ne contient que {len(noms)} feuille(s).")
+        racine = ET.fromstring(archive.read(noms[feuille]))
+
+    lignes = []
+    for rang in racine.iter(f"{_NS}row"):
+        cellules: dict[int, object] = {}
+        for cellule in rang.findall(f"{_NS}c"):
+            index = _reference_colonne(cellule.get("r") or "A1")
+            cellules[index] = _valeur_cellule(cellule, partages)
+        if not cellules:
+            lignes.append([])
+            continue
+        largeur = max(cellules) + 1
+        lignes.append([cellules.get(i, "") for i in range(largeur)])
+    return lignes
+
+
+def _valeur_cellule(cellule, partages: list[str]):
+    type_cellule = cellule.get("t")
+    if type_cellule == "inlineStr":
+        return "".join(t.text or "" for t in cellule.iter(f"{_NS}t"))
+    noeud = cellule.find(f"{_NS}v")
+    if noeud is None or noeud.text is None:
+        return ""
+    brut = noeud.text
+    if type_cellule == "s":
+        indice = int(brut)
+        return partages[indice] if 0 <= indice < len(partages) else ""
+    if type_cellule in ("str", "e"):
+        return brut
+    if type_cellule == "b":
+        return brut == "1"
+    try:
+        nombre_ = float(brut)
+    except ValueError:
+        return brut
+    # Une date est un nombre de jours ; le style seul les distingue. On s'en
+    # remet au format de la cellule quand il correspond à un style de date.
+    if cellule.get("s") in _STYLES_DATE and 1 < nombre_ < 300000:
+        return (_ORIGINE_EXCEL + datetime.timedelta(days=int(nombre_))).isoformat()
+    return int(nombre_) if nombre_.is_integer() else nombre_
+
+
+#: Index de style correspondant au format date dans les classeurs que nous
+#: produisons. Les fichiers venus d'ailleurs sont lus comme des nombres, que
+#: l'import sait interpréter à partir du texte saisi.
+_STYLES_DATE = {str(DATE)}
+
+
+def lit_tableau(donnees: bytes, feuille: int = 0) -> tuple[list[str], list[list]]:
+    """Sépare la ligne d'en-têtes des lignes de données.
+
+    Accepte aussi le CSV francophone (séparateur « ; »), pour ceux qui
+    enregistrent depuis Excel sans conserver le format .xlsx.
+    """
+    if donnees[:2] != b"PK":
+        return _lit_csv(donnees)
+    lignes = lit_classeur(donnees, feuille)
+    # Les modèles comportent un titre et une notice avant les en-têtes : on
+    # cherche la première ligne qui ressemble à une ligne d'en-têtes.
+    for index, ligne in enumerate(lignes):
+        remplies = [str(c).strip() for c in ligne if str(c).strip()]
+        if len(remplies) >= 2:
+            return ([str(c).strip() for c in ligne], lignes[index + 1:])
+    return ([], [])
+
+
+def _lit_csv(donnees: bytes) -> tuple[list[str], list[list]]:
+    import csv
+    texte_brut = donnees.decode("utf-8-sig", errors="replace")
+    separateur = ";" if texte_brut.count(";") >= texte_brut.count(",") else ","
+    rangs = list(csv.reader(io.StringIO(texte_brut), delimiter=separateur))
+    rangs = [r for r in rangs if any(str(c).strip() for c in r)]
+    if not rangs:
+        return ([], [])
+    return ([c.strip() for c in rangs[0]], rangs[1:])
+
+
 def csv_octets(entetes: list[str], rangs: list[list]) -> bytes:
     """Export CSV compatible Excel francophone (séparateur ';', BOM UTF-8)."""
     import csv

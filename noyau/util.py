@@ -162,19 +162,28 @@ def maintenant() -> str:
     return _dt.datetime.now().replace(microsecond=0).isoformat(sep=" ")
 
 
+def _date_reelle(iso: str, defaut: str | None) -> str | None:
+    """Refuse les dates impossibles : le 32/13 n'existe pas plus qu'un 30/02."""
+    try:
+        _dt.date(int(iso[0:4]), int(iso[5:7]), int(iso[8:10]))
+    except ValueError:
+        return defaut
+    return iso
+
+
 def date_iso(valeur, defaut: str | None = None) -> str | None:
     """Normalise une date vers 'AAAA-MM-JJ'. Accepte jj/mm/aaaa."""
     if not valeur:
         return defaut
     texte = str(valeur).strip()
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", texte):
-        return texte
+        return _date_reelle(texte, defaut)
     m = re.fullmatch(r"(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})", texte)
     if m:
         j, mo, a = m.groups()
-        return f"{a}-{int(mo):02d}-{int(j):02d}"
+        return _date_reelle(f"{a}-{int(mo):02d}-{int(j):02d}", defaut)
     if re.fullmatch(r"\d{4}-\d{2}", texte):
-        return texte + "-01"
+        return _date_reelle(texte + "-01", defaut)
     return defaut
 
 

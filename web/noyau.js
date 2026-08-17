@@ -19,6 +19,15 @@ const App = {
 
 /* ---------------------------------------------------------------- API ---- */
 
+/** Le serveur est injoignable : ni erreur métier, ni bogue applicatif. */
+class ErreurReseau extends Error {
+  constructor() {
+    super("L'application n'est plus en cours d'exécution sur cet ordinateur, "
+        + 'ou sa fenêtre a été fermée. Vos données sont intactes.');
+    this.nom = 'reseau';
+  }
+}
+
 async function api(chemin, options = {}) {
   const config = { headers: {}, credentials: 'same-origin', ...options };
   if (config.corps !== undefined) {
@@ -27,7 +36,16 @@ async function api(chemin, options = {}) {
     config.body = JSON.stringify(config.corps);
     delete config.corps;
   }
-  const reponse = await fetch(chemin, config);
+  let reponse;
+  try {
+    reponse = await fetch(chemin, config);
+  } catch (err) {
+    // « NetworkError when attempting to fetch resource » sous Firefox,
+    // « Failed to fetch » sous Chrome : illisibles pour un comptable.
+    signaleServeurInjoignable();
+    throw new ErreurReseau();
+  }
+  serveurRepond();
   const type = reponse.headers.get('Content-Type') || '';
   if (!type.includes('application/json')) {
     if (!reponse.ok) throw new Error(`Erreur ${reponse.status}`);
@@ -42,6 +60,53 @@ async function api(chemin, options = {}) {
     throw new Error(donnees.erreur || `Erreur ${reponse.status}`);
   }
   return donnees;
+}
+
+/* -------------------------------------------------- perte de connexion --- */
+
+let _serveurInjoignable = false;
+let _sondeReconnexion = null;
+
+/** Affiche un bandeau persistant et tente de rétablir la liaison. */
+function signaleServeurInjoignable() {
+  if (_serveurInjoignable) return;
+  _serveurInjoignable = true;
+
+  let bandeau = document.getElementById('bandeau-hors-ligne');
+  if (!bandeau) {
+    bandeau = document.createElement('div');
+    bandeau.id = 'bandeau-hors-ligne';
+    bandeau.className = 'bandeau-hors-ligne';
+    document.body.appendChild(bandeau);
+  }
+  bandeau.innerHTML = `
+    <strong>Connexion perdue avec l'application.</strong>
+    <span>Elle a été fermée, ou une autre fenêtre l'a remplacée.
+    Aucune donnée n'est perdue&nbsp;: rouvrez-la depuis le raccourci
+    « Cabinet Immo », puis cliquez sur Réessayer.</span>
+    <button class="primaire" id="bouton-reessayer">Réessayer</button>`;
+  bandeau.hidden = false;
+  bandeau.querySelector('#bouton-reessayer')
+         .addEventListener('click', () => location.reload());
+
+  // Le serveur peut revenir seul (redémarrage) : on le guette.
+  if (!_sondeReconnexion) {
+    _sondeReconnexion = setInterval(async () => {
+      try {
+        const rep = await fetch('/api/etat', { cache: 'no-store' });
+        if (rep.ok) location.reload();
+      } catch (err) { /* toujours absent */ }
+    }, 3000);
+  }
+}
+
+function serveurRepond() {
+  if (!_serveurInjoignable) return;
+  _serveurInjoignable = false;
+  clearInterval(_sondeReconnexion);
+  _sondeReconnexion = null;
+  const bandeau = document.getElementById('bandeau-hors-ligne');
+  if (bandeau) bandeau.hidden = true;
 }
 
 function requete(chemin, parametres = {}) {

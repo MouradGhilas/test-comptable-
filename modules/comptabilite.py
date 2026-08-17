@@ -27,6 +27,11 @@ PERIMETRES = {
     "hors_declaration": "Hors déclaration",
 }
 
+#: Champs d'une ligne recopiés tels quels dans chacune des deux parts d'une
+#: opération saisie en totalité.
+_CHAMPS_LIGNE = ("compte", "libelle", "tiers_id", "echeance", "programme_id",
+                 "lot_id", "bien_id", "poste_budget")
+
 LIBELLES_VUE = {
     "declare": "Périmètre déclaré",
     "hors_declaration": "Hors déclaration",
@@ -146,6 +151,7 @@ def enregistre_ecriture(
     valider: bool = True,
     exercice_id: int | None = None,
     perimetre: str | None = None,
+    operation_ref: str | None = None,
 ) -> int:
     """Enregistre une écriture équilibrée. À appeler dans une transaction.
 
@@ -242,6 +248,7 @@ def enregistre_ecriture(
         "source_id": source_id,
         "validee": 1 if valider else 0,
         "perimetre": perimetre,
+        "operation_ref": operation_ref,
         "cree_le": util.maintenant(),
         "cree_par": utilisateur,
     })
@@ -253,6 +260,73 @@ def enregistre_ecriture(
              {"journal": jrn["code"], "montant": total_debit, "libelle": libelle,
               "perimetre": perimetre}, utilisateur)
     return ecriture_id
+
+
+def enregistre_operation(societe_id: int, journal_code: str, date: str,
+                         libelle: str, lignes: list[dict], **options) -> dict:
+    """Enregistre une opération dont le total se décompose en deux parts.
+
+    Chaque ligne porte quatre montants : `debit_declare`, `debit_hors`,
+    `credit_declare`, `credit_hors`. Deux écritures sont produites — l'une
+    déclarée, l'autre hors déclaration — reliées par une même référence
+    d'opération.
+
+    Elles ne sont volontairement pas fondues en une seule écriture : une
+    écriture appartient tout entière à un périmètre, sans quoi la G50, le
+    bilan et la liasse ne pourraient plus être établis sur le seul déclaré.
+    Le total, lui, reste consultable d'un bloc grâce à la référence commune.
+    """
+    parts = {
+        "declare": [{"debit": int(l.get("debit_declare") or 0),
+                     "credit": int(l.get("credit_declare") or 0),
+                     **{c: l.get(c) for c in _CHAMPS_LIGNE}} for l in lignes],
+        "hors_declaration": [{"debit": int(l.get("debit_hors") or 0),
+                              "credit": int(l.get("credit_hors") or 0),
+                              **{c: l.get(c) for c in _CHAMPS_LIGNE}} for l in lignes],
+    }
+
+    for nom, jeu in parts.items():
+        debit = sum(l["debit"] for l in jeu)
+        credit = sum(l["credit"] for l in jeu)
+        if debit != credit:
+            raise ErreurApplicative(
+                f"La part « {PERIMETRES[nom]} » est déséquilibrée : débit "
+                f"{util.formate_montant(debit)} ≠ crédit "
+                f"{util.formate_montant(credit)}. Chaque part doit s'équilibrer "
+                "séparément."
+            )
+
+    if not any(l["debit"] or l["credit"] for jeu in parts.values() for l in jeu):
+        raise ErreurApplicative("Aucun montant saisi.")
+
+    reference = f"OP-{util.maintenant().replace('-', '').replace(':', '').replace(' ', '-')}"
+    resultat = {"operation_ref": reference, "ecritures": [], "totaux": {}}
+
+    for nom, jeu in parts.items():
+        montant = sum(l["debit"] for l in jeu)
+        resultat["totaux"][nom] = montant
+        if not montant:
+            continue                       # part absente : pas d'écriture vide
+        identifiant = enregistre_ecriture(
+            societe_id=societe_id, journal_code=journal_code, date=date,
+            libelle=libelle, lignes=jeu, perimetre=nom,
+            operation_ref=reference, **options)
+        resultat["ecritures"].append({"id": identifiant, "perimetre": nom,
+                                      "montant": montant})
+
+    resultat["totaux"]["total"] = (resultat["totaux"].get("declare", 0)
+                                   + resultat["totaux"].get("hors_declaration", 0))
+    return resultat
+
+
+def operation_liee(operation_ref: str) -> list[dict]:
+    """Les écritures d'une même opération, déclarée puis hors déclaration."""
+    if not operation_ref:
+        return []
+    return db.lignes(
+        "SELECT e.*, j.code AS journal FROM ecritures e "
+        "JOIN journaux j ON j.id = e.journal_id "
+        "WHERE e.operation_ref = ? ORDER BY e.perimetre DESC", (operation_ref,))
 
 
 def supprime_ecriture(ecriture_id: int, utilisateur: str | None = None,
@@ -616,7 +690,34 @@ def api_ecritures(ctx):
         "SELECT COUNT(*) FROM ecritures e JOIN journaux j ON j.id = e.journal_id "
         f"WHERE {' AND '.join(conditions)}", params, 0
     )
+    _attache_operations(ecritures)
     return {"ecritures": ecritures, "total": total}
+
+
+def _attache_operations(ecritures: list[dict]) -> None:
+    """Ajoute le total réel des écritures issues d'une saisie en totalité.
+
+    L'écriture reste filtrable par périmètre ; on lui joint simplement de quoi
+    rappeler à l'écran le montant de l'opération entière et sa décomposition.
+    """
+    references = {e["operation_ref"] for e in ecritures if e.get("operation_ref")}
+    if not references:
+        return
+    marques = ", ".join("?" for _ in references)
+    cumuls: dict[str, dict] = {}
+    for rang in db.lignes(
+            "SELECT e.operation_ref AS ref, e.perimetre, "
+            "  COALESCE(SUM(l.debit), 0) AS montant "
+            "FROM ecritures e JOIN lignes l ON l.ecriture_id = e.id "
+            f"WHERE e.operation_ref IN ({marques}) "
+            "GROUP BY e.operation_ref, e.perimetre", list(references)):
+        entree = cumuls.setdefault(rang["ref"], {"declare": 0, "hors_declaration": 0})
+        entree[rang["perimetre"]] = rang["montant"]
+    for ecriture in ecritures:
+        cumul = cumuls.get(ecriture.get("operation_ref"))
+        if cumul:
+            ecriture["operation"] = {
+                **cumul, "total": cumul["declare"] + cumul["hors_declaration"]}
 
 
 @route("GET", "/api/ecritures/<id>")
@@ -642,23 +743,58 @@ def api_ecriture(ctx):
     return ecr
 
 
+def _ligne_commune(l: dict) -> dict:
+    return {
+        "compte": l.get("compte"),
+        "tiers_id": l.get("tiers_id") or None,
+        "libelle": l.get("libelle"),
+        "echeance": l.get("echeance"),
+        "programme_id": l.get("programme_id") or None,
+        "lot_id": l.get("lot_id") or None,
+        "bien_id": l.get("bien_id") or None,
+        "poste_budget": l.get("poste_budget") or None,
+    }
+
+
 @route("POST", "/api/ecritures")
 def api_cree_ecriture(ctx):
     ctx.interdit_lecture_seule()
     lignes_saisies = ctx.champ("lignes") or []
     if not isinstance(lignes_saisies, list):
         raise ErreurApplicative("Format des lignes invalide.")
+
+    commun = dict(
+        piece=util.nettoie(ctx.champ("piece")),
+        reference=util.nettoie(ctx.champ("reference")),
+        module="manuel",
+        utilisateur=ctx.nom_utilisateur,
+        valider=bool(ctx.booleen("valider", True)),
+    )
+
+    # Saisie en totalité : chaque ligne porte une part déclarée et une part
+    # hors déclaration, enregistrées en une seule fois.
+    if ctx.champ("perimetre") == "totalite":
+        lignes_pretes = [{
+            **_ligne_commune(l),
+            "debit_declare": util.centimes(l.get("debit_declare")),
+            "credit_declare": util.centimes(l.get("credit_declare")),
+            "debit_hors": util.centimes(l.get("debit_hors")),
+            "credit_hors": util.centimes(l.get("credit_hors")),
+        } for l in lignes_saisies]
+        with db.transaction():
+            return enregistre_operation(
+                ctx.entier("societe_id"),
+                ctx.champ_requis("journal"),
+                ctx.champ_requis("date"),
+                ctx.champ_requis("libelle"),
+                lignes_pretes,
+                **commun,
+            )
+
     lignes_pretes = [{
-        "compte": l.get("compte"),
-        "tiers_id": l.get("tiers_id") or None,
-        "libelle": l.get("libelle"),
+        **_ligne_commune(l),
         "debit": util.centimes(l.get("debit")),
         "credit": util.centimes(l.get("credit")),
-        "echeance": l.get("echeance"),
-        "programme_id": l.get("programme_id") or None,
-        "lot_id": l.get("lot_id") or None,
-        "bien_id": l.get("bien_id") or None,
-        "poste_budget": l.get("poste_budget") or None,
     } for l in lignes_saisies]
 
     with db.transaction():
@@ -668,12 +804,8 @@ def api_cree_ecriture(ctx):
             ctx.champ_requis("date"),
             ctx.champ_requis("libelle"),
             lignes_pretes,
-            piece=util.nettoie(ctx.champ("piece")),
-            reference=util.nettoie(ctx.champ("reference")),
-            module="manuel",
-            utilisateur=ctx.nom_utilisateur,
-            valider=bool(ctx.booleen("valider", True)),
             perimetre=ctx.champ("perimetre"),
+            **commun,
         )
     return {"id": identifiant}
 

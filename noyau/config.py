@@ -91,6 +91,10 @@ class Configuration:
         return self.dossier_donnees / "modeles_documents"
 
     @property
+    def journal_incidents(self) -> Path:
+        return self.dossier_donnees / "journal.log"
+
+    @property
     def dossier_web(self) -> Path:
         return RACINE / "web"
 
@@ -139,3 +143,29 @@ class Configuration:
 
 
 config = Configuration()
+
+
+#: Taille au-delà de laquelle le journal est reparti à zéro (1 Mio).
+TAILLE_MAX_JOURNAL = 1024 * 1024
+
+
+def journalise(categorie: str, message: str, trace: str | None = None) -> None:
+    """Consigne un incident dans « donnees/journal.log ».
+
+    Lancée par un raccourci Windows, l'application n'a pas de console : sans
+    ce fichier, une erreur survenue chez l'utilisateur ne laisse aucune trace
+    et devient impossible à diagnostiquer à distance.
+    """
+    import datetime
+    try:
+        config.prepare_dossiers()
+        fichier = config.journal_incidents
+        if fichier.exists() and fichier.stat().st_size > TAILLE_MAX_JOURNAL:
+            fichier.replace(fichier.with_suffix(".log.1"))
+        horodatage = datetime.datetime.now().isoformat(sep=" ", timespec="seconds")
+        with fichier.open("a", encoding="utf-8") as flux:
+            flux.write(f"[{horodatage}] {categorie} : {message}\n")
+            if trace:
+                flux.write("".join(f"    {l}\n" for l in trace.rstrip().splitlines()))
+    except OSError:
+        pass        # journaliser ne doit jamais faire échouer une opération

@@ -130,6 +130,34 @@ Chaque écriture porte un **périmètre** : `déclaré` ou `hors déclaration`.
 * L'écran **Déclaré / hors décl.** compare les deux, mois par mois, et donne
   la part que représente le hors déclaration.
 
+**Saisie en totalité.** Une opération réelle se décompose souvent en une part
+déclarée et une part qui ne l'est pas. Le périmètre `totalité` permet de la
+saisir d'un seul geste : chaque ligne reçoit un montant déclaré et un montant
+non déclaré, l'écran affiche le total et sa décomposition, et contrôle que
+**chaque part s'équilibre séparément**.
+
+L'enregistrement produit **deux écritures reliées par une référence
+d'opération** (`ecritures.operation_ref`) plutôt qu'une écriture hybride : une
+écriture appartient tout entière à un périmètre, faute de quoi la G50, le bilan
+et la liasse ne seraient plus établissables sur le seul déclaré. Le journal
+rappelle sur chaque part le montant de l'opération entière.
+
+### Reprise de données depuis Excel
+
+L'application **fournit les en-têtes** : le comptable télécharge un modèle
+`.xlsx` (écritures, tiers, plan comptable, biens, salariés), le remplit avec ses
+propres données et le redépose.
+
+* L'import se fait **en deux temps** : contrôle complet sans écriture, puis
+  validation. Chaque anomalie est rapportée avec son **numéro de ligne**.
+* Les écritures passent par `comptabilite.enregistre_ecriture`, donc par les
+  mêmes contrôles que la saisie manuelle, et arrivent **en brouillon**.
+* Les lignes partageant un même « N° écriture » forment une écriture et doivent
+  s'équilibrer ; la colonne *Périmètre* permet de mêler déclaré et non déclaré
+  dans un seul fichier.
+* Lecture `.xlsx` en Python pur (`noyau/tableur.py`), CSV francophone accepté,
+  en-têtes reconnus malgré accents, casse et synonymes usuels.
+
 ### Fiscalité algérienne
 
 * **Déclaration G n° 50** calculée depuis la comptabilité : TVA collectée et déductible,
@@ -295,7 +323,8 @@ modules/
 ├── etats.py                bilan, TCR, flux de trésorerie
 ├── documents.py            éditions imprimables
 ├── fichiers.py             pièces jointes, sauvegarde, restauration
-└── rapports.py             résumés Telegram et courriel
+├── rapports.py             résumés Telegram et courriel
+└── imports.py              reprise de données depuis Excel (modèles + contrôle)
 reference/
 ├── plan_comptable_scf.json nomenclature SCF et modèles d'échéancier
 └── parametres_fiscaux.json taux et barèmes par année
@@ -305,6 +334,8 @@ outils/
 ├── test_http.py            40 contrôles serveur et interface
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur
+├── installer.py            même installation, sans fichier bloqué par les messageries
+├── faire_paquet.py         fabrique les paquets de distribution
 └── mise_a_jour.py          mise à jour avec migrations et retour arrière
 ```
 

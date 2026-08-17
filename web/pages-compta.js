@@ -40,7 +40,7 @@ App.pages['comptabilite/ecritures'] = {
         { titre: 'Libellé', rendu: (e) => ech(e.libelle) },
         { titre: 'Montant', classe: 'num', rendu: (e) => fm(e.montant) },
         { titre: 'État', rendu: (e) => e.validee ? etiquette('validee') : etiquette('brouillon') },
-        { titre: 'Périmètre', rendu: (e) => badgePerimetre(e.perimetre) },
+        { titre: 'Périmètre', rendu: (e) => badgePerimetre(e.perimetre) + rappelOperation(e) },
         { titre: 'Origine', rendu: (e) => `<span class="tres-petit">${ech(e.module || '')}</span>` },
       ], d.ecritures, {
         clic: true, icone: '📒',
@@ -49,6 +49,14 @@ App.pages['comptabilite/ecritures'] = {
       }), '', true)}`;
   },
 };
+
+/** Rappelle qu'une écriture n'est qu'une part d'une opération plus large. */
+function rappelOperation(e) {
+  if (!e.operation) return '';
+  return `<div class="tres-petit" title="Saisie en totalité : les deux parts `
+       + `forment une seule opération">part d'une opération de ${fm(e.operation.total)}`
+       + `</div>`;
+}
 
 function appliqueFiltresEcritures() {
   const p = new URLSearchParams();
@@ -124,13 +132,25 @@ async function saisieEcriture(prefill = {}) {
       <label class="champ"><span>Périmètre</span><select id="e-perimetre">
         <option value="declare">Déclaré</option>
         <option value="hors_declaration">Hors déclaration</option>
+        <option value="totalite">Totalité — déclaré + non déclaré</option>
       </select></label>
       <label class="champ" style="grid-column:1/-1"><span>Libellé *</span>
         <input id="e-libelle" value="${ech(prefill.libelle || '')}" placeholder="Ex : Facture fournisseur ETP El Amel"></label>
     </div>
+    <p class="message info" id="note-totalite" hidden>
+      <strong>Saisie en totalité</strong>
+      Répartissez chaque montant entre sa part déclarée et sa part non déclarée.
+      Les deux parts sont enregistrées ensemble, comme une seule opération, et
+      chacune doit s'équilibrer de son côté.
+    </p>
     <table class="saisie"><thead><tr>
-      <th style="width:26%">Compte</th><th style="width:20%">Tiers</th>
-      <th>Libellé</th><th style="width:14%">Débit</th><th style="width:14%">Crédit</th><th></th>
+      <th style="width:22%">Compte</th><th style="width:16%">Tiers</th>
+      <th>Libellé</th>
+      <th style="width:13%" id="th-debit">Débit</th>
+      <th style="width:13%" class="col-hors">Débit non décl.</th>
+      <th style="width:13%" id="th-credit">Crédit</th>
+      <th style="width:13%" class="col-hors">Crédit non décl.</th>
+      <th></th>
     </tr></thead><tbody id="lignes-saisie"></tbody></table>
     <div class="rangee" style="margin-top:8px">
       <button class="petit-bouton" id="ajout-ligne">+ Ligne</button>
@@ -140,6 +160,12 @@ async function saisieEcriture(prefill = {}) {
       <span>Total débit <strong id="tot-debit">0,00</strong></span>
       <span>Total crédit <strong id="tot-credit">0,00</strong></span>
       <span class="ecart" id="ecart"></span>
+    </div>
+    <div class="bandeau-equilibre" id="bandeau-totalite" hidden>
+      <span>Opération <strong id="tot-operation">0,00</strong></span>
+      <span>dont déclaré <strong id="tot-declare">0,00</strong></span>
+      <span>dont non déclaré <strong id="tot-hors">0,00</strong></span>
+      <span class="ecart" id="ecart-hors"></span>
     </div>`;
 
   const corps = $('#lignes-saisie', conteneur);
@@ -155,7 +181,9 @@ async function saisieEcriture(prefill = {}) {
       <td><select class="l-tiers">${optionsTiersHtml}</select></td>
       <td><input class="l-libelle" value="${ech(donnees.libelle || '')}"></td>
       <td><input class="l-debit num" inputmode="decimal" value="${donnees.debit ? pourChamp(donnees.debit) : ''}"></td>
+      <td class="col-hors"><input class="l-debit-hors num" inputmode="decimal" value="${donnees.debit_hors ? pourChamp(donnees.debit_hors) : ''}"></td>
       <td><input class="l-credit num" inputmode="decimal" value="${donnees.credit ? pourChamp(donnees.credit) : ''}"></td>
+      <td class="col-hors"><input class="l-credit-hors num" inputmode="decimal" value="${donnees.credit_hors ? pourChamp(donnees.credit_hors) : ''}"></td>
       <td><button class="plat petit-bouton" title="Supprimer">✕</button></td>`;
     if (donnees.compte) $('.l-compte', tr).value = donnees.compte;
     $('button', tr).onclick = () => { tr.remove(); recalcule(); };
@@ -165,35 +193,82 @@ async function saisieEcriture(prefill = {}) {
         if (tr === corps.lastElementChild) ajouteLigne();
       };
     });
-    // Le débit et le crédit s'excluent
-    $('.l-debit', tr).onchange = () => { if (cts($('.l-debit', tr).value)) $('.l-credit', tr).value = ''; recalcule(); };
-    $('.l-credit', tr).onchange = () => { if (cts($('.l-credit', tr).value)) $('.l-debit', tr).value = ''; recalcule(); };
+    // Le débit et le crédit s'excluent, de part et d'autre.
+    const exclut = (rempli, vide) => () => {
+      if (cts($(rempli, tr).value)) $(vide, tr).value = '';
+      recalcule();
+    };
+    $('.l-debit', tr).onchange = exclut('.l-debit', '.l-credit');
+    $('.l-credit', tr).onchange = exclut('.l-credit', '.l-debit');
+    $('.l-debit-hors', tr).onchange = exclut('.l-debit-hors', '.l-credit-hors');
+    $('.l-credit-hors', tr).onchange = exclut('.l-credit-hors', '.l-debit-hors');
     corps.appendChild(tr);
     return tr;
   }
 
+  const enTotalite = () => $('#e-perimetre', conteneur).value === 'totalite';
+
   function litLignes() {
-    return $$('tr', corps).map((tr) => ({
-      compte: $('.l-compte', tr).value,
-      tiers_id: $('.l-tiers', tr).value || null,
-      libelle: $('.l-libelle', tr).value,
-      debit: $('.l-debit', tr).value,
-      credit: $('.l-credit', tr).value,
-    })).filter((l) => l.compte && (cts(l.debit) || cts(l.credit)));
+    const totalite = enTotalite();
+    return $$('tr', corps).map((tr) => {
+      const base = {
+        compte: $('.l-compte', tr).value,
+        tiers_id: $('.l-tiers', tr).value || null,
+        libelle: $('.l-libelle', tr).value,
+      };
+      if (!totalite) {
+        return { ...base, debit: $('.l-debit', tr).value,
+                 credit: $('.l-credit', tr).value };
+      }
+      return { ...base,
+        debit_declare: $('.l-debit', tr).value,
+        credit_declare: $('.l-credit', tr).value,
+        debit_hors: $('.l-debit-hors', tr).value,
+        credit_hors: $('.l-credit-hors', tr).value };
+    }).filter((l) => l.compte && (cts(l.debit) || cts(l.credit)
+      || cts(l.debit_declare) || cts(l.credit_declare)
+      || cts(l.debit_hors) || cts(l.credit_hors)));
+  }
+
+  /** Affiche un écart, ou la coche verte si la part s'équilibre. */
+  function afficheEcart(element, debit, credit, libelle) {
+    if (debit === credit && debit > 0) {
+      element.innerHTML = `<span class="vert">✓ ${libelle} équilibré${libelle.endsWith('e') ? 'e' : ''}</span>`;
+    } else if (debit || credit) {
+      element.innerHTML = `<span class="rouge">${libelle} : écart de ${fm(Math.abs(debit - credit))}</span>`;
+    } else element.textContent = '';
   }
 
   function recalcule() {
     const lignes = litLignes();
-    const d = lignes.reduce((s, l) => s + cts(l.debit), 0);
-    const c = lignes.reduce((s, l) => s + cts(l.credit), 0);
+    const totalite = enTotalite();
+    const somme = (champ) => lignes.reduce((s, l) => s + cts(l[champ]), 0);
+
+    const d = totalite ? somme('debit_declare') : somme('debit');
+    const c = totalite ? somme('credit_declare') : somme('credit');
     $('#tot-debit', conteneur).textContent = fm(d);
     $('#tot-credit', conteneur).textContent = fm(c);
-    const ecart = $('#ecart', conteneur);
-    if (d === c && d > 0) {
-      ecart.innerHTML = '<span class="vert">✓ Écriture équilibrée</span>';
-    } else if (d || c) {
-      ecart.innerHTML = `<span class="rouge">Écart : ${fm(Math.abs(d - c))}</span>`;
-    } else ecart.textContent = '';
+    afficheEcart($('#ecart', conteneur), d, c,
+                 totalite ? 'Part déclarée' : 'Écriture');
+
+    if (!totalite) return;
+    const dh = somme('debit_hors');
+    const ch = somme('credit_hors');
+    $('#tot-declare', conteneur).textContent = fm(d);
+    $('#tot-hors', conteneur).textContent = fm(dh);
+    $('#tot-operation', conteneur).textContent = fm(d + dh);
+    afficheEcart($('#ecart-hors', conteneur), dh, ch, 'Part non déclarée');
+  }
+
+  /** Bascule entre saisie simple et saisie en totalité. */
+  function appliqueMode() {
+    const totalite = enTotalite();
+    conteneur.classList.toggle('totalite', totalite);
+    $('#note-totalite', conteneur).hidden = !totalite;
+    $('#bandeau-totalite', conteneur).hidden = !totalite;
+    $('#th-debit', conteneur).textContent = totalite ? 'Débit déclaré' : 'Débit';
+    $('#th-credit', conteneur).textContent = totalite ? 'Crédit déclaré' : 'Crédit';
+    recalcule();
   }
 
   (prefill.lignes || [{}, {}]).forEach(ajouteLigne);
@@ -204,8 +279,12 @@ async function saisieEcriture(prefill = {}) {
   $('#ajout-ligne', conteneur).onclick = () => ajouteLigne();
   if (App.etat.perimetre && App.etat.perimetre !== 'tous') {
     $('#e-perimetre', conteneur).value = App.etat.perimetre;
+  } else {
+    // En vue réelle, la saisie en totalité est le mode qui correspond.
+    $('#e-perimetre', conteneur).value = 'totalite';
   }
-  recalcule();
+  $('#e-perimetre', conteneur).onchange = appliqueMode;
+  appliqueMode();
 
   modale({
     titre: 'Nouvelle écriture comptable',
@@ -226,7 +305,7 @@ async function saisieEcriture(prefill = {}) {
 }
 
 async function enregistreEcriture(conteneur, litLignes, valider) {
-  await envoie('/api/ecritures', {
+  const reponse = await envoie('/api/ecritures', {
     journal: $('#e-journal', conteneur).value,
     date: $('#e-date', conteneur).value,
     piece: $('#e-piece', conteneur).value,
@@ -235,7 +314,13 @@ async function enregistreEcriture(conteneur, litLignes, valider) {
     lignes: litLignes(),
     valider,
   });
-  notifie('Écriture enregistrée.', 'succes');
+  if (reponse && reponse.totaux) {
+    const t = reponse.totaux;
+    notifie(`Opération de ${fm(t.total)} enregistrée : ${fm(t.declare)} déclaré, `
+          + `${fm(t.hors_declaration)} hors déclaration.`, 'succes', 6000);
+  } else {
+    notifie('Écriture enregistrée.', 'succes');
+  }
   afficheRoute();
 }
 

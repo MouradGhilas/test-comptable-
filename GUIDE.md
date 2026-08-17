@@ -8,22 +8,37 @@ Trois publics, trois sections. Chacun ne lit que la sienne.
 
 ## Installer — une seule fois
 
-1. Copiez le dossier **cabinet-immo** sur le PC (clé USB, WeTransfer, e-mail…).
-   Mettez-le dans `Documents`, pas sur le Bureau.
-2. Double-cliquez sur **`INSTALLER.bat`**.
+Vous avez reçu **soit** un dossier `.zip`, **soit** un seul fichier
+`cabinet-immo-…-installateur.py`. Suivez la ligne qui correspond.
+
+### A. Vous avez reçu le fichier `…-installateur.py`
+
+1. Double-cliquez dessus.
+2. Il indique où il va s'installer (vos `Documents`) — Entrée pour accepter.
+3. Répondez aux deux questions, Entrée à chaque fois.
+
+> **Si le double-clic n'ouvre rien**, Python n'est pas installé sur ce PC.
+> Installez-le une seule fois depuis <https://www.python.org/downloads/> en
+> cochant **« Add Python to PATH »**, puis double-cliquez à nouveau.
+
+### B. Vous avez reçu l'archive `cabinet-immo-….zip`
+
+1. Clic droit → **Extraire tout**, dans `Documents`.
+2. Ouvrez le dossier extrait, double-cliquez sur **`INSTALLER.bat`**.
 3. Répondez aux deux questions (Entrée pour accepter) :
    - *Démarrer automatiquement à chaque ouverture de session ?* → **Oui**
    - *Ouvrir l'application maintenant ?* → **Oui**
 
-C'est fini. Un raccourci **Cabinet Immo** est apparu sur le Bureau.
-
-> **Si Python n'est pas installé**, l'installateur le télécharge tout seul
+> Ici, **si Python n'est pas installé**, l'installateur le télécharge tout seul
 > (11 Mo) et le range dans le dossier de l'application. Rien n'est installé
 > dans Windows, aucun mot de passe administrateur n'est demandé.
 >
 > **Si le téléchargement échoue** (pas d'Internet au moment de l'installation) :
 > installez Python depuis <https://www.python.org/downloads/> en cochant
 > **« Add Python to PATH »**, puis relancez `INSTALLER.bat`.
+
+Dans les deux cas c'est fini : un raccourci **Cabinet Immo** est apparu sur le
+Bureau.
 
 ## Premier démarrage
 
@@ -53,7 +68,31 @@ Raccourcis : `Ctrl+E` écriture · `Ctrl+F` facture · `Ctrl+T` tiers · `Échap
 Chaque opération porte un **périmètre**, choisi à la saisie :
 
 - **Déclaré** — entre dans la G50, le bilan et la liasse fiscale ;
-- **Hors déclaration** — comptabilisé et suivi, mais exclu des déclarations.
+- **Hors déclaration** — comptabilisé et suivi, mais exclu des déclarations ;
+- **Totalité** — le montant réel, réparti entre les deux, en une seule saisie.
+
+### Saisir une opération en totalité
+
+C'est le cas courant : une vente de 16 000 000 DA dont 10 000 000 sont
+facturés et 6 000 000 réglés en espèces. Dans la fenêtre de saisie, choisissez
+**Périmètre → Totalité**. Deux colonnes supplémentaires apparaissent :
+
+| Compte | Débit déclaré | Débit non décl. | Crédit déclaré | Crédit non décl. |
+|---|---|---|---|---|
+| 411 Clients | 10 000 000 | 6 000 000 | | |
+| 7011 Ventes | | | 10 000 000 | 6 000 000 |
+
+Le bas de la fenêtre affiche **Opération 16 000 000 · dont déclaré 10 000 000 ·
+dont non déclaré 6 000 000**, et contrôle que **chacune des deux parts
+s'équilibre** de son côté.
+
+À la validation, l'application enregistre **deux écritures reliées entre
+elles**. Au journal, chacune rappelle « part d'une opération de 16 000 000,00 ».
+
+> **Pourquoi deux écritures et non une seule ?** Une écriture appartient tout
+> entière à un périmètre : c'est ce qui permet d'éditer la G50 et le bilan sur
+> le seul déclaré, sans retouche. Vous saisissez une fois, vous consultez le
+> total d'un bloc, mais les déclarations restent justes.
 
 Le sélecteur en haut à gauche change ce que vous regardez :
 
@@ -71,6 +110,45 @@ représente le hors déclaration.
 > évite de déposer une déclaration incohérente avec ce que la comptabilité
 > contient réellement.
 
+## Reprendre vos données existantes (Excel)
+
+Vous avez déjà des fichiers Excel ? L'application vous donne les en-têtes, vous
+les remplissez, vous les réintégrez.
+
+1. **Paramètres → Import de données**.
+2. En face du type voulu, **Télécharger le modèle**. Le fichier obtenu contient
+   déjà la bonne ligne d'en-têtes, une ligne d'exemple et une notice.
+3. Remplissez-le avec vos données, **sans modifier la ligne d'en-têtes**.
+   Effacez la ligne d'exemple.
+4. Revenez sur l'écran, choisissez le fichier, **Contrôler le fichier**.
+
+L'application lit tout **sans rien enregistrer** et affiche les anomalies avec
+leur **numéro de ligne** : compte inexistant, date impossible, écriture
+déséquilibrée, doublon… Corrigez le fichier et recommencez, ou importez
+uniquement les lignes saines.
+
+Ce qui peut être repris :
+
+| Modèle | Contenu |
+|---|---|
+| Écritures comptables | le journal, avec la colonne **Périmètre** (Déclaré / Non déclaré) |
+| Tiers | clients, fournisseurs, propriétaires, locataires, acquéreurs |
+| Plan comptable | vos comptes en plus du plan SCF livré |
+| Biens | le portefeuille de l'agence |
+| Salariés | pour la paie |
+
+Points utiles :
+
+- Les lignes qui portent le **même « N° écriture »** forment une seule écriture
+  et doivent s'équilibrer entre elles.
+- **Un même fichier peut contenir du déclaré et du non déclaré** : c'est la
+  colonne *Périmètre* qui décide, ligne par ligne.
+- Les écritures importées arrivent **en brouillon** : relisez-les au journal
+  avant de les valider.
+- Les en-têtes sont reconnus même avec des accents, des majuscules ou des
+  variantes courantes (`numero`, `intitule`, `compte general`…).
+- Le CSV enregistré depuis Excel est accepté aussi.
+
 ## Sauvegarder
 
 - Une sauvegarde part automatiquement à chaque fermeture de l'application.
@@ -80,9 +158,15 @@ représente le hors déclaration.
 
 ## Mettre à jour
 
-1. Recevez le fichier `.zip` de la nouvelle version.
-2. Déposez-le dans `donnees\maj\` (créez le dossier s'il n'existe pas).
-3. Double-cliquez sur **`METTRE-A-JOUR.bat`**.
+Deux façons, selon ce que vous recevez. **Les deux gardent vos données.**
+
+**Vous recevez un fichier `…-installateur.py`** → double-cliquez dessus. Il
+reconnaît l'installation existante, sauvegarde la comptabilité et ne remplace
+que le programme.
+
+**Vous recevez un fichier `maj-….zip`** →
+1. Déposez-le dans `donnees\maj\` (créez le dossier s'il n'existe pas).
+2. Double-cliquez sur **`METTRE-A-JOUR.bat`**.
 
 L'outil sauvegarde vos données, remplace le programme, met la base au nouveau
 format et vérifie que tout est cohérent. **En cas de problème, il remet
@@ -211,8 +295,10 @@ renseigner le serveur d'envoi.
 
 | Symptôme | Que faire |
 |---|---|
-| L'application ne s'ouvre pas | Relancer `INSTALLER.bat` : il répare l'installation sans toucher aux données. |
-| « Le port est occupé » | Normal, l'application en choisit un autre toute seule. |
+| **Bandeau rouge « Connexion perdue avec l'application »** | La fenêtre de l'application a été fermée, ou l'onglet date d'une session précédente. Rouvrir le raccourci **Cabinet Immo**, puis cliquer sur **Réessayer**. Aucune donnée n'est perdue. L'onglet se rétablit d'ailleurs tout seul dès que l'application redémarre. |
+| L'application ne s'ouvre pas | Relancer l'installateur reçu (`INSTALLER.bat` ou le fichier `…-installateur.py`) : il répare l'installation sans toucher aux données. |
+| Double-clic sur le raccourci alors qu'elle tourne déjà | L'application ne se dédouble pas : elle ramène la fenêtre existante. |
+| Une erreur inexpliquée revient | **Paramètres → Sauvegarde & données** affiche le journal des incidents (`donnees\journal.log`). Ce fichier contient de quoi diagnostiquer à distance. |
 | Une écriture est refusée | Le message dit exactement pourquoi (déséquilibre, compte inconnu, exercice clôturé). |
 | Erreur après une mise à jour | `METTRE-A-JOUR.bat --annuler` remet la version précédente. |
 | Doute sur les données | `DEMARRER.bat --verifier` contrôle l'intégrité et l'équilibre. |

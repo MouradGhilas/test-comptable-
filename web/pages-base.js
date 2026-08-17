@@ -481,7 +481,7 @@ App.pages.parametres = {
     const onglet = route.segments[1] || 'dossier';
     const onglets = [['dossier', 'Dossier'], ['exercices', 'Exercices'],
       ['plan', 'Plan comptable'], ['fiscalite', 'Fiscalité'],
-      ['notifications', 'Notifications'],
+      ['notifications', 'Notifications'], ['import', 'Import de données'],
       ['utilisateurs', 'Utilisateurs'], ['sauvegarde', 'Sauvegarde & données']];
     zone.innerHTML = `<div class="onglets">${onglets.map(([v, l]) =>
       `<button class="${v === onglet ? 'actif' : ''}" onclick="navigue('/parametres/${v}')">${l}</button>`).join('')}</div>
@@ -490,6 +490,7 @@ App.pages.parametres = {
     const rendus = {
       dossier: ongletDossier, exercices: ongletExercices, plan: ongletPlan,
       fiscalite: ongletFiscalite, notifications: ongletNotifications,
+      import: ongletImport,
       utilisateurs: ongletUtilisateurs, sauvegarde: ongletSauvegarde,
     };
     await (rendus[onglet] || ongletDossier)(cible);
@@ -707,6 +708,139 @@ async function nouvelUtilisateur() {
   });
 }
 
+/* ----------------------------------------------- Import de données ------ */
+
+/** Fichier choisi par l'utilisateur, gardé entre le contrôle et la validation. */
+let _fichierImport = null;
+
+async function ongletImport(zone) {
+  const d = await api('/api/import/modeles');
+  zone.innerHTML = `
+    ${carte('Reprendre vos données existantes', `
+      <div class="message info">
+        <strong>Comment procéder</strong>
+        1. Téléchargez le modèle correspondant : il contient déjà les en-têtes
+        attendus. 2. Remplissez-le avec vos données, sans toucher à la ligne
+        d'en-têtes. 3. Déposez-le ci-dessous : l'application contrôle tout et
+        vous montre les anomalies <em>avant</em> d'enregistrer quoi que ce soit.
+      </div>
+      <table class="tableau"><thead><tr>
+        <th>Données</th><th>Colonnes attendues</th><th style="width:150px"></th>
+      </tr></thead><tbody>
+        ${d.modeles.map((m) => `<tr>
+          <td><strong>${ech(m.libelle)}</strong></td>
+          <td class="petit">${m.colonnes.map((c) =>
+            c.requis ? `<strong>${ech(c.nom)}</strong>` : ech(c.nom)).join(' · ')}</td>
+          <td><button class="petit-bouton" onclick="telechargeModele('${m.cle}')">
+            Télécharger le modèle</button></td>
+        </tr>`).join('')}
+      </tbody></table>
+      <p class="petit">Les colonnes en gras sont obligatoires. Formats acceptés :
+      Excel (.xlsx) et CSV.</p>`)}
+
+    ${carte('Déposer un fichier rempli', `
+      <div class="ligne-champs">
+        <label class="champ"><span>Type de données</span>
+          <select id="import-modele">
+            ${d.modeles.map((m) => `<option value="${m.cle}">${ech(m.libelle)}</option>`).join('')}
+          </select></label>
+        <label class="champ"><span>Fichier</span>
+          <input type="file" id="import-fichier" accept=".xlsx,.csv"></label>
+      </div>
+      <div id="import-resultat"></div>`,
+      `<button class="primaire" id="bouton-controler">Contrôler le fichier</button>`)}`;
+
+  _fichierImport = null;
+  $('#import-fichier').onchange = (e) => {
+    _fichierImport = e.target.files[0] || null;
+    $('#import-resultat').innerHTML = '';
+  };
+  $('#bouton-controler').onclick = controleImport;
+}
+
+function telechargeModele(cle) {
+  window.open(`/api/import/modele/${cle}`, '_blank');
+}
+
+/** Lit le fichier choisi et le renvoie encodé, sans en-tête « data: ». */
+function litFichierBase64(fichier) {
+  return new Promise((resolve, rejette) => {
+    const lecteur = new FileReader();
+    lecteur.onload = () => resolve(String(lecteur.result).split(',', 2)[1]);
+    lecteur.onerror = () => rejette(new Error('Fichier illisible.'));
+    lecteur.readAsDataURL(fichier);
+  });
+}
+
+async function controleImport() {
+  if (!_fichierImport) { notifie('Choisissez d\'abord un fichier.', 'alerte'); return; }
+  const modele = $('#import-modele').value;
+  const zone = $('#import-resultat');
+  zone.innerHTML = '<div class="vide">Contrôle en cours…</div>';
+  try {
+    const contenu = await litFichierBase64(_fichierImport);
+    const d = await envoie('/api/import/analyse', { modele, contenu });
+    afficheControleImport(zone, d, modele, contenu);
+  } catch (err) {
+    zone.innerHTML = `<div class="message danger"><strong>Fichier refusé</strong>
+      ${ech(err.message)}</div>`;
+  }
+}
+
+function afficheControleImport(zone, d, modele, contenu) {
+  const anomalies = d.anomalies || [];
+  const ignorees = (d.colonnes_ignorees || []).length
+    ? `<p class="petit">Colonnes du fichier non utilisées :
+       ${d.colonnes_ignorees.map(ech).join(', ')}.</p>` : '';
+
+  const resume = anomalies.length
+    ? `<div class="message alerte">
+         <strong>${d.nb_valides} ligne(s) prête(s), ${anomalies.length} anomalie(s)</strong>
+         Rien n'est encore enregistré. Corrigez le fichier et recommencez, ou
+         importez uniquement les lignes saines.</div>`
+    : `<div class="message succes">
+         <strong>${d.nb_valides} ligne(s) prête(s) à être importée(s)</strong>
+         Aucune anomalie détectée.</div>`;
+
+  const detail = anomalies.length ? `
+    <table class="tableau"><thead><tr>
+      <th style="width:90px">Ligne</th><th>Anomalie</th>
+    </tr></thead><tbody>
+      ${anomalies.slice(0, 100).map((a) => `<tr>
+        <td>${a.ligne}</td><td>${ech(a.message)}</td></tr>`).join('')}
+    </tbody></table>
+    ${anomalies.length > 100 ? `<p class="petit">… et ${anomalies.length - 100} autre(s).</p>` : ''}` : '';
+
+  zone.innerHTML = resume + ignorees + detail + `
+    <div class="rangee" style="margin-top:12px">
+      ${d.nb_valides ? `<button class="primaire" id="bouton-importer">
+        Importer ${d.nb_valides} ligne(s)</button>` : ''}
+    </div>`;
+
+  if (!d.nb_valides) return;
+  $('#bouton-importer').onclick = async () => {
+    const message = anomalies.length
+      ? `Importer les ${d.nb_valides} ligne(s) saines et ignorer les `
+        + `${anomalies.length} anomalie(s) ?`
+      : `Importer ${d.nb_valides} ligne(s) ?`;
+    if (!await confirme('Confirmer l\'import', message, 'Importer', false)) return;
+    try {
+      const r = await envoie('/api/import/valider',
+        { modele, contenu, ignorer_anomalies: anomalies.length ? 1 : 0 });
+      notifie(`${r.crees} ligne(s) importée(s).`
+            + (r.rejetes ? ` ${r.rejetes} ignorée(s).` : ''), 'succes', 7000);
+      zone.innerHTML = `<div class="message succes">
+        <strong>Import terminé</strong>
+        ${r.crees} ligne(s) enregistrée(s)${r.rejetes ? `, ${r.rejetes} ignorée(s)` : ''}.
+        ${modele === 'ecritures' ? 'Les écritures sont en brouillon : relisez-les '
+          + 'au journal avant de les valider.' : ''}</div>`;
+    } catch (err) {
+      zone.innerHTML = `<div class="message danger"><strong>Import refusé</strong>
+        ${ech(err.message)}</div>`;
+    }
+  };
+}
+
 async function ongletSauvegarde(zone) {
   const [infos, sauvegardes] = await Promise.all([
     api('/api/systeme/infos'), api('/api/sauvegardes'),
@@ -736,7 +870,35 @@ async function ongletSauvegarde(zone) {
         rendu: (s) => `<button class="petit-bouton" onclick="telecharge('/api/sauvegardes/telecharger',{nom:'${ech(s.nom)}'})">Télécharger</button>
           <button class="petit-bouton danger" onclick="restaure('${ech(s.nom)}')">Restaurer</button>`,
       },
-    ], sauvegardes.sauvegardes, { messageVide: 'Aucune sauvegarde. Créez-en une dès maintenant.' }), '', true)}`;
+    ], sauvegardes.sauvegardes, { messageVide: 'Aucune sauvegarde. Créez-en une dès maintenant.' }), '', true)}
+
+    ${carte('Journal des incidents', `
+      <p class="petit">Lancée depuis un raccourci, l'application n'affiche aucune
+      fenêtre de messages : les erreurs sont consignées dans un fichier. À
+      transmettre en cas de problème inexpliqué.</p>
+      <div id="zone-diagnostic"><div class="vide">Non chargé.</div></div>`,
+      `<button onclick="afficheDiagnostic()">Afficher le journal</button>`)}`;
+}
+
+async function afficheDiagnostic() {
+  const zone = $('#zone-diagnostic');
+  zone.innerHTML = '<div class="vide">Chargement…</div>';
+  try {
+    const d = await api('/api/diagnostic');
+    const journal = d.journal.length
+      ? `<pre class="journal">${ech(d.journal.join('\n'))}</pre>`
+      : '<div class="message succes"><strong>Aucun incident enregistré.</strong>'
+        + ' Rien à signaler depuis la dernière remise à zéro.</div>';
+    zone.innerHTML = `
+      <div class="liste-definitions">
+        <dt>Version</dt><dd>${ech(d.application)} ${ech(d.version)}</dd>
+        <dt>Système</dt><dd>${ech(d.systeme)} — Python ${ech(d.python)}</dd>
+        <dt>Adresse</dt><dd><code>${ech(d.adresse)}</code></dd>
+        <dt>Fichier</dt><dd><code>${ech(d.fichier_journal)}</code></dd>
+      </div>${journal}`;
+  } catch (err) {
+    zone.innerHTML = `<div class="message danger">${ech(err.message)}</div>`;
+  }
 }
 
 async function lanceSauvegarde() {

@@ -141,7 +141,7 @@ SCHEMA = Path(__file__).parent / "schema.sql"
 
 #: Version du schéma attendue par cette version du programme.
 #: À incrémenter dès qu'une migration est ajoutée ci-dessous.
-VERSION_SCHEMA = 3
+VERSION_SCHEMA = 4
 
 
 def colonnes(table: str) -> set[str]:
@@ -187,6 +187,7 @@ def _migration_2() -> None:
 #: migrations appliquées, et seulement si la colonne existe réellement.
 INDEX_COMPLEMENTAIRES = [
     ("idx_ecr_perimetre", "ecritures", "societe_id, perimetre", ["perimetre"]),
+    ("idx_ecr_operation", "ecritures", "operation_ref", ["operation_ref"]),
 ]
 
 
@@ -205,10 +206,22 @@ def _migration_3() -> None:
     return None
 
 
+def _migration_4() -> None:
+    """Opérations en deux parts (déclarée + non déclarée).
+
+    Une opération réelle peut se décomposer en une part déclarée et une part
+    hors déclaration. Chacune reste une écriture équilibrée à part entière —
+    condition pour que la G50 et le bilan restent filtrables — et les deux
+    portent la même référence d'opération, qui les relie.
+    """
+    ajoute_colonne("ecritures", "operation_ref", "TEXT")
+
+
 #: version -> fonction de migration. Exécutées dans l'ordre croissant.
 MIGRATIONS = {
     2: _migration_2,
     3: _migration_3,
+    4: _migration_4,
 }
 
 
