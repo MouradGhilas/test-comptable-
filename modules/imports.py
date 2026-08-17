@@ -44,6 +44,51 @@ class Colonne:
         self.synonymes = synonymes
 
 
+_NOTICE_FACTURES = [
+    "Une ligne du fichier = une ligne de facture (une prestation, un article).",
+    "Les lignes qui portent le même « N° facture » forment une seule facture.",
+    "",
+    "Le tiers est retrouvé par sa raison sociale ou son code : importez donc",
+    "vos tiers avant vos factures. Un tiers inconnu est signalé, jamais créé",
+    "au hasard.",
+    "",
+    "Le prix unitaire s'entend hors taxes. Le taux de TVA s'écrit 19 ou 9 ;",
+    "laissé vide, il vaut 19.",
+    "",
+    "« Périmètre » accepte Déclaré ou Non déclaré : un même fichier peut donc",
+    "contenir les deux.",
+    "",
+    "Les factures sont créées en brouillon. Elles ne produisent leur écriture",
+    "comptable qu'une fois validées dans l'application, après relecture.",
+]
+
+_COLONNES_FACTURES = [
+    Colonne("N° facture", "Regroupe les lignes d'une même facture", "FA-2026-014",
+            requis=True, synonymes=("numero", "n° facture", "facture", "piece")),
+    Colonne("Date", "Date de la facture", "15/03/2026", requis=True),
+    Colonne("Tiers", "Client ou fournisseur, tel qu'enregistré", "BENALI Karim",
+            requis=True, synonymes=("client", "fournisseur", "raison sociale")),
+    Colonne("Désignation", "Libellé de la ligne", "Commission de transaction",
+            requis=True, synonymes=("designation", "libelle", "intitule",
+                                    "description")),
+    Colonne("Quantité", "Nombre d'unités (1 par défaut)", "1",
+            synonymes=("quantite", "qte")),
+    Colonne("Unité", "Unité de mesure", "", synonymes=("unite",)),
+    Colonne("Prix unitaire", "Prix hors taxes de l'unité", "500000",
+            requis=True, synonymes=("prix", "pu", "prix unitaire ht", "montant ht")),
+    Colonne("Remise %", "Remise en pourcentage", "", synonymes=("remise",)),
+    Colonne("Taux TVA", "19, 9 ou 0", "19", synonymes=("tva", "taux tva %")),
+    Colonne("Compte", "Compte de produit ou de charge (facultatif)", "7061"),
+    Colonne("Objet", "Objet de la facture", "Vente appartement Hydra"),
+    Colonne("Échéance", "Date d'échéance de règlement", "",
+            synonymes=("date echeance", "echeance")),
+    Colonne("Mode de règlement", "espece, cheque, virement ou traite", "",
+            synonymes=("mode reglement", "reglement", "mode")),
+    Colonne("Périmètre", "Déclaré ou Non déclaré", "Déclaré",
+            synonymes=("perimetre",)),
+]
+
+
 MODELES = {
     "ecritures": {
         "libelle": "Écritures comptables",
@@ -78,6 +123,18 @@ MODELES = {
             Colonne("N° de pièce", "Référence du justificatif", "FA-2026-014",
                     synonymes=("piece", "n° piece", "justificatif")),
         ],
+    },
+    "factures_vente": {
+        "libelle": "Factures de vente",
+        "sens": "vente",
+        "notice": _NOTICE_FACTURES,
+        "colonnes": _COLONNES_FACTURES,
+    },
+    "factures_achat": {
+        "libelle": "Factures d'achat",
+        "sens": "achat",
+        "notice": _NOTICE_FACTURES,
+        "colonnes": _COLONNES_FACTURES,
     },
     "tiers": {
         "libelle": "Tiers (clients, fournisseurs, propriétaires, locataires)",
@@ -411,6 +468,106 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
             "nb_valides": len(prets), "nb_rejetes": len(ordre) - len(prets)}
 
 
+MODES_REGLEMENT = {"espece", "cheque", "virement", "traite"}
+
+
+def analyse_factures(societe_id, rangs, association, defaut_perimetre, sens):
+    """Regroupe les lignes par numéro de facture et contrôle chaque facture."""
+    groupes: dict[str, dict] = {}
+    ordre: list[str] = []
+    anomalies = []
+    existantes = {str(f["numero"]) for f in db.lignes(
+        "SELECT numero FROM factures WHERE societe_id = ? AND sens = ?",
+        (societe_id, sens))}
+
+    for decalage, rang in enumerate(rangs):
+        numero_ligne = decalage + 2
+        if not any(str(c).strip() for c in rang):
+            continue
+        numero = _valeur(rang, association, "N° facture")
+        date = _valeur(rang, association, "Date")
+        tiers = _valeur(rang, association, "Tiers")
+        designation = _valeur(rang, association, "Désignation")
+        prix = _valeur(rang, association, "Prix unitaire")
+
+        erreurs = []
+        if not designation:
+            erreurs.append("désignation manquante")
+        if not prix:
+            erreurs.append("prix unitaire manquant")
+
+        groupe = groupes.get(numero or f"auto-{numero_ligne}")
+        if groupe is None:
+            cle = numero or f"auto-{numero_ligne}"
+            iso = _date(date)
+            tiers_id = _tiers_id(societe_id, tiers)
+            if not numero:
+                erreurs.append("numéro de facture manquant")
+            elif numero in existantes:
+                erreurs.append(f"la facture n° {numero} existe déjà")
+            if not iso:
+                erreurs.append(f"date « {date} » incompréhensible")
+            if not tiers:
+                erreurs.append("tiers manquant")
+            elif tiers_id is None:
+                erreurs.append(f"le tiers « {tiers} » est introuvable : "
+                               "importez d'abord vos tiers")
+            mode = _sans_accent(_valeur(rang, association, "Mode de règlement"))
+            if mode and mode not in MODES_REGLEMENT:
+                erreurs.append(f"mode de règlement « {mode} » inconnu "
+                               f"({', '.join(sorted(MODES_REGLEMENT))})")
+            groupe = groupes[cle] = {
+                "cle": cle, "numero": numero, "date": iso, "sens": sens,
+                "tiers_id": tiers_id, "tiers": tiers,
+                "objet": _valeur(rang, association, "Objet"),
+                "echeance": _date(_valeur(rang, association, "Échéance")),
+                "mode_reglement": mode or None,
+                "perimetre": _perimetre(_valeur(rang, association, "Périmètre"),
+                                        defaut_perimetre),
+                "lignes": [], "lignes_fichier": [], "erreurs": [],
+            }
+            ordre.append(cle)
+            existantes.add(numero)          # évite un doublon dans le fichier
+
+        groupe["lignes_fichier"].append(numero_ligne)
+        if erreurs:
+            for message in erreurs:
+                anomalies.append({"ligne": numero_ligne, "message": message})
+            groupe["erreurs"].extend(erreurs)
+            continue
+
+        groupe["lignes"].append({
+            "designation": designation,
+            "quantite": _valeur(rang, association, "Quantité") or 1,
+            "unite": _valeur(rang, association, "Unité") or None,
+            "prix_unitaire": prix,
+            "remise_taux": _valeur(rang, association, "Remise %") or 0,
+            "taux_tva": _valeur(rang, association, "Taux TVA") or 19,
+            "compte": _valeur(rang, association, "Compte") or None,
+        })
+
+    prets = []
+    for cle in ordre:
+        groupe = groupes[cle]
+        if not groupe["erreurs"] and not groupe["lignes"]:
+            message = "facture sans aucune ligne exploitable"
+            groupe["erreurs"].append(message)
+            anomalies.append({"ligne": groupe["lignes_fichier"][0],
+                              "message": message})
+        if not groupe["erreurs"]:
+            prets.append(groupe)
+
+    apercu = [{
+        "reference": g["numero"], "date": g["date"], "tiers": g["tiers"],
+        "libelle": g["objet"], "perimetre": g["perimetre"],
+        "nb_lignes": len(g["lignes"]), "lignes_fichier": g["lignes_fichier"],
+        "erreurs": g["erreurs"],
+    } for g in (groupes[c] for c in ordre)]
+
+    return {"prets": prets, "anomalies": anomalies, "apercu": apercu,
+            "nb_valides": len(prets), "nb_rejetes": len(ordre) - len(prets)}
+
+
 def _perimetre(valeur: str, defaut: str) -> str:
     propre = _sans_accent(valeur)
     if not propre:
@@ -517,6 +674,9 @@ def _analyse(ctx, octets: bytes, cle_modele: str) -> dict:
                        (societe_id,), "declare")
     if cle_modele == "ecritures":
         resultat = analyse_ecritures(societe_id, rangs, association, defaut)
+    elif "sens" in modele:
+        resultat = analyse_factures(societe_id, rangs, association, defaut,
+                                    modele["sens"])
     else:
         resultat = analyse_simple(societe_id, rangs, association, modele,
                                   cle_modele)
@@ -570,6 +730,8 @@ def api_valide(ctx):
     with db.transaction():
         if cle == "ecritures":
             crees = _importe_ecritures(ctx, societe_id, prets)
+        elif cle.startswith("factures_"):
+            crees = _importe_factures(ctx, societe_id, prets)
         elif cle == "tiers":
             crees = _importe_tiers(societe_id, prets)
         elif cle == "comptes":
@@ -599,6 +761,24 @@ def _importe_ecritures(ctx, societe_id, groupes) -> int:
             perimetre=groupe["perimetre"],
             utilisateur=ctx.nom_utilisateur,
             valider=False,       # importées en brouillon : le comptable relit
+        )
+    return len(groupes)
+
+
+def _importe_factures(ctx, societe_id, groupes) -> int:
+    from modules import facturation
+    for groupe in groupes:
+        facturation.cree_facture(
+            societe_id, groupe["sens"], groupe["date"], groupe["lignes"],
+            tiers_id=groupe["tiers_id"],
+            numero=groupe["numero"],
+            date_echeance=groupe["echeance"],
+            objet=groupe["objet"] or None,
+            origine="import",
+            mode_reglement=groupe["mode_reglement"],
+            perimetre=groupe["perimetre"],
+            utilisateur=ctx.nom_utilisateur,
+            valider=False,       # brouillon : l'écriture attend la relecture
         )
     return len(groupes)
 

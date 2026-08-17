@@ -659,8 +659,25 @@ App.pages.factures = {
   async afficher(zone, route) {
     if (route.segments[1]) return ficheFacture(zone, route.segments[1]);
     const sens = route.parametres.sens || 'vente';
-    actionsPage(`<button class="primaire" onclick="editeFacture(null,'${sens}')">+ Facture</button>`);
-    const d = await charge('/api/factures', { sens, statut: route.parametres.statut, q: route.parametres.q });
+    const filtres = { sens, statut: route.parametres.statut, q: route.parametres.q };
+    // L'import ne concerne que les vraies factures : un avoir se crée depuis
+    // la facture d'origine, une proforma n'a pas de valeur comptable.
+    // Apostrophe typographique : celle du clavier fermerait la chaîne du
+    // gestionnaire onclick.
+    const IMPORTABLES = {
+      vente: ['factures_vente', 'Importer des factures de vente'],
+      achat: ['factures_achat', 'Importer des factures d’achat'],
+    };
+    const importable = IMPORTABLES[sens];
+    const boutonImport = importable
+      ? `<button onclick="modaleImport('${importable[0]}','${importable[1]}')">Importer</button>`
+      : '';
+    const argsExport = JSON.stringify(filtres).replace(/"/g, "'");
+    actionsPage(`
+      <button class="primaire" onclick="editeFacture(null,'${sens}')">+ Facture</button>
+      ${boutonImport}
+      <button onclick="telecharge('/api/export/factures', ${argsExport})">Exporter</button>`);
+    const d = await charge('/api/factures', filtres);
 
     zone.innerHTML = `
       <div class="barre-outils">

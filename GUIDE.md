@@ -132,10 +132,32 @@ Ce qui peut être repris :
 | Modèle | Contenu |
 |---|---|
 | Écritures comptables | le journal, avec la colonne **Périmètre** (Déclaré / Non déclaré) |
+| Factures de vente | vos ventes, une ligne de fichier par ligne de facture |
+| Factures d'achat | vos achats fournisseurs, avec leur numéro d'origine |
 | Tiers | clients, fournisseurs, propriétaires, locataires, acquéreurs |
 | Plan comptable | vos comptes en plus du plan SCF livré |
 | Biens | le portefeuille de l'agence |
 | Salariés | pour la paie |
+
+### Depuis les listes Ventes et Achats
+
+Pas besoin de passer par les paramètres : sur **Factures**, choisissez le type
+(*Factures de vente* ou *Factures d'achat*), puis :
+
+- **Importer** ouvre directement la fenêtre du bon modèle ;
+- **Exporter** produit un fichier Excel de ce que vous avez à l'écran.
+
+L'export respecte vos filtres — type, recherche, période et **périmètre**. Si
+le sélecteur est sur *Déclaré*, le fichier ne contient que le déclaré. Il
+comporte deux feuilles : les factures avec leurs totaux, puis le détail de
+leurs lignes.
+
+> Importez vos **tiers avant vos factures** : une facture se rattache à un
+> client ou un fournisseur déjà enregistré. Un tiers inconnu est signalé,
+> jamais créé au hasard.
+>
+> Les factures importées sont **en brouillon** : elles ne produisent leur
+> écriture comptable qu'une fois validées, après votre relecture.
 
 Points utiles :
 

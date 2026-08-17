@@ -145,8 +145,13 @@ rappelle sur chaque part le montant de l'opération entière.
 ### Reprise de données depuis Excel
 
 L'application **fournit les en-têtes** : le comptable télécharge un modèle
-`.xlsx` (écritures, tiers, plan comptable, biens, salariés), le remplit avec ses
-propres données et le redépose.
+`.xlsx` (écritures, factures de vente, factures d'achat, tiers, plan comptable,
+biens, salariés), le remplit avec ses propres données et le redépose.
+
+Les listes **Ventes** et **Achats** portent les deux actions directement :
+*Importer* ouvre le modèle correspondant, *Exporter* produit un classeur — une
+feuille d'en-têtes de factures, une feuille de lignes — en respectant les
+filtres affichés, périmètre compris.
 
 * L'import se fait **en deux temps** : contrôle complet sans écriture, puis
   validation. Chaque anomalie est rapportée avec son **numéro de ligne**.

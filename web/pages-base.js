@@ -751,15 +751,54 @@ async function ongletImport(zone) {
       `<button class="primaire" id="bouton-controler">Contrôler le fichier</button>`)}`;
 
   _fichierImport = null;
-  $('#import-fichier').onchange = (e) => {
+  brancheDepot(zone, () => $('#import-modele').value);
+}
+
+/** Câble le choix de fichier et le bouton de contrôle dans une zone donnée. */
+function brancheDepot(racine, litModele) {
+  _fichierImport = null;
+  $('#import-fichier', racine).onchange = (e) => {
     _fichierImport = e.target.files[0] || null;
-    $('#import-resultat').innerHTML = '';
+    $('#import-resultat', racine).innerHTML = '';
   };
-  $('#bouton-controler').onclick = controleImport;
+  $('#bouton-controler', racine).onclick = () =>
+    controleImport(racine, litModele());
 }
 
 function telechargeModele(cle) {
   window.open(`/api/import/modele/${cle}`, '_blank');
+}
+
+/**
+ * Import ouvert depuis une liste : le type de données est déjà connu, il n'y
+ * a donc rien à choisir. Le comptable reste sur son écran.
+ */
+async function modaleImport(cle, titre) {
+  const conteneur = document.createElement('div');
+  conteneur.innerHTML = `
+    <div class="message info">
+      <strong>Vos données, vos en-têtes</strong>
+      Téléchargez le modèle, remplissez-le, redéposez-le ici. Le fichier est
+      contrôlé ligne par ligne <em>avant</em> tout enregistrement.
+    </div>
+    <div class="rangee" style="margin-bottom:12px">
+      <button class="petit-bouton" id="modele-import">Télécharger le modèle</button>
+    </div>
+    <div class="rangee" style="align-items:flex-end; gap:12px">
+      <label class="champ" style="flex:1"><span>Fichier rempli (.xlsx ou .csv)</span>
+        <input type="file" id="import-fichier" accept=".xlsx,.csv"></label>
+      <button class="primaire" id="bouton-controler">Contrôler le fichier</button>
+    </div>
+    <div id="import-resultat"></div>`;
+
+  conteneur.querySelector('#modele-import').onclick = () => telechargeModele(cle);
+  brancheDepot(conteneur, () => cle);
+  modale({
+    titre: titre || 'Importer des données',
+    contenu: conteneur,
+    large: true,
+    boutons: [{ libelle: 'Fermer' }],
+  });
 }
 
 /** Lit le fichier choisi et le renvoie encodé, sans en-tête « data: ». */
@@ -772,10 +811,9 @@ function litFichierBase64(fichier) {
   });
 }
 
-async function controleImport() {
+async function controleImport(racine, modele) {
   if (!_fichierImport) { notifie('Choisissez d\'abord un fichier.', 'alerte'); return; }
-  const modele = $('#import-modele').value;
-  const zone = $('#import-resultat');
+  const zone = $('#import-resultat', racine);
   zone.innerHTML = '<div class="vide">Contrôle en cours…</div>';
   try {
     const contenu = await litFichierBase64(_fichierImport);
@@ -811,29 +849,41 @@ function afficheControleImport(zone, d, modele, contenu) {
     </tbody></table>
     ${anomalies.length > 100 ? `<p class="petit">… et ${anomalies.length - 100} autre(s).</p>` : ''}` : '';
 
+  // Le bouton énonce lui-même ce qu'il va faire : pas de fenêtre de
+  // confirmation par-dessus, qui remplacerait celle de l'import.
+  const libelleImport = anomalies.length
+    ? `Importer les ${d.nb_valides} ligne(s) saines et ignorer `
+      + `${anomalies.length} anomalie(s)`
+    : `Importer ${d.nb_valides} ligne(s)`;
+
   zone.innerHTML = resume + ignorees + detail + `
     <div class="rangee" style="margin-top:12px">
       ${d.nb_valides ? `<button class="primaire" id="bouton-importer">
-        Importer ${d.nb_valides} ligne(s)</button>` : ''}
+        ${libelleImport}</button>` : ''}
     </div>`;
 
   if (!d.nb_valides) return;
-  $('#bouton-importer').onclick = async () => {
-    const message = anomalies.length
-      ? `Importer les ${d.nb_valides} ligne(s) saines et ignorer les `
-        + `${anomalies.length} anomalie(s) ?`
-      : `Importer ${d.nb_valides} ligne(s) ?`;
-    if (!await confirme('Confirmer l\'import', message, 'Importer', false)) return;
+  $('#bouton-importer', zone).onclick = async () => {
+    const bouton = $('#bouton-importer', zone);
+    bouton.disabled = true;                 // un double clic doublerait l'import
+    bouton.textContent = 'Import en cours…';
     try {
       const r = await envoie('/api/import/valider',
         { modele, contenu, ignorer_anomalies: anomalies.length ? 1 : 0 });
       notifie(`${r.crees} ligne(s) importée(s).`
             + (r.rejetes ? ` ${r.rejetes} ignorée(s).` : ''), 'succes', 7000);
+      const brouillon = modele === 'ecritures'
+        ? 'Les écritures sont en brouillon : relisez-les au journal avant de les valider.'
+        : (modele.startsWith('factures_')
+          ? 'Les factures sont en brouillon : elles ne génèrent leur écriture '
+            + 'comptable qu\'une fois validées.' : '');
       zone.innerHTML = `<div class="message succes">
         <strong>Import terminé</strong>
         ${r.crees} ligne(s) enregistrée(s)${r.rejetes ? `, ${r.rejetes} ignorée(s)` : ''}.
-        ${modele === 'ecritures' ? 'Les écritures sont en brouillon : relisez-les '
-          + 'au journal avant de les valider.' : ''}</div>`;
+        ${brouillon}</div>`;
+      // Import lancé depuis une liste : rafraîchir ce qui est affiché derrière,
+      // sans effacer le compte rendu qui, lui, est dans la fenêtre.
+      if (!$('#contenu').contains(zone)) afficheRoute();
     } catch (err) {
       zone.innerHTML = `<div class="message danger"><strong>Import refusé</strong>
         ${ech(err.message)}</div>`;

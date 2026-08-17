@@ -9,12 +9,19 @@ lignes afin d'alimenter le coût de revient des programmes immobiliers.
 from __future__ import annotations
 
 from noyau import base as db
+from noyau import tableur
 from noyau import util
-from noyau.serveur import ErreurApplicative, route
+from noyau.serveur import ErreurApplicative, route, Reponse
 from modules import comptabilite as compta
 from modules.tiers import compte_du_tiers, tiers_ou_erreur
 
 SENS_VALIDES = {"vente", "achat", "avoir_vente", "avoir_achat", "proforma"}
+
+LIBELLES_SENS = {
+    "vente": "Factures de vente", "achat": "Factures d'achat",
+    "avoir_vente": "Avoirs clients", "avoir_achat": "Avoirs fournisseurs",
+    "proforma": "Factures proforma",
+}
 
 COMPTE_TVA_COLLECTEE = "4457"
 COMPTE_TVA_DEDUCTIBLE = "44566"
@@ -79,38 +86,41 @@ def calcule_timbre(societe_id: int, mode_reglement: str | None, montant_ttc: int
     return max(montant, minimum) if montant_ttc > 0 else 0
 
 
-@route("GET", "/api/factures")
-def api_liste(ctx):
-    societe_id = ctx.arg_int("societe")
+def _filtres_factures(ctx) -> tuple[str, list]:
+    """Conditions de sélection communes à la liste et à l'export."""
     conditions = ["f.societe_id = ?"]
-    params: list = [societe_id]
-    if ctx.arg("sens"):
-        conditions.append("f.sens = ?")
-        params.append(ctx.arg("sens"))
-    if ctx.arg("statut"):
-        conditions.append("f.statut = ?")
-        params.append(ctx.arg("statut"))
-    if ctx.arg("tiers"):
-        conditions.append("f.tiers_id = ?")
-        params.append(ctx.arg_int("tiers"))
-    if ctx.arg("programme"):
-        conditions.append("f.programme_id = ?")
-        params.append(ctx.arg_int("programme"))
-    if ctx.arg("du"):
-        conditions.append("f.date >= ?")
-        params.append(ctx.arg("du"))
-    if ctx.arg("au"):
-        conditions.append("f.date <= ?")
-        params.append(ctx.arg("au"))
+    params: list = [ctx.arg_int("societe")]
+    for argument, colonne in (("sens", "f.sens"), ("statut", "f.statut")):
+        if ctx.arg(argument):
+            conditions.append(f"{colonne} = ?")
+            params.append(ctx.arg(argument))
+    for argument, colonne in (("tiers", "f.tiers_id"), ("programme", "f.programme_id")):
+        if ctx.arg(argument):
+            conditions.append(f"{colonne} = ?")
+            params.append(ctx.arg_int(argument))
+    for argument, comparaison in (("du", ">="), ("au", "<=")):
+        if ctx.arg(argument):
+            conditions.append(f"f.date {comparaison} ?")
+            params.append(ctx.arg(argument))
     if ctx.arg("q"):
         conditions.append("(f.numero LIKE ? OR f.objet LIKE ? OR t.raison_sociale LIKE ?)")
         motif = "%" + ctx.arg("q") + "%"
         params += [motif, motif, motif]
+    fragment, params_perimetre = compta.clause_perimetre(ctx.perimetre(), "f")
+    if fragment:
+        conditions.append(fragment.replace(" AND ", "", 1))
+        params += params_perimetre
+    return " AND ".join(conditions), params
+
+
+@route("GET", "/api/factures")
+def api_liste(ctx):
+    filtre, params = _filtres_factures(ctx)
     limite = min(ctx.arg_int("limite", 200) or 200, 2000)
     factures = db.lignes(
         "SELECT f.*, t.raison_sociale AS tiers_nom, t.code AS tiers_code "
         "FROM factures f LEFT JOIN tiers t ON t.id = f.tiers_id "
-        f"WHERE {' AND '.join(conditions)} ORDER BY f.date DESC, f.id DESC LIMIT ?",
+        f"WHERE {filtre} ORDER BY f.date DESC, f.id DESC LIMIT ?",
         params + [limite],
     )
     totaux = db.ligne(
@@ -118,7 +128,7 @@ def api_liste(ctx):
         "  COALESCE(SUM(f.net_a_payer),0) AS ttc, "
         "  COALESCE(SUM(f.net_a_payer - f.montant_regle),0) AS reste "
         "FROM factures f LEFT JOIN tiers t ON t.id = f.tiers_id "
-        f"WHERE {' AND '.join(conditions)} AND f.statut <> 'annulee'",
+        f"WHERE {filtre} AND f.statut <> 'annulee'",
         params,
     )
     return {"factures": factures, "totaux": totaux}
@@ -147,75 +157,108 @@ def api_detail(ctx):
     return f
 
 
-@route("POST", "/api/factures")
-def api_cree(ctx):
-    ctx.interdit_lecture_seule()
-    societe_id = ctx.entier("societe_id")
-    sens = ctx.champ("sens", "vente")
+CLES_COMPTEUR = {"vente": "facture_vente", "achat": "facture_achat",
+                 "avoir_vente": "avoir_vente", "avoir_achat": "avoir_achat",
+                 "proforma": "proforma"}
+
+
+def cree_facture(societe_id: int, sens: str, date: str, lignes: list[dict], *,
+                 tiers_id: int | None = None, numero: str | None = None,
+                 date_echeance: str | None = None, objet: str | None = None,
+                 reference: str | None = None, origine: str | None = None,
+                 programme_id=None, lot_id=None, bien_id=None, bail_id=None,
+                 contrat_vsp_id=None, mode_reglement: str | None = None,
+                 perimetre: str | None = None, notes: str | None = None,
+                 conditions: str | None = None, utilisateur: str | None = None,
+                 valider: bool = False) -> dict:
+    """Crée une facture. Chemin unique, partagé par la saisie et l'import.
+
+    À appeler dans une transaction.
+    """
     if sens not in SENS_VALIDES:
         raise ErreurApplicative("Type de facture invalide.")
-    date = ctx.date("date", util.aujourdhui())
     ex = compta.exercice_pour_date(societe_id, date)
     compta.exige_exercice_ouvert(ex)
-
-    tiers_id = ctx.entier("tiers_id")
     if not tiers_id and sens != "proforma":
         raise ErreurApplicative("Sélectionnez le tiers de la facture.")
 
-    lignes_pretes, total_ht, total_tva = calcule_lignes(ctx.champ("lignes") or [])
-    mode = ctx.champ("mode_reglement")
+    lignes_pretes, total_ht, total_tva = calcule_lignes(lignes)
     ttc = total_ht + total_tva
-    timbre = calcule_timbre(societe_id, mode, ttc, int(date[:4]))
+    timbre = calcule_timbre(societe_id, mode_reglement, ttc, int(date[:4]))
 
-    with db.transaction():
-        cle_compteur = {"vente": "facture_vente", "achat": "facture_achat",
-                        "avoir_vente": "avoir_vente", "avoir_achat": "avoir_achat",
-                        "proforma": "proforma"}[sens]
-        numero = util.nettoie(ctx.champ("numero"))
-        if sens == "achat" and not numero:
-            raise ErreurApplicative(
-                "Saisissez le numéro de la facture du fournisseur (numéro d'origine)."
-            )
-        if not numero:
-            numero = db.numero_suivant(societe_id, cle_compteur, int(date[:4]))
-        if db.ligne("SELECT id FROM factures WHERE societe_id = ? AND sens = ? AND numero = ?",
-                    (societe_id, sens, numero)):
-            raise ErreurApplicative(f"La facture n° {numero} existe déjà.")
+    numero = util.nettoie(numero)
+    if sens == "achat" and not numero:
+        raise ErreurApplicative(
+            "Saisissez le numéro de la facture du fournisseur (numéro d'origine)."
+        )
+    if not numero:
+        numero = db.numero_suivant(societe_id, CLES_COMPTEUR[sens], int(date[:4]))
+    if db.ligne("SELECT id FROM factures WHERE societe_id = ? AND sens = ? AND numero = ?",
+                (societe_id, sens, numero)):
+        raise ErreurApplicative(f"La facture n° {numero} existe déjà.")
 
-        facture_id = db.insere("factures", {
-            "societe_id": societe_id, "exercice_id": ex["id"], "sens": sens,
-            "numero": numero, "date": date,
-            "date_echeance": ctx.date("date_echeance"),
-            "tiers_id": tiers_id,
-            "objet": util.nettoie(ctx.champ("objet")),
-            "reference": util.nettoie(ctx.champ("reference")),
-            "origine": util.nettoie(ctx.champ("origine")),
-            "programme_id": ctx.entier("programme_id"),
-            "lot_id": ctx.entier("lot_id"),
-            "bien_id": ctx.entier("bien_id"),
-            "bail_id": ctx.entier("bail_id"),
-            "contrat_vsp_id": ctx.entier("contrat_vsp_id"),
-            "montant_ht": total_ht, "montant_tva": total_tva, "montant_ttc": ttc,
-            "timbre": timbre, "net_a_payer": ttc + timbre, "montant_regle": 0,
-            "mode_reglement": mode,
-            "statut": "brouillon",
-            "perimetre": compta.normalise_perimetre(
-                ctx.champ("perimetre"),
-                db.valeur("SELECT perimetre_defaut FROM societes WHERE id = ?",
-                          (societe_id,), "declare")),
-            "notes": util.nettoie(ctx.champ("notes")),
-            "conditions": util.nettoie(ctx.champ("conditions")),
-            "cree_le": util.maintenant(), "cree_par": ctx.nom_utilisateur,
-        })
-        for l in lignes_pretes:
-            l["facture_id"] = facture_id
-            db.insere("facture_lignes", l)
-        db.trace("creation", "facture", facture_id, numero, ctx.nom_utilisateur)
+    facture_id = db.insere("factures", {
+        "societe_id": societe_id, "exercice_id": ex["id"], "sens": sens,
+        "numero": numero, "date": date,
+        "date_echeance": date_echeance,
+        "tiers_id": tiers_id,
+        "objet": util.nettoie(objet),
+        "reference": util.nettoie(reference),
+        "origine": util.nettoie(origine),
+        "programme_id": programme_id,
+        "lot_id": lot_id,
+        "bien_id": bien_id,
+        "bail_id": bail_id,
+        "contrat_vsp_id": contrat_vsp_id,
+        "montant_ht": total_ht, "montant_tva": total_tva, "montant_ttc": ttc,
+        "timbre": timbre, "net_a_payer": ttc + timbre, "montant_regle": 0,
+        "mode_reglement": mode_reglement,
+        "statut": "brouillon",
+        "perimetre": compta.normalise_perimetre(
+            perimetre,
+            db.valeur("SELECT perimetre_defaut FROM societes WHERE id = ?",
+                      (societe_id,), "declare")),
+        "notes": util.nettoie(notes),
+        "conditions": util.nettoie(conditions),
+        "cree_le": util.maintenant(), "cree_par": utilisateur,
+    })
+    for l in lignes_pretes:
+        l["facture_id"] = facture_id
+        db.insere("facture_lignes", l)
+    db.trace("creation", "facture", facture_id, numero, utilisateur)
 
-        if ctx.booleen("valider"):
-            _valide(facture_id, ctx.nom_utilisateur)
-
+    if valider:
+        _valide(facture_id, utilisateur)
     return {"id": facture_id, "numero": numero}
+
+
+@route("POST", "/api/factures")
+def api_cree(ctx):
+    ctx.interdit_lecture_seule()
+    with db.transaction():
+        return cree_facture(
+            ctx.entier("societe_id"),
+            ctx.champ("sens", "vente"),
+            ctx.date("date", util.aujourdhui()),
+            ctx.champ("lignes") or [],
+            tiers_id=ctx.entier("tiers_id"),
+            numero=ctx.champ("numero"),
+            date_echeance=ctx.date("date_echeance"),
+            objet=ctx.champ("objet"),
+            reference=ctx.champ("reference"),
+            origine=ctx.champ("origine"),
+            programme_id=ctx.entier("programme_id"),
+            lot_id=ctx.entier("lot_id"),
+            bien_id=ctx.entier("bien_id"),
+            bail_id=ctx.entier("bail_id"),
+            contrat_vsp_id=ctx.entier("contrat_vsp_id"),
+            mode_reglement=ctx.champ("mode_reglement"),
+            perimetre=ctx.champ("perimetre"),
+            notes=ctx.champ("notes"),
+            conditions=ctx.champ("conditions"),
+            utilisateur=ctx.nom_utilisateur,
+            valider=bool(ctx.booleen("valider")),
+        )
 
 
 @route("PUT", "/api/factures/<id>")
@@ -590,6 +633,100 @@ def api_supprime_reglement(ctx):
         db.supprime("reglements", identifiant)
         db.trace("suppression", "reglement", identifiant, None, ctx.nom_utilisateur)
     return {"ok": True}
+
+
+@route("GET", "/api/export/factures")
+def api_export(ctx):
+    """Export du journal des ventes ou des achats, tel qu'affiché à l'écran.
+
+    Deux feuilles : les factures, puis le détail de leurs lignes. Les filtres
+    de l'écran (type, statut, recherche, période, périmètre) sont repris tels
+    quels, afin que le fichier corresponde à ce que le comptable a sous
+    les yeux.
+    """
+    societe_id = ctx.arg_int("societe")
+    soc = compta.societe(societe_id)
+    sens = ctx.arg("sens") or "vente"
+    filtre, params = _filtres_factures(ctx)
+    factures = db.lignes(
+        "SELECT f.*, t.raison_sociale AS tiers_nom, t.code AS tiers_code, "
+        "  t.nif AS tiers_nif, t.rc AS tiers_rc "
+        "FROM factures f LEFT JOIN tiers t ON t.id = f.tiers_id "
+        f"WHERE {filtre} ORDER BY f.date, f.id", params)
+
+    classeur = tableur.Classeur()
+    f = classeur.feuille(LIBELLES_SENS.get(sens, "Factures")[:31])
+    f.titre(f"{soc['raison_sociale']} — {LIBELLES_SENS.get(sens, 'Factures')}")
+    f.ajoute(tableur.texte(compta.LIBELLES_VUE.get(
+        compta.normalise_perimetre(ctx.perimetre() or "tous"), "Vue réelle")))
+    if ctx.arg("du") or ctx.arg("au"):
+        f.ajoute(tableur.texte(f"Du {util.date_fr(ctx.arg('du'))} "
+                               f"au {util.date_fr(ctx.arg('au'))}"))
+    f.vide()
+    f.entetes("N°", "Date", "Échéance", "Tiers", "NIF", "Objet", "Référence",
+              "Montant HT", "TVA", "Timbre", "Net à payer", "Réglé",
+              "Reste dû", "Statut", "Périmètre", "Mode de règlement")
+    f.largeurs_auto(14, 12, 12, 30, 18, 34, 16, 15, 14, 12, 15, 15, 15, 12, 16, 16)
+    for facture in factures:
+        f.ajoute(
+            tableur.texte(facture["numero"]),
+            tableur.date_cel(facture["date"]),
+            tableur.date_cel(facture["date_echeance"]),
+            tableur.texte(facture["tiers_nom"]),
+            tableur.texte(facture["tiers_nif"]),
+            tableur.texte(facture["objet"]),
+            tableur.texte(facture["reference"]),
+            tableur.monnaie(facture["montant_ht"]),
+            tableur.monnaie(facture["montant_tva"]),
+            tableur.monnaie(facture["timbre"]),
+            tableur.monnaie(facture["net_a_payer"]),
+            tableur.monnaie(facture["montant_regle"]),
+            tableur.monnaie(facture["net_a_payer"] - facture["montant_regle"]),
+            tableur.texte(facture["statut"]),
+            tableur.texte(compta.PERIMETRES.get(facture["perimetre"], "")),
+            tableur.texte(facture["mode_reglement"]),
+        )
+    vivantes = [x for x in factures if x["statut"] != "annulee"]
+    f.ajoute(
+        tableur.texte("TOTAL", tableur.GRAS), *[tableur.texte("")] * 6,
+        tableur.monnaie(sum(x["montant_ht"] for x in vivantes), total=True),
+        tableur.monnaie(sum(x["montant_tva"] for x in vivantes), total=True),
+        tableur.monnaie(sum(x["timbre"] for x in vivantes), total=True),
+        tableur.monnaie(sum(x["net_a_payer"] for x in vivantes), total=True),
+        tableur.monnaie(sum(x["montant_regle"] for x in vivantes), total=True),
+        tableur.monnaie(sum(x["net_a_payer"] - x["montant_regle"]
+                            for x in vivantes), total=True),
+    )
+
+    detail = classeur.feuille("Lignes")
+    detail.entetes("N° facture", "Date", "Tiers", "Désignation", "Quantité",
+                   "Unité", "Prix unitaire", "Remise %", "Taux TVA",
+                   "Montant HT", "TVA", "Compte")
+    detail.largeurs_auto(14, 12, 30, 44, 11, 10, 15, 11, 11, 15, 14, 12)
+    if factures:
+        marques = ", ".join("?" for _ in factures)
+        lignes = db.lignes(
+            "SELECT fl.*, f.numero, f.date, t.raison_sociale AS tiers_nom "
+            "FROM facture_lignes fl JOIN factures f ON f.id = fl.facture_id "
+            "LEFT JOIN tiers t ON t.id = f.tiers_id "
+            f"WHERE fl.facture_id IN ({marques}) "
+            "ORDER BY f.date, f.id, fl.ordre", [x["id"] for x in factures])
+        for l in lignes:
+            detail.ajoute(
+                tableur.texte(l["numero"]), tableur.date_cel(l["date"]),
+                tableur.texte(l["tiers_nom"]), tableur.texte(l["designation"]),
+                tableur.nombre(l["quantite"] / 1000, tableur.NORMAL),
+                tableur.texte(l["unite"]),
+                tableur.monnaie(l["prix_unitaire"]),
+                tableur.nombre(l["remise_taux"] / 100, tableur.NORMAL),
+                tableur.nombre(l["taux_tva"] / 100, tableur.NORMAL),
+                tableur.monnaie(l["montant_ht"]), tableur.monnaie(l["montant_tva"]),
+                tableur.texte(l["compte"]),
+            )
+
+    return Reponse(classeur.octets(),
+                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                   f"{sens}_{soc['code']}_{util.aujourdhui()}.xlsx")
 
 
 @route("GET", "/api/factures/<id>/impression")
