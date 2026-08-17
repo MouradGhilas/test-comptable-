@@ -155,8 +155,9 @@ App.pages.tiers = {
 
     const type = route.parametres.type || '';
     const q = route.parametres.q || '';
-    actionsPage(`<button class="primaire" onclick="editeTiers()">+ Nouveau tiers</button>
-      <button onclick="telecharge('/api/export/balance-auxiliaire',{type:'${type || 'client'}'})">Balance auxiliaire</button>`);
+    actionsPage(`<button class="primaire" onclick="editeTiers()">+ Nouveau tiers</button>`
+      + boutonImport('tiers', 'Importer des tiers')
+      + `<button onclick="telecharge('/api/export/balance-auxiliaire',{type:'${type || 'client'}'})">Balance auxiliaire</button>`);
 
     const d = await charge('/api/tiers', { type, q, limite: 500 });
     zone.innerHTML = `
@@ -715,43 +716,76 @@ let _fichierImport = null;
 
 async function ongletImport(zone) {
   const d = await api('/api/import/modeles');
+  const parGroupe = (groupe) => d.modeles.filter((m) => m.groupe === groupe);
+
+  const tableauModeles = (modeles) => `
+    <table class="tableau"><thead><tr>
+      <th style="width:44px">Ordre</th><th style="width:30%">Données</th>
+      <th>Colonnes attendues</th><th style="width:150px"></th>
+    </tr></thead><tbody>
+      ${modeles.map((m) => `<tr>
+        <td class="num tres-petit">${m.rang}</td>
+        <td><strong>${ech(m.libelle)}</strong></td>
+        <td class="tres-petit">${m.colonnes.map((c) =>
+          c.requis ? `<strong>${ech(c.nom)}</strong>` : ech(c.nom)).join(' · ')}</td>
+        <td><button class="petit-bouton" onclick="telechargeModele('${m.cle}')">
+          Télécharger</button></td>
+      </tr>`).join('')}
+    </tbody></table>`;
+
   zone.innerHTML = `
-    ${carte('Reprendre vos données existantes', `
+    ${carte('Reprendre un dossier déjà tenu', `
       <div class="message info">
         <strong>Comment procéder</strong>
         1. Téléchargez le modèle correspondant : il contient déjà les en-têtes
-        attendus. 2. Remplissez-le avec vos données, sans toucher à la ligne
-        d'en-têtes. 3. Déposez-le ci-dessous : l'application contrôle tout et
-        vous montre les anomalies <em>avant</em> d'enregistrer quoi que ce soit.
+        attendus, une ligne d'exemple et une notice. 2. Remplissez-le avec vos
+        données, sans toucher à la ligne d'en-têtes. 3. Déposez-le plus bas :
+        l'application contrôle tout et vous montre les anomalies
+        <em>avant</em> d'enregistrer quoi que ce soit.
       </div>
-      <table class="tableau"><thead><tr>
-        <th>Données</th><th>Colonnes attendues</th><th style="width:150px"></th>
-      </tr></thead><tbody>
-        ${d.modeles.map((m) => `<tr>
-          <td><strong>${ech(m.libelle)}</strong></td>
-          <td class="petit">${m.colonnes.map((c) =>
-            c.requis ? `<strong>${ech(c.nom)}</strong>` : ech(c.nom)).join(' · ')}</td>
-          <td><button class="petit-bouton" onclick="telechargeModele('${m.cle}')">
-            Télécharger le modèle</button></td>
-        </tr>`).join('')}
-      </tbody></table>
-      <p class="petit">Les colonnes en gras sont obligatoires. Formats acceptés :
-      Excel (.xlsx) et CSV.</p>`)}
+      <div class="message alerte">
+        <strong>Suivez l'ordre indiqué</strong>
+        Chaque étape s'appuie sur la précédente : une facture a besoin de son
+        tiers, un bail de son bien, un contrat de son lot. Un élément
+        introuvable est signalé, jamais créé au hasard.
+      </div>
+      <p class="petit">L'import <strong>reprend</strong> votre situation, il ne
+      recomptabilise pas le passé : baux, lots, contrats et immobilisations
+      décrivent l'existant, tandis que la <strong>balance d'ouverture</strong>
+      (ou les écritures importées) portent la comptabilité. Sans cela, tout
+      serait compté deux fois.</p>`)}
+
+    ${d.groupes.map((groupe) => parGroupe(groupe).length
+      ? carte(groupe, tableauModeles(parGroupe(groupe)), '', true) : '').join('')}
 
     ${carte('Déposer un fichier rempli', `
       <div class="ligne-champs">
         <label class="champ"><span>Type de données</span>
           <select id="import-modele">
-            ${d.modeles.map((m) => `<option value="${m.cle}">${ech(m.libelle)}</option>`).join('')}
+            ${d.modeles.map((m) =>
+              `<option value="${m.cle}">${m.rang}. ${ech(m.libelle)}</option>`).join('')}
           </select></label>
+        <label class="champ" id="champ-date-reprise" hidden>
+          <span>Date de reprise</span>
+          <input type="date" id="import-date-reprise"></label>
         <label class="champ"><span>Fichier</span>
           <input type="file" id="import-fichier" accept=".xlsx,.csv"></label>
       </div>
       <div id="import-resultat"></div>`,
-      `<button class="primaire" id="bouton-controler">Contrôler le fichier</button>`)}`;
+      `<button class="primaire" id="bouton-controler">Contrôler le fichier</button>`)}
+
+    <p class="petit">Les colonnes en gras sont obligatoires. Formats acceptés :
+    Excel (.xlsx) et CSV enregistré depuis Excel.</p>`;
 
   _fichierImport = null;
-  brancheDepot(zone, () => $('#import-modele').value);
+  const choix = $('#import-modele');
+  // La balance d'ouverture est la seule à demander une date.
+  const majDateReprise = () => {
+    $('#champ-date-reprise').hidden = choix.value !== 'balance_ouverture';
+  };
+  choix.onchange = () => { majDateReprise(); $('#import-resultat').innerHTML = ''; };
+  majDateReprise();
+  brancheDepot(zone, () => choix.value);
 }
 
 /** Câble le choix de fichier et le bouton de contrôle dans une zone donnée. */
@@ -767,6 +801,16 @@ function brancheDepot(racine, litModele) {
 
 function telechargeModele(cle) {
   window.open(`/api/import/modele/${cle}`, '_blank');
+}
+
+/**
+ * Bouton d'import à poser sur une liste. Le titre passe par un attribut
+ * `data-`, jamais par la chaîne d'un onclick : une apostrophe française y
+ * fermerait la chaîne.
+ */
+function boutonImport(cle, titre) {
+  return `<button data-import="${ech(cle)}" data-titre="${ech(titre)}"
+    onclick="modaleImport(this.dataset.import, this.dataset.titre)">Importer</button>`;
 }
 
 /**
@@ -811,21 +855,28 @@ function litFichierBase64(fichier) {
   });
 }
 
+/** Champs supplémentaires propres à certains modèles. */
+function optionsImport(racine) {
+  const date = $('#import-date-reprise', racine);
+  return date && date.value ? { date_reprise: date.value } : {};
+}
+
 async function controleImport(racine, modele) {
   if (!_fichierImport) { notifie('Choisissez d\'abord un fichier.', 'alerte'); return; }
   const zone = $('#import-resultat', racine);
   zone.innerHTML = '<div class="vide">Contrôle en cours…</div>';
   try {
     const contenu = await litFichierBase64(_fichierImport);
-    const d = await envoie('/api/import/analyse', { modele, contenu });
-    afficheControleImport(zone, d, modele, contenu);
+    const options = optionsImport(racine);
+    const d = await envoie('/api/import/analyse', { modele, contenu, ...options });
+    afficheControleImport(zone, d, modele, contenu, options);
   } catch (err) {
     zone.innerHTML = `<div class="message danger"><strong>Fichier refusé</strong>
       ${ech(err.message)}</div>`;
   }
 }
 
-function afficheControleImport(zone, d, modele, contenu) {
+function afficheControleImport(zone, d, modele, contenu, options = {}) {
   const anomalies = d.anomalies || [];
   const ignorees = (d.colonnes_ignorees || []).length
     ? `<p class="petit">Colonnes du fichier non utilisées :
@@ -869,7 +920,8 @@ function afficheControleImport(zone, d, modele, contenu) {
     bouton.textContent = 'Import en cours…';
     try {
       const r = await envoie('/api/import/valider',
-        { modele, contenu, ignorer_anomalies: anomalies.length ? 1 : 0 });
+        { modele, contenu, ...options,
+          ignorer_anomalies: anomalies.length ? 1 : 0 });
       notifie(`${r.crees} ligne(s) importée(s).`
             + (r.rejetes ? ` ${r.rejetes} ignorée(s).` : ''), 'succes', 7000);
       const brouillon = modele === 'ecritures'

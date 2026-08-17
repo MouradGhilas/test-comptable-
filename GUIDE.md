@@ -127,17 +127,62 @@ leur **numéro de ligne** : compte inexistant, date impossible, écriture
 déséquilibrée, doublon… Corrigez le fichier et recommencez, ou importez
 uniquement les lignes saines.
 
-Ce qui peut être repris :
+### L'ordre compte
 
-| Modèle | Contenu |
-|---|---|
-| Écritures comptables | le journal, avec la colonne **Périmètre** (Déclaré / Non déclaré) |
-| Factures de vente | vos ventes, une ligne de fichier par ligne de facture |
-| Factures d'achat | vos achats fournisseurs, avec leur numéro d'origine |
-| Tiers | clients, fournisseurs, propriétaires, locataires, acquéreurs |
-| Plan comptable | vos comptes en plus du plan SCF livré |
-| Biens | le portefeuille de l'agence |
-| Salariés | pour la paie |
+Chaque étape s'appuie sur la précédente : une facture a besoin de son tiers, un
+bail de son bien, un contrat de son lot. L'écran affiche un **numéro d'ordre**
+devant chaque modèle — suivez-le.
+
+| # | Modèle | Contenu |
+|---|---|---|
+| 1 | Plan comptable | vos comptes en plus du plan SCF livré |
+| 2 | Tiers | clients, fournisseurs, propriétaires, locataires, acquéreurs |
+| 3 | Comptes de trésorerie | vos banques et vos caisses |
+| **4** | **Balance d'ouverture** | **les soldes à la date de reprise** |
+| 5 | Biens | le portefeuille de l'agence |
+| 6 | Mandats | mandats de vente, de location et de gestion |
+| 7 | Baux | les baux en cours |
+| 8 | Loyers et quittances | l'historique des loyers appelés |
+| 9 | Programmes | les opérations de promotion |
+| 10 | Lots | les logements et locaux de chaque programme |
+| 11 | Contrats VSP | les ventes sur plan signées |
+| 12 | Échéanciers VSP | les tranches de paiement de chaque contrat |
+| 13 | Immobilisations | le parc existant |
+| 14 | Salariés | pour la paie |
+| 15-16 | Factures de vente / d'achat | une ligne de fichier par ligne de facture |
+| 17 | Règlements | les encaissements et décaissements déjà intervenus |
+| 18 | Écritures comptables | le journal détaillé, si vous le reprenez |
+
+### La balance d'ouverture, l'étape qui compte
+
+C'est elle qui vous permet de **prendre le train en marche**. Vous indiquez,
+pour chaque compte, son solde à la date de reprise — au débit ou au crédit,
+jamais les deux — et l'application produit **une seule écriture d'à-nouveaux**
+dans le journal AN, à la date que vous choisissez.
+
+Le total des débits doit égaler le total des crédits. Sinon l'application
+refuse le fichier **en indiquant le montant exact de l'écart**.
+
+> **Balance d'ouverture ou écritures détaillées : choisissez.** Les deux
+> ensemble compteraient deux fois la même chose. La balance suffit pour
+> repartir ; le journal détaillé n'est utile que si vous voulez retrouver
+> l'historique complet dans l'application.
+
+### Ce que l'import ne fait pas
+
+L'import **reprend votre situation, il ne recomptabilise pas le passé**. Les
+baux, lots, contrats, quittances et immobilisations décrivent l'existant : ils
+ne génèrent aucune écriture. C'est la balance d'ouverture qui porte la
+comptabilité. Sans cette règle, tout serait compté deux fois.
+
+De même, une immobilisation reprise **ne rejoue pas son écriture
+d'acquisition** : sa valeur et ses amortissements sont déjà dans la balance.
+
+### Depuis les listes elles-mêmes
+
+Le bouton **Importer** est posé là où il sert : Tiers, Portefeuille, Baux,
+Programmes, Contrats VSP, Immobilisations, Salariés, et les listes de factures.
+Il ouvre directement le bon modèle, sans passer par les paramètres.
 
 ### Depuis les listes Ventes et Achats
 

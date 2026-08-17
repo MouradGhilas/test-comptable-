@@ -666,17 +666,14 @@ App.pages.factures = {
     // gestionnaire onclick.
     const IMPORTABLES = {
       vente: ['factures_vente', 'Importer des factures de vente'],
-      achat: ['factures_achat', 'Importer des factures d’achat'],
+      achat: ['factures_achat', "Importer des factures d'achat"],
     };
     const importable = IMPORTABLES[sens];
-    const boutonImport = importable
-      ? `<button onclick="modaleImport('${importable[0]}','${importable[1]}')">Importer</button>`
-      : '';
     const argsExport = JSON.stringify(filtres).replace(/"/g, "'");
-    actionsPage(`
-      <button class="primaire" onclick="editeFacture(null,'${sens}')">+ Facture</button>
-      ${boutonImport}
-      <button onclick="telecharge('/api/export/factures', ${argsExport})">Exporter</button>`);
+    actionsPage(
+      `<button class="primaire" onclick="editeFacture(null,'${sens}')">+ Facture</button>`
+      + (importable ? boutonImport(importable[0], importable[1]) : '')
+      + `<button onclick="telecharge('/api/export/factures', ${argsExport})">Exporter</button>`);
     const d = await charge('/api/factures', filtres);
 
     zone.innerHTML = `

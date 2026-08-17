@@ -29,7 +29,9 @@ App.pages.promotion = {
 /* --------------------------------------------------------- Programmes -- */
 
 async function vueProgrammes(zone) {
-  actionsPage('<button class="primaire" onclick="editeProgramme()">+ Programme</button>');
+  actionsPage('<button class="primaire" onclick="editeProgramme()">+ Programme</button>'
+    + boutonImport('programmes', 'Importer des programmes')
+    + boutonImport('lots', 'Importer des lots'));
   const d = await charge('/api/programmes');
   zone.innerHTML = d.programmes.length ? `<div class="grille c2">${d.programmes.map((p) => {
     const commercialise = pourcent(p.vendu, p.chiffre_affaires_prevu || 1);
@@ -443,7 +445,9 @@ function tableContrats(contrats) {
 }
 
 async function vueContrats(zone, route) {
-  actionsPage('<button class="primaire" onclick="editeContrat()">+ Contrat VSP</button>');
+  actionsPage('<button class="primaire" onclick="editeContrat()">+ Contrat VSP</button>'
+    + boutonImport('contrats_vsp', 'Importer des contrats VSP')
+    + boutonImport('echeances_vsp', 'Importer des échéanciers'));
   const d = await charge('/api/contrats-vsp', { programme: route.parametres.programme, statut: route.parametres.statut });
   zone.innerHTML = tableContrats(d.contrats.map((c) => ({ ...c, lot_numero: `${c.programme_code} / ${c.lot_numero}` })));
 }

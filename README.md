@@ -145,8 +145,26 @@ rappelle sur chaque part le montant de l'opération entière.
 ### Reprise de données depuis Excel
 
 L'application **fournit les en-têtes** : le comptable télécharge un modèle
-`.xlsx` (écritures, factures de vente, factures d'achat, tiers, plan comptable,
-biens, salariés), le remplit avec ses propres données et le redépose.
+`.xlsx`, le remplit avec ses propres données et le redépose. **Dix-huit
+modèles** couvrent la reprise complète d'un dossier déjà tenu ailleurs —
+plan comptable, tiers, trésorerie, balance d'ouverture, biens, mandats, baux,
+quittances, programmes, lots, contrats VSP, échéanciers, immobilisations,
+salariés, factures, règlements et écritures.
+
+La **balance d'ouverture** est la pièce maîtresse : elle reprend les soldes à
+une date choisie et produit une écriture d'à-nouveaux unique dans le journal AN,
+après avoir vérifié que débits et crédits s'équilibrent. C'est elle qui permet
+de reprendre un dossier en cours d'année.
+
+**L'import reprend la situation, il ne recomptabilise pas le passé.** Baux,
+lots, contrats, quittances et immobilisations décrivent l'existant sans générer
+d'écriture ; la comptabilité est portée par la balance d'ouverture ou par les
+écritures importées. Sans cette règle, tout serait compté deux fois.
+
+Les modèles sont **déclaratifs** (`Colonne(nom, …, champ, type, reference)`) :
+conversion, contrôle des valeurs admises, résolution des références et
+détection des doublons sont génériques, une nouvelle table ne demande qu'une
+description.
 
 Les listes **Ventes** et **Achats** portent les deux actions directement :
 *Importer* ouvre le modèle correspondant, *Exporter* produit un classeur — une

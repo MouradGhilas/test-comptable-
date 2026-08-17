@@ -482,7 +482,8 @@ async function payeSalaires(periode) {
 
 async function vueSalaries(zone) {
   const d = await charge('/api/salaries');
-  actionsPage('<button class="primaire" onclick="editeSalarie()">+ Salarié</button>');
+  actionsPage('<button class="primaire" onclick="editeSalarie()">+ Salarié</button>'
+    + boutonImport('salaries', 'Importer des salariés'));
   zone.innerHTML = carte('Salariés', tableau([
     { titre: 'Matricule', cle: 'matricule' },
     { titre: 'Nom', rendu: (s) => `<strong>${ech(s.nom)} ${ech(s.prenom)}</strong>` },
@@ -627,8 +628,9 @@ App.pages.immobilisations = {
   titre: 'Immobilisations',
   async afficher(zone) {
     const d = await charge('/api/immobilisations', { annee: App.etat.exercice?.libelle });
-    actionsPage(`<button class="primaire" onclick="editeImmo()">+ Immobilisation</button>
-      <button onclick="lanceDotations()">Comptabiliser les dotations</button>
+    actionsPage(`<button class="primaire" onclick="editeImmo()">+ Immobilisation</button>`
+      + boutonImport('immobilisations', 'Importer des immobilisations')
+      + `<button onclick="lanceDotations()">Comptabiliser les dotations</button>
       <button onclick="telecharge('/api/export/immobilisations')">Exporter</button>`);
     const t = d.totaux;
     zone.innerHTML = `

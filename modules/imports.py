@@ -9,10 +9,15 @@ L'import se fait toujours en deux temps :
   1. **Contrôle** — le fichier est lu et vérifié ligne par ligne, sans rien
      écrire. Chaque anomalie est rapportée avec son numéro de ligne.
   2. **Validation** — seules les lignes saines sont enregistrées, par le même
-     chemin que la saisie manuelle (`comptabilite.enregistre_ecriture`), donc
-     avec les mêmes contrôles d'équilibre, d'exercice et de plan comptable.
+     chemin que la saisie manuelle (`comptabilite.enregistre_ecriture`,
+     `facturation.cree_facture`), donc avec les mêmes contrôles.
 
 Formats acceptés : .xlsx et .csv (séparateur « ; », encodage Excel français).
+
+Règle d'ensemble : **l'import reprend l'existant, il ne recomptabilise pas le
+passé.** Les baux, lots, contrats et immobilisations repris décrivent une
+situation ; ce sont la balance d'ouverture ou les écritures importées qui
+portent la comptabilité. Sans cela, tout serait compté deux fois.
 """
 
 from __future__ import annotations
@@ -30,19 +35,133 @@ TAILLE_MAX = 16 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
-# Description des modèles
+# Description d'une colonne
 # ---------------------------------------------------------------------------
 
 class Colonne:
-    """Une colonne du modèle : son en-tête, ce qu'elle attend, son exemple."""
+    """Une colonne du modèle : son en-tête, ce qu'elle attend, son exemple.
 
-    def __init__(self, nom, aide, exemple="", requis=False, synonymes=()):
+    `champ` nomme la colonne SQL visée (par défaut, aucune : la colonne est
+    alors exploitée par un traitement particulier). `type` pilote la
+    conversion, `reference` la résolution d'un identifiant, `valeurs`
+    l'ensemble fermé des réponses acceptées.
+    """
+
+    def __init__(self, nom, aide, exemple="", requis=False, synonymes=(),
+                 champ=None, type="texte", reference=None, parent=None,
+                 valeurs=None):
         self.nom = nom
         self.aide = aide
         self.exemple = exemple
         self.requis = requis
         self.synonymes = synonymes
+        self.champ = champ
+        self.type = type
+        self.reference = reference        # table visée : tiers, compte, bien…
+        self.parent = parent              # colonne qui restreint la recherche
+        self.valeurs = set(valeurs) if valeurs else None
 
+
+def _sans_accent(texte: str) -> str:
+    decompose = unicodedata.normalize("NFD", str(texte or ""))
+    return "".join(c for c in decompose if unicodedata.category(c) != "Mn").lower()
+
+
+def _date(valeur: str) -> str | None:
+    """Accepte JJ/MM/AAAA, AAAA-MM-JJ, et le format renvoyé par Excel."""
+    valeur = (valeur or "").strip()
+    if not valeur:
+        return None
+    if "/" in valeur:
+        morceaux = valeur.split("/")
+        if len(morceaux) == 3 and len(morceaux[2]) == 4:
+            valeur = f"{morceaux[2]}-{morceaux[1].zfill(2)}-{morceaux[0].zfill(2)}"
+    return util.date_iso(valeur)
+
+
+def _oui_non(valeur: str) -> int:
+    return 1 if _sans_accent(valeur).startswith(("o", "y", "1", "v", "true")) else 0
+
+
+#: Conversion d'une valeur du fichier vers ce qui est stocké en base.
+CONVERTISSEURS = {
+    "texte": lambda v: v or None,
+    "montant": lambda v: util.centimes(v) if v else 0,
+    "surface": lambda v: util.centimes(v) if v else 0,   # m² × 100
+    "quantite": lambda v: int(round(float(str(v).replace(",", ".")) * 1000)) if v else 0,
+    "date": _date,
+    "entier": lambda v: int(float(str(v).replace(",", "."))) if v else None,
+    "taux": lambda v: util.vers_taux(v) if v else 0,
+    "oui_non": _oui_non,
+    "minuscule": lambda v: _sans_accent(v) or None,
+}
+
+
+# ---------------------------------------------------------------------------
+# Résolution des références
+# ---------------------------------------------------------------------------
+
+def _cherche(sql: str, params) -> int | None:
+    trouve = db.ligne(sql, params)
+    return trouve["id"] if trouve else None
+
+
+def resout_reference(table: str, societe_id: int, valeur: str,
+                     parent_id=None) -> int | None:
+    """Retrouve l'identifiant d'un élément désigné par son nom ou son code."""
+    if not valeur:
+        return None
+    if table == "tiers":
+        return _cherche(
+            "SELECT id FROM tiers WHERE societe_id = ? AND "
+            "(raison_sociale = ? COLLATE NOCASE OR code = ? COLLATE NOCASE)",
+            (societe_id, valeur, valeur))
+    if table == "bien":
+        return _cherche(
+            "SELECT id FROM biens WHERE societe_id = ? AND "
+            "(reference = ? COLLATE NOCASE OR designation = ? COLLATE NOCASE)",
+            (societe_id, valeur, valeur))
+    if table == "programme":
+        return _cherche(
+            "SELECT id FROM programmes WHERE societe_id = ? AND "
+            "(code = ? COLLATE NOCASE OR intitule = ? COLLATE NOCASE)",
+            (societe_id, valeur, valeur))
+    if table == "lot":
+        if parent_id:
+            return _cherche(
+                "SELECT id FROM lots WHERE societe_id = ? AND programme_id = ? "
+                "AND numero = ? COLLATE NOCASE", (societe_id, parent_id, valeur))
+        return _cherche("SELECT id FROM lots WHERE societe_id = ? AND "
+                        "numero = ? COLLATE NOCASE", (societe_id, valeur))
+    if table == "bail":
+        return _cherche("SELECT id FROM baux WHERE societe_id = ? AND "
+                        "numero = ? COLLATE NOCASE", (societe_id, valeur))
+    if table == "tresorerie":
+        return _cherche(
+            "SELECT id FROM comptes_tresorerie WHERE societe_id = ? AND "
+            "(code = ? COLLATE NOCASE OR libelle = ? COLLATE NOCASE)",
+            (societe_id, valeur, valeur))
+    if table == "contrat_vsp":
+        return _cherche("SELECT id FROM contrats_vsp WHERE societe_id = ? AND "
+                        "numero = ? COLLATE NOCASE", (societe_id, valeur))
+    if table == "compte":
+        trouve = db.ligne("SELECT numero FROM comptes WHERE societe_id = ? AND "
+                          "numero = ?", (societe_id, valeur))
+        return trouve["numero"] if trouve else None
+    raise ValueError(f"référence inconnue : {table}")
+
+
+#: Nom lisible de ce qui est recherché, pour les messages d'anomalie.
+LIBELLES_REFERENCE = {
+    "tiers": "tiers", "bien": "bien", "programme": "programme", "lot": "lot",
+    "bail": "bail", "tresorerie": "compte de trésorerie",
+    "contrat_vsp": "contrat VSP", "compte": "compte",
+}
+
+
+# ---------------------------------------------------------------------------
+# Modèles
+# ---------------------------------------------------------------------------
 
 _NOTICE_FACTURES = [
     "Une ligne du fichier = une ligne de facture (une prestation, un article).",
@@ -88,10 +207,46 @@ _COLONNES_FACTURES = [
             synonymes=("perimetre",)),
 ]
 
+TYPES_TIERS = {"client", "fournisseur", "mandant", "locataire", "acquereur",
+               "salarie", "autre"}
+MODES_REGLEMENT = {"espece", "cheque", "virement", "traite"}
+
 
 MODELES = {
+    # -- Comptabilité ------------------------------------------------------
+    "balance_ouverture": {
+        "libelle": "Balance d'ouverture (reprise en cours d'année)",
+        "groupe": "Comptabilité",
+        "notice": [
+            "C'est par ce fichier qu'on reprend un dossier déjà tenu ailleurs.",
+            "",
+            "Indiquez, pour chaque compte, son solde à la date de reprise :",
+            "soit dans la colonne Débit, soit dans la colonne Crédit, jamais",
+            "les deux. Le total des débits doit égaler le total des crédits.",
+            "",
+            "Une seule écriture d'à-nouveaux est produite, dans le journal AN,",
+            "à la date choisie. Elle porte l'ensemble des soldes repris.",
+            "",
+            "Ne reprenez pas ici les comptes de charges et de produits",
+            "(classes 6 et 7) si vous importez par ailleurs le détail des",
+            "écritures de l'exercice : ils seraient comptés deux fois.",
+            "",
+            "Les comptes absents du plan comptable sont signalés : créez-les",
+            "d'abord par le modèle « Plan comptable ».",
+        ],
+        "colonnes": [
+            Colonne("Compte", "Numéro du compte", "411", requis=True,
+                    synonymes=("numero", "n° compte", "compte general")),
+            Colonne("Intitulé", "Rappel du libellé (facultatif)", "Clients",
+                    synonymes=("intitule", "libelle")),
+            Colonne("Tiers", "Pour un compte de tiers (facultatif)", ""),
+            Colonne("Débit", "Solde débiteur", "1250000", synonymes=("debit",)),
+            Colonne("Crédit", "Solde créditeur", "", synonymes=("credit",)),
+        ],
+    },
     "ecritures": {
         "libelle": "Écritures comptables",
+        "groupe": "Comptabilité",
         "notice": [
             "Une ligne du fichier = une ligne d'écriture (un compte, un montant).",
             "Les lignes qui portent le même « N° écriture » forment une seule",
@@ -125,19 +280,147 @@ MODELES = {
         ],
     },
     "factures_vente": {
-        "libelle": "Factures de vente",
-        "sens": "vente",
-        "notice": _NOTICE_FACTURES,
+        "libelle": "Factures de vente", "groupe": "Comptabilité",
+        "sens": "vente", "notice": _NOTICE_FACTURES,
         "colonnes": _COLONNES_FACTURES,
     },
     "factures_achat": {
-        "libelle": "Factures d'achat",
-        "sens": "achat",
-        "notice": _NOTICE_FACTURES,
+        "libelle": "Factures d'achat", "groupe": "Comptabilité",
+        "sens": "achat", "notice": _NOTICE_FACTURES,
         "colonnes": _COLONNES_FACTURES,
     },
+    "reglements": {
+        "libelle": "Règlements (encaissements et décaissements)",
+        "groupe": "Comptabilité",
+        "notice": [
+            "Rattache un paiement à une facture déjà enregistrée.",
+            "",
+            "« Sens » vaut encaissement (client) ou decaissement (fournisseur).",
+            "",
+            "Le règlement est enregistré sans écriture comptable : la balance",
+            "d'ouverture, ou les écritures importées, portent déjà la",
+            "trésorerie à la date de reprise. La facture est simplement",
+            "marquée réglée à hauteur du montant.",
+        ],
+        "colonnes": [
+            Colonne("N° facture", "Facture réglée, telle qu'importée",
+                    "FA-2026-014", requis=True,
+                    synonymes=("facture", "numero facture")),
+            Colonne("Date", "Date du règlement", "20/03/2026", requis=True),
+            Colonne("Montant", "Montant réglé", "654500", requis=True),
+            Colonne("Sens", "encaissement ou decaissement", "encaissement",
+                    requis=True),
+            Colonne("Mode", "espece, cheque, virement ou traite", "virement"),
+            Colonne("Compte de trésorerie", "Code du compte encaisseur", "BNA",
+                    synonymes=("tresorerie", "banque", "caisse")),
+            Colonne("Référence", "N° de chèque, référence de virement", ""),
+        ],
+    },
+    "comptes": {
+        "libelle": "Plan comptable (comptes supplémentaires)",
+        "groupe": "Comptabilité",
+        "table": "comptes", "cle_unique": "numero",
+        "defauts": {"actif": 1},
+        "notice": [
+            "N'indiquez ici que les comptes qui manquent au plan SCF livré avec",
+            "l'application : les comptes existants ne sont pas modifiés.",
+            "",
+            "La classe est déduite du premier chiffre du numéro.",
+        ],
+        "colonnes": [
+            Colonne("Compte", "Numéro du compte", "4011", requis=True,
+                    champ="numero", synonymes=("numero", "n° compte")),
+            Colonne("Intitulé", "Libellé du compte", "Fournisseurs de travaux",
+                    requis=True, champ="intitule", synonymes=("intitule", "libelle")),
+            Colonne("Lettrable", "oui / non — pour les comptes de tiers", "oui",
+                    champ="lettrable", type="oui_non"),
+        ],
+    },
+    "tresorerie": {
+        "libelle": "Comptes de trésorerie (banques et caisses)",
+        "groupe": "Comptabilité",
+        "table": "comptes_tresorerie", "cle_unique": "code",
+        "defauts": {"actif": 1, "devise": "DZD"},
+        "notice": [
+            "Un compte par banque et par caisse.",
+            "",
+            "« Compte » est le compte du plan comptable rattaché : 5121 pour",
+            "une banque, 53 pour une caisse.",
+            "",
+            "Un compte séquestre reçoit les fonds des acquéreurs en VSP ;",
+            "rattachez-le à son programme.",
+        ],
+        "colonnes": [
+            Colonne("Code", "Identifiant court", "BNA", requis=True, champ="code"),
+            Colonne("Libellé", "Nom du compte", "BNA agence Didouche",
+                    requis=True, champ="libelle", synonymes=("libelle", "nom")),
+            Colonne("Type", "banque ou caisse", "banque", champ="type",
+                    type="minuscule", valeurs={"banque", "caisse"}),
+            Colonne("Compte", "Compte comptable rattaché", "5121", requis=True,
+                    champ="compte", reference="compte"),
+            Colonne("Banque", "Nom de l'établissement", "BNA", champ="banque"),
+            Colonne("Agence", "Agence bancaire", "Didouche Mourad", champ="agence"),
+            Colonne("RIB", "Relevé d'identité bancaire", "", champ="rib"),
+            Colonne("Séquestre", "oui si compte séquestre VSP", "non",
+                    champ="est_sequestre", type="oui_non"),
+            Colonne("Programme", "Programme du séquestre (facultatif)", "",
+                    champ="programme_id", reference="programme"),
+        ],
+    },
+    "immobilisations": {
+        "libelle": "Immobilisations",
+        "groupe": "Comptabilité",
+        "table": "immobilisations", "cle_unique": "code",
+        "defauts": {"statut": "en_service", "mode": "lineaire"},
+        "notice": [
+            "Reprise du parc existant : aucune écriture d'acquisition n'est",
+            "générée, la balance d'ouverture porte déjà la valeur et les",
+            "amortissements cumulés.",
+            "",
+            "« Durée » s'exprime en mois (5 ans = 60).",
+            "",
+            "Comptes usuels : 213 constructions, 218 autres immobilisations,",
+            "2182 matériel de transport.",
+            "",
+            "Laissez « Compte amortissement » et « Compte dotation » vides :",
+            "l'application les déduit du compte d'immobilisation.",
+        ],
+        "colonnes": [
+            Colonne("Code", "Identifiant interne", "IMMO-001", requis=True,
+                    champ="code"),
+            Colonne("Désignation", "Nature du bien", "Véhicule utilitaire",
+                    requis=True, champ="designation",
+                    synonymes=("designation", "libelle")),
+            Colonne("Compte", "Compte d'immobilisation", "2182", requis=True,
+                    champ="compte", reference="compte"),
+            Colonne("Compte amortissement", "Déduit du compte si laissé vide",
+                    "", champ="compte_amort", reference="compte",
+                    synonymes=("compte amort", "amortissement")),
+            Colonne("Compte dotation", "Déduit si laissé vide", "",
+                    champ="compte_dotation", reference="compte"),
+            Colonne("Date d'acquisition", "Date d'achat", "01/02/2024",
+                    requis=True, champ="date_acquisition", type="date",
+                    synonymes=("date acquisition", "acquisition")),
+            Colonne("Date de mise en service", "Départ de l'amortissement",
+                    "01/02/2024", champ="date_mise_service", type="date",
+                    synonymes=("mise en service",)),
+            Colonne("Valeur d'acquisition", "Coût d'achat hors taxes", "2400000",
+                    champ="valeur_acquisition", type="montant",
+                    synonymes=("valeur", "valeur acquisition", "montant")),
+            Colonne("Valeur résiduelle", "Valeur en fin de vie", "",
+                    champ="valeur_residuelle", type="montant"),
+            Colonne("Durée (mois)", "Durée d'amortissement en mois", "60",
+                    champ="duree_mois", type="entier",
+                    synonymes=("duree", "duree mois")),
+        ],
+    },
+    # -- Tiers -------------------------------------------------------------
     "tiers": {
         "libelle": "Tiers (clients, fournisseurs, propriétaires, locataires)",
+        "groupe": "Tiers",
+        "table": "tiers", "cle_unique": "raison_sociale",
+        "defauts": {"actif": 1, "cree_le": util.maintenant,
+                    "code": lambda societe_id, v: db.numero_suivant(societe_id, "tiers")},
         "notice": [
             "La colonne « Type » accepte : client, fournisseur, mandant,",
             "locataire, acquereur, salarie, autre.",
@@ -147,87 +430,432 @@ MODELES = {
         ],
         "colonnes": [
             Colonne("Type", "client, fournisseur, mandant, locataire, acquereur",
-                    "client", requis=True),
+                    "client", requis=True, champ="type", type="minuscule",
+                    valeurs=TYPES_TIERS),
             Colonne("Raison sociale", "Nom de la personne ou de l'entreprise",
-                    "BENALI Karim", requis=True,
+                    "BENALI Karim", requis=True, champ="raison_sociale",
                     synonymes=("nom", "raison_sociale", "denomination")),
-            Colonne("NIF", "Numéro d'identification fiscale", "000116001234567"),
-            Colonne("NIS", "Numéro d'identification statistique", ""),
-            Colonne("RC", "Registre de commerce", ""),
+            Colonne("NIF", "Numéro d'identification fiscale", "000116001234567",
+                    champ="nif"),
+            Colonne("NIS", "Numéro d'identification statistique", "", champ="nis"),
+            Colonne("RC", "Registre de commerce", "", champ="rc"),
             Colonne("Article", "Article d'imposition", "",
+                    champ="article_imposition",
                     synonymes=("article imposition", "article_imposition")),
-            Colonne("Adresse", "Adresse postale", "12 rue Didouche Mourad"),
-            Colonne("Commune", "Commune", "Alger-Centre"),
-            Colonne("Wilaya", "Wilaya", "16 Alger"),
+            Colonne("Adresse", "Adresse postale", "12 rue Didouche Mourad",
+                    champ="adresse"),
+            Colonne("Commune", "Commune", "Alger-Centre", champ="commune"),
+            Colonne("Wilaya", "Wilaya", "16 Alger", champ="wilaya"),
             Colonne("Téléphone", "Numéro de téléphone", "0550112233",
-                    synonymes=("telephone", "tel")),
-            Colonne("Courriel", "Adresse e-mail", "", synonymes=("email", "mail")),
-        ],
-    },
-    "comptes": {
-        "libelle": "Plan comptable (comptes supplémentaires)",
-        "notice": [
-            "N'indiquez ici que les comptes qui manquent au plan SCF livré avec",
-            "l'application : les comptes existants ne sont pas modifiés.",
-            "",
-            "La classe est déduite du premier chiffre du numéro.",
-        ],
-        "colonnes": [
-            Colonne("Compte", "Numéro du compte", "4011", requis=True,
-                    synonymes=("numero", "n° compte")),
-            Colonne("Intitulé", "Libellé du compte", "Fournisseurs de travaux",
-                    requis=True, synonymes=("intitule", "libelle")),
-            Colonne("Lettrable", "oui / non — pour les comptes de tiers", "oui"),
-        ],
-    },
-    "biens": {
-        "libelle": "Biens en portefeuille (agence)",
-        "notice": [
-            "La colonne « Type » accepte : appartement, villa, local, terrain,",
-            "bureau, hangar, autre.",
-            "",
-            "« Opération » accepte : vente ou location.",
-        ],
-        "colonnes": [
-            Colonne("Référence", "Référence interne du bien", "APT-001",
-                    requis=True, synonymes=("reference", "ref")),
-            Colonne("Désignation", "Description du bien",
-                    "F3 à Hydra, 95 m²", requis=True,
-                    synonymes=("designation", "libelle", "intitule")),
-            Colonne("Type", "appartement, villa, local, terrain…", "appartement"),
-            Colonne("Opération", "vente ou location", "location",
-                    synonymes=("operation",)),
-            Colonne("Surface", "Surface en m²", "95"),
-            Colonne("Adresse", "Adresse du bien", "14 rue des Frères Aïssou"),
-            Colonne("Commune", "Commune", "Hydra"),
-            Colonne("Wilaya", "Wilaya", "16 Alger"),
-            Colonne("Prix", "Prix de vente ou loyer mensuel", "45000"),
-            Colonne("Propriétaire", "Nom du mandant (tiers existant)",
-                    "BENALI Karim", synonymes=("proprietaire", "mandant")),
+                    champ="telephone", synonymes=("telephone", "tel")),
+            Colonne("Courriel", "Adresse e-mail", "", champ="email",
+                    synonymes=("email", "mail")),
         ],
     },
     "salaries": {
-        "libelle": "Salariés",
+        "libelle": "Salariés", "groupe": "Tiers",
+        "table": "salaries", "cle_unique": "matricule",
+        "defauts": {"actif": 1},
         "notice": [
             "Le salaire de base s'entend brut mensuel, en dinars.",
             "",
             "La date d'embauche sert au calcul de l'ancienneté.",
         ],
         "colonnes": [
-            Colonne("Matricule", "Identifiant interne", "S001", requis=True),
-            Colonne("Nom", "Nom de famille", "SAADI", requis=True),
-            Colonne("Prénom", "Prénom", "Yacine", requis=True,
+            Colonne("Matricule", "Identifiant interne", "S001", requis=True,
+                    champ="matricule"),
+            Colonne("Nom", "Nom de famille", "SAADI", requis=True, champ="nom"),
+            Colonne("Prénom", "Prénom", "Yacine", requis=True, champ="prenom",
                     synonymes=("prenom",)),
-            Colonne("Poste", "Fonction occupée", "Comptable"),
+            Colonne("Poste", "Fonction occupée", "Comptable", champ="poste"),
+            Colonne("Catégorie", "Catégorie socioprofessionnelle", "",
+                    champ="categorie"),
             Colonne("Date d'embauche", "Date d'entrée", "01/02/2024",
+                    champ="date_embauche", type="date",
                     synonymes=("date embauche", "embauche")),
+            Colonne("Type de contrat", "CDI, CDD…", "CDI", champ="type_contrat",
+                    synonymes=("contrat", "type contrat")),
             Colonne("Salaire de base", "Brut mensuel", "60000",
+                    champ="salaire_base", type="montant",
                     synonymes=("salaire", "salaire base")),
-            Colonne("N° sécurité sociale", "Numéro CNAS", "",
+            Colonne("Primes", "Primes mensuelles", "", champ="primes",
+                    type="montant"),
+            Colonne("Nombre d'enfants", "Pour l'IRG", "", champ="nb_enfants",
+                    type="entier", synonymes=("enfants", "nb enfants")),
+            Colonne("N° sécurité sociale", "Numéro CNAS", "", champ="num_secu",
                     synonymes=("cnas", "securite sociale", "n° cnas")),
+            Colonne("RIB", "Compte bancaire du salarié", "", champ="rib"),
+        ],
+    },
+    # -- Agence immobilière ------------------------------------------------
+    "biens": {
+        "libelle": "Biens en portefeuille", "groupe": "Agence immobilière",
+        "table": "biens", "cle_unique": "reference",
+        "defauts": {"statut": "disponible", "cree_le": util.maintenant},
+        "notice": [
+            "La colonne « Type » accepte : appartement, villa, local, terrain,",
+            "bureau, hangar, autre.",
+            "",
+            "Renseignez « Loyer mensuel » pour un bien en location, « Prix de",
+            "vente » pour un bien à vendre.",
+            "",
+            "Le propriétaire doit exister : importez vos tiers d'abord.",
+        ],
+        "colonnes": [
+            Colonne("Référence", "Référence interne du bien", "APT-001",
+                    requis=True, champ="reference", synonymes=("reference", "ref")),
+            Colonne("Désignation", "Description du bien", "F3 à Hydra, 95 m²",
+                    requis=True, champ="designation",
+                    synonymes=("designation", "libelle", "intitule")),
+            Colonne("Type", "appartement, villa, local, terrain…", "appartement",
+                    champ="type_bien", type="minuscule",
+                    synonymes=("type bien", "nature")),
+            Colonne("Surface", "Surface en m²", "95", champ="surface",
+                    type="surface"),
+            Colonne("Nombre de pièces", "F3 => 3", "3", champ="nb_pieces",
+                    type="entier", synonymes=("pieces", "nb pieces")),
+            Colonne("Étage", "Étage", "2", champ="etage", type="entier"),
+            Colonne("Adresse", "Adresse du bien", "14 rue des Frères Aïssou",
+                    champ="adresse"),
+            Colonne("Commune", "Commune", "Hydra", champ="commune"),
+            Colonne("Wilaya", "Wilaya", "16 Alger", champ="wilaya"),
+            Colonne("Loyer mensuel", "Pour un bien en location", "45000",
+                    champ="loyer_mensuel", type="montant",
+                    synonymes=("loyer", "loyer mensuel")),
+            Colonne("Prix de vente", "Pour un bien à vendre", "",
+                    champ="prix_demande", type="montant",
+                    synonymes=("prix", "prix demande", "prix vente")),
+            Colonne("Propriétaire", "Nom du mandant (tiers existant)",
+                    "BENALI Karim", champ="proprietaire_id", reference="tiers",
+                    synonymes=("proprietaire", "mandant")),
+        ],
+    },
+    "mandats": {
+        "libelle": "Mandats de vente et de gestion",
+        "groupe": "Agence immobilière",
+        "table": "mandats", "cle_unique": "numero",
+        "defauts": {"statut": "actif", "cree_le": util.maintenant},
+        "notice": [
+            "« Type » accepte : vente, location, gestion.",
+            "",
+            "La commission s'exprime soit en taux (5 pour 5 %), soit en montant",
+            "forfaitaire. Renseignez l'une ou l'autre.",
+            "",
+            "Le bien et le mandant doivent exister : importez-les d'abord.",
+        ],
+        "colonnes": [
+            Colonne("N° mandat", "Référence du mandat", "MD-2026-001",
+                    requis=True, champ="numero", synonymes=("numero", "mandat")),
+            Colonne("Bien", "Référence du bien", "APT-001", requis=True,
+                    champ="bien_id", reference="bien"),
+            Colonne("Mandant", "Propriétaire", "BENALI Karim",
+                    champ="mandant_id", reference="tiers",
+                    synonymes=("proprietaire",)),
+            Colonne("Type", "vente, location ou gestion", "gestion",
+                    champ="type_mandat", type="minuscule",
+                    valeurs={"vente", "location", "gestion"},
+                    synonymes=("type mandat",)),
+            Colonne("Exclusif", "oui / non", "non", champ="exclusif",
+                    type="oui_non"),
+            Colonne("Date de début", "Prise d'effet", "01/01/2026", requis=True,
+                    champ="date_debut", type="date", synonymes=("date debut", "debut")),
+            Colonne("Date de fin", "Échéance du mandat", "31/12/2026",
+                    champ="date_fin", type="date", synonymes=("date fin", "fin")),
+            Colonne("Prix mandat", "Prix convenu", "", champ="prix_mandat",
+                    type="montant"),
+            Colonne("Taux commission", "En pourcentage", "5",
+                    champ="taux_commission", type="taux",
+                    synonymes=("commission", "taux")),
+            Colonne("Commission forfaitaire", "Montant fixe", "",
+                    champ="commission_forfait", type="montant"),
+        ],
+    },
+    "baux": {
+        "libelle": "Baux de location", "groupe": "Agence immobilière",
+        "table": "baux", "cle_unique": "numero",
+        "defauts": {"statut": "actif", "cree_le": util.maintenant,
+                    "periodicite_mois": 1},
+        "notice": [
+            "Le bien, le propriétaire et le locataire doivent exister :",
+            "importez vos tiers et vos biens d'abord.",
+            "",
+            "« Jour d'échéance » est le jour du mois où le loyer est dû.",
+            "",
+            "« Taux de gestion » est la part revenant à l'agence, en",
+            "pourcentage du loyer encaissé.",
+            "",
+            "Aucun loyer n'est généré à l'import : reprenez les quittances déjà",
+            "émises par le modèle « Loyers et quittances ».",
+        ],
+        "colonnes": [
+            Colonne("N° bail", "Référence du bail", "BX-2026-001", requis=True,
+                    champ="numero", synonymes=("numero", "bail")),
+            Colonne("Bien", "Référence du bien loué", "APT-001", requis=True,
+                    champ="bien_id", reference="bien"),
+            Colonne("Propriétaire", "Mandant", "BENALI Karim",
+                    champ="proprietaire_id", reference="tiers",
+                    synonymes=("mandant", "bailleur")),
+            Colonne("Locataire", "Preneur", "CHERIF Sofiane", requis=True,
+                    champ="locataire_id", reference="tiers"),
+            Colonne("Usage", "habitation ou professionnel", "habitation",
+                    champ="usage", type="minuscule"),
+            Colonne("Date de début", "Prise d'effet", "01/01/2026", requis=True,
+                    champ="date_debut", type="date", synonymes=("date debut", "debut")),
+            Colonne("Date de fin", "Fin du bail", "31/12/2026", champ="date_fin",
+                    type="date", synonymes=("date fin", "fin")),
+            Colonne("Durée (mois)", "Durée en mois", "12", champ="duree_mois",
+                    type="entier", synonymes=("duree",)),
+            Colonne("Loyer mensuel", "Hors charges", "45000", requis=True,
+                    champ="loyer_mensuel", type="montant", synonymes=("loyer",)),
+            Colonne("Charges mensuelles", "Provisions pour charges", "",
+                    champ="charges_mensuelles", type="montant",
+                    synonymes=("charges",)),
+            Colonne("Caution", "Dépôt de garantie", "90000", champ="caution",
+                    type="montant"),
+            Colonne("Jour d'échéance", "Jour du mois", "5",
+                    champ="jour_echeance", type="entier",
+                    synonymes=("jour echeance", "echeance")),
+            Colonne("Taux de gestion", "Part de l'agence, en %", "5",
+                    champ="taux_gestion", type="taux",
+                    synonymes=("taux gestion", "gestion")),
+            Colonne("Encaissé par l'agence", "oui si l'agence encaisse", "oui",
+                    champ="encaisse_par_agence", type="oui_non",
+                    synonymes=("encaisse par agence", "encaissement agence")),
+        ],
+    },
+    "quittances": {
+        "libelle": "Loyers et quittances déjà émis",
+        "groupe": "Agence immobilière",
+        "table": "quittances", "cle_unique": "numero",
+        "defauts": {"cree_le": util.maintenant},
+        "notice": [
+            "Reprise de l'historique des loyers : aucune écriture comptable",
+            "n'est générée, la balance d'ouverture porte déjà les créances et",
+            "les sommes dues aux propriétaires.",
+            "",
+            "« Période » s'écrit AAAA-MM (2026-03) ou 03/2026.",
+            "",
+            "« Statut » accepte : emise, encaissee, reversee, impayee.",
+            "Laissez « Montant encaissé » vide pour un loyer impayé.",
+        ],
+        "colonnes": [
+            Colonne("N° quittance", "Référence", "QT-2026-0031", requis=True,
+                    champ="numero", synonymes=("numero", "quittance")),
+            Colonne("Bail", "N° du bail", "BX-2026-001", requis=True,
+                    champ="bail_id", reference="bail"),
+            Colonne("Période", "Mois concerné", "2026-03", requis=True,
+                    champ="periode", synonymes=("periode", "mois")),
+            Colonne("Date d'échéance", "Date d'exigibilité", "05/03/2026",
+                    requis=True, champ="date_echeance", type="date",
+                    synonymes=("date echeance", "echeance")),
+            Colonne("Loyer", "Loyer hors charges", "45000", champ="loyer",
+                    type="montant"),
+            Colonne("Charges", "Charges de la période", "", champ="charges",
+                    type="montant"),
+            Colonne("Total", "Loyer + charges", "45000", champ="total",
+                    type="montant"),
+            Colonne("Honoraires HT", "Part de l'agence", "2250",
+                    champ="honoraires_gestion_ht", type="montant",
+                    synonymes=("honoraires", "honoraires ht")),
+            Colonne("Net propriétaire", "Somme due au mandant", "42322",
+                    champ="net_proprietaire", type="montant",
+                    synonymes=("net proprietaire", "net")),
+            Colonne("Montant encaissé", "Ce qui a été perçu", "45000",
+                    champ="montant_encaisse", type="montant",
+                    synonymes=("encaisse", "montant encaisse")),
+            Colonne("Date d'encaissement", "Date de perception", "05/03/2026",
+                    champ="date_encaissement", type="date",
+                    synonymes=("date encaissement",)),
+            Colonne("Statut", "emise, encaissee, reversee, impayee", "encaissee",
+                    champ="statut", type="minuscule",
+                    valeurs={"emise", "encaissee", "reversee", "impayee"}),
+            Colonne("Périmètre", "Déclaré ou Non déclaré", "Déclaré",
+                    champ="perimetre", synonymes=("perimetre",)),
+        ],
+    },
+    # -- Promotion immobilière ---------------------------------------------
+    "programmes": {
+        "libelle": "Programmes immobiliers", "groupe": "Promotion immobilière",
+        "table": "programmes", "cle_unique": "code",
+        "defauts": {"statut": "en_cours", "cree_le": util.maintenant},
+        "notice": [
+            "Un programme = une opération de promotion (une résidence).",
+            "",
+            "Les budgets servent au suivi du coût de revient : ils peuvent être",
+            "complétés plus tard dans l'application.",
+            "",
+            "« Avancement » s'exprime en pourcentage (40 pour 40 %).",
+        ],
+        "colonnes": [
+            Colonne("Code", "Identifiant du programme", "JASMINS", requis=True,
+                    champ="code"),
+            Colonne("Intitulé", "Nom du programme", "Résidence Les Jasmins",
+                    requis=True, champ="intitule", synonymes=("intitule", "nom")),
+            Colonne("Adresse", "Adresse du chantier", "Route de Baba Hassen",
+                    champ="adresse"),
+            Colonne("Commune", "Commune", "Draria", champ="commune"),
+            Colonne("Wilaya", "Wilaya", "16 Alger", champ="wilaya"),
+            Colonne("Surface terrain", "En m²", "3200", champ="surface_terrain",
+                    type="surface", synonymes=("surface terrain", "terrain")),
+            Colonne("Surface bâtie", "En m²", "5400", champ="surface_batie",
+                    type="surface", synonymes=("surface batie",)),
+            Colonne("Nombre de logements", "Lots d'habitation", "48",
+                    champ="nb_logements", type="entier",
+                    synonymes=("logements", "nb logements")),
+            Colonne("Nombre de locaux", "Locaux commerciaux", "4",
+                    champ="nb_locaux", type="entier", synonymes=("locaux",)),
+            Colonne("N° permis de construire", "Référence du permis", "",
+                    champ="num_permis_construire",
+                    synonymes=("permis", "permis de construire")),
+            Colonne("Date du permis", "Date de délivrance", "",
+                    champ="date_permis", type="date"),
+            Colonne("Date début travaux", "Ouverture du chantier", "01/03/2025",
+                    champ="date_debut_travaux", type="date",
+                    synonymes=("debut travaux",)),
+            Colonne("Date de livraison prévue", "Échéance", "31/12/2027",
+                    champ="date_fin_prevue", type="date",
+                    synonymes=("date fin prevue", "livraison prevue")),
+            Colonne("Budget terrain", "Coût du terrain", "",
+                    champ="budget_terrain", type="montant"),
+            Colonne("Budget travaux", "Coût des travaux", "",
+                    champ="budget_travaux", type="montant"),
+            Colonne("Avancement", "En pourcentage", "40", champ="avancement",
+                    type="taux"),
+        ],
+    },
+    "lots": {
+        "libelle": "Lots des programmes", "groupe": "Promotion immobilière",
+        "table": "lots", "cle_unique": None,
+        "defauts": {"statut": "libre"},
+        "notice": [
+            "Un lot = un logement ou un local à vendre.",
+            "",
+            "Le programme doit exister : importez vos programmes d'abord.",
+            "",
+            "« Statut » accepte : libre, reserve, vendu, livre.",
+            "",
+            "Le numéro doit être unique à l'intérieur d'un programme.",
+        ],
+        "colonnes": [
+            Colonne("Programme", "Code du programme", "JASMINS", requis=True,
+                    champ="programme_id", reference="programme"),
+            Colonne("N° lot", "Numéro du lot", "A05", requis=True,
+                    champ="numero", synonymes=("numero", "lot")),
+            Colonne("Type", "logement, local, parking, cave", "logement",
+                    champ="type_lot", type="minuscule",
+                    synonymes=("type lot", "nature")),
+            Colonne("Typologie", "F2, F3, F4…", "F3", champ="typologie"),
+            Colonne("Bâtiment", "Bâtiment", "A", champ="batiment"),
+            Colonne("Étage", "Étage", "2", champ="etage", type="entier"),
+            Colonne("Surface habitable", "En m²", "95",
+                    champ="surface_habitable", type="surface",
+                    synonymes=("surface", "surface habitable")),
+            Colonne("Surface utile", "En m²", "", champ="surface_utile",
+                    type="surface"),
+            Colonne("Prix de vente", "Prix du lot", "8500000",
+                    champ="prix_vente", type="montant",
+                    synonymes=("prix", "prix vente")),
+            Colonne("Statut", "libre, reserve, vendu, livre", "libre",
+                    champ="statut", type="minuscule",
+                    valeurs={"libre", "reserve", "vendu", "livre"}),
+        ],
+    },
+    "contrats_vsp": {
+        "libelle": "Contrats de vente sur plan (VSP)",
+        "groupe": "Promotion immobilière",
+        "table": "contrats_vsp", "cle_unique": "numero",
+        "defauts": {"statut": "en_cours", "cree_le": util.maintenant},
+        "notice": [
+            "Le programme, le lot et l'acquéreur doivent exister : importez-les",
+            "d'abord.",
+            "",
+            "« Montant encaissé » reprend le cumul déjà perçu à la date de",
+            "reprise. Aucune écriture n'est générée : la balance d'ouverture",
+            "porte déjà les avances reçues au compte 4191.",
+            "",
+            "L'échéancier se reprend séparément, par le modèle « Échéanciers",
+            "VSP ».",
+        ],
+        "colonnes": [
+            Colonne("N° contrat", "Référence du contrat", "VSP-2026-007",
+                    requis=True, champ="numero", synonymes=("numero", "contrat")),
+            Colonne("Programme", "Code du programme", "JASMINS", requis=True,
+                    champ="programme_id", reference="programme"),
+            Colonne("N° lot", "Lot vendu", "A05", requis=True, champ="lot_id",
+                    reference="lot", parent="Programme", synonymes=("lot",)),
+            Colonne("Acquéreur", "Acheteur", "ZEROUAL Mourad", requis=True,
+                    champ="acquereur_id", reference="tiers",
+                    synonymes=("acquereur", "client")),
+            Colonne("Type", "reservation ou vente", "vente",
+                    champ="type_contrat", type="minuscule",
+                    synonymes=("type contrat",)),
+            Colonne("Date de réservation", "Date de la réservation", "",
+                    champ="date_reservation", type="date",
+                    synonymes=("date reservation", "reservation")),
+            Colonne("Date du contrat", "Date de signature", "10/02/2026",
+                    champ="date_contrat", type="date",
+                    synonymes=("date contrat", "date")),
+            Colonne("N° acte notarié", "Référence de l'acte", "",
+                    champ="num_acte_notarie", synonymes=("acte", "acte notarie")),
+            Colonne("Prix total", "Prix de vente TTC", "8500000", requis=True,
+                    champ="prix_total", type="montant", synonymes=("prix",)),
+            Colonne("Taux TVA", "Taux applicable", "19", champ="taux_tva",
+                    type="taux"),
+            Colonne("Montant encaissé", "Cumul déjà perçu", "3400000",
+                    champ="montant_encaisse", type="montant",
+                    synonymes=("encaisse", "montant encaisse")),
+            Colonne("Statut", "en_cours, livre, resilie", "en_cours",
+                    champ="statut", type="minuscule"),
+        ],
+    },
+    "echeances_vsp": {
+        "libelle": "Échéanciers VSP", "groupe": "Promotion immobilière",
+        "table": "echeances_vsp", "cle_unique": None,
+        "defauts": {"statut": "a_venir"},
+        "sans_societe": True,
+        "notice": [
+            "Une ligne = une tranche de l'échéancier d'un contrat.",
+            "",
+            "Le contrat doit exister : importez vos contrats VSP d'abord.",
+            "",
+            "Renseignez soit le pourcentage du prix, soit le montant.",
+            "",
+            "« Statut » accepte : a_venir, appelee, reglee.",
+        ],
+        "colonnes": [
+            Colonne("N° contrat", "Contrat concerné", "VSP-2026-007",
+                    requis=True, champ="contrat_id", reference="contrat_vsp",
+                    synonymes=("contrat",)),
+            Colonne("Ordre", "Rang de la tranche", "1", champ="ordre",
+                    type="entier", synonymes=("rang", "n°")),
+            Colonne("Libellé", "Intitulé de la tranche", "Achèvement fondations",
+                    requis=True, champ="libelle", synonymes=("libelle", "tranche")),
+            Colonne("Pourcentage", "Part du prix, en %", "20",
+                    champ="pourcentage", type="taux", synonymes=("pourcentage", "%")),
+            Colonne("Montant", "Montant de la tranche", "1700000",
+                    champ="montant", type="montant"),
+            Colonne("Date prévue", "Date d'exigibilité", "30/06/2026",
+                    champ="date_prevue", type="date",
+                    synonymes=("date prevue", "echeance")),
+            Colonne("Montant réglé", "Déjà encaissé sur la tranche", "",
+                    champ="montant_regle", type="montant",
+                    synonymes=("regle", "montant regle")),
+            Colonne("Statut", "a_venir, appelee, reglee", "a_venir",
+                    champ="statut", type="minuscule"),
         ],
     },
 }
+
+#: Ordre dans lequel reprendre un dossier : chaque étape s'appuie sur la
+#: précédente (une facture a besoin de son tiers, un bail de son bien…).
+ORDRE_CONSEILLE = [
+    "comptes", "tiers", "tresorerie", "balance_ouverture", "biens", "mandats",
+    "baux", "quittances", "programmes", "lots", "contrats_vsp", "echeances_vsp",
+    "immobilisations", "salaries", "factures_vente", "factures_achat",
+    "reglements", "ecritures",
+]
+
+GROUPES = ["Comptabilité", "Tiers", "Agence immobilière", "Promotion immobilière"]
 
 
 # ---------------------------------------------------------------------------
@@ -273,12 +901,20 @@ def construit_modele(cle: str) -> bytes:
 
 @route("GET", "/api/import/modeles")
 def api_modeles(ctx):
-    return {"modeles": [
-        {"cle": cle, "libelle": m["libelle"],
-         "colonnes": [{"nom": c.nom, "requis": c.requis, "aide": c.aide}
-                      for c in m["colonnes"]]}
-        for cle, m in MODELES.items()
-    ]}
+    return {
+        "groupes": GROUPES,
+        "ordre_conseille": ORDRE_CONSEILLE,
+        "modeles": [
+            {"cle": cle, "libelle": MODELES[cle]["libelle"],
+             "groupe": MODELES[cle].get("groupe", "Comptabilité"),
+             "rang": ORDRE_CONSEILLE.index(cle) + 1 if cle in ORDRE_CONSEILLE else 99,
+             "colonnes": [{"nom": c.nom, "requis": c.requis, "aide": c.aide}
+                          for c in MODELES[cle]["colonnes"]]}
+            for cle in sorted(MODELES,
+                              key=lambda c: ORDRE_CONSEILLE.index(c)
+                              if c in ORDRE_CONSEILLE else 99)
+        ],
+    }
 
 
 @route("GET", "/api/import/modele/<cle>")
@@ -296,11 +932,6 @@ def api_telecharge_modele(ctx):
 # Lecture d'un fichier déposé
 # ---------------------------------------------------------------------------
 
-def _sans_accent(texte: str) -> str:
-    decompose = unicodedata.normalize("NFD", str(texte or ""))
-    return "".join(c for c in decompose if unicodedata.category(c) != "Mn").lower()
-
-
 def _normalise_entete(texte: str) -> str:
     propre = _sans_accent(texte).replace("_", " ").replace(".", " ")
     return " ".join(propre.split())
@@ -314,8 +945,7 @@ def associe_colonnes(entetes: list[str], modele: dict) -> dict[str, int]:
     presents = {_normalise_entete(e): i for i, e in enumerate(entetes)}
     association = {}
     for colonne in modele["colonnes"]:
-        candidats = [colonne.nom, *colonne.synonymes]
-        for candidat in candidats:
+        for candidat in (colonne.nom, *colonne.synonymes):
             index = presents.get(_normalise_entete(candidat))
             if index is not None:
                 association[colonne.nom] = index
@@ -344,20 +974,183 @@ def _valeur(rang: list, association: dict, nom: str) -> str:
     return "" if valeur is None else str(valeur).strip()
 
 
-def _date(valeur: str) -> str | None:
-    """Accepte JJ/MM/AAAA, AAAA-MM-JJ, et le format renvoyé par Excel."""
-    valeur = (valeur or "").strip()
-    if not valeur:
-        return None
-    if "/" in valeur:
-        morceaux = valeur.split("/")
-        if len(morceaux) == 3 and len(morceaux[2]) == 4:
-            valeur = f"{morceaux[2]}-{morceaux[1].zfill(2)}-{morceaux[0].zfill(2)}"
-    return util.date_iso(valeur)
+def _perimetre(valeur: str, defaut: str) -> str:
+    propre = _sans_accent(valeur)
+    if not propre:
+        return defaut
+    if propre.startswith("non") or "hors" in propre:
+        return "hors_declaration"
+    return "declare"
+
+
+def _tiers_id(societe_id: int, nom: str):
+    return resout_reference("tiers", societe_id, nom)
 
 
 # ---------------------------------------------------------------------------
-# Analyse par type
+# Contrôle générique d'une table
+# ---------------------------------------------------------------------------
+
+def analyse_generique(societe_id, rangs, association, modele, cle_modele):
+    """Contrôle et prépare les lignes d'une table décrite de façon déclarative."""
+    prets, anomalies, apercu = [], [], []
+    cle_unique = modele.get("cle_unique")
+    table = modele["table"]
+    deja_vus = set()
+    if cle_unique:
+        deja_vus = {str(r[cle_unique]).lower() for r in db.lignes(
+            f"SELECT {cle_unique} FROM {table} WHERE societe_id = ?", (societe_id,))
+            if r[cle_unique] is not None}
+
+    for decalage, rang in enumerate(rangs):
+        numero_ligne = decalage + 2          # +1 en-tête, +1 pour compter de 1
+        if not any(str(c).strip() for c in rang):
+            continue
+        brut = {c.nom: _valeur(rang, association, c.nom)
+                for c in modele["colonnes"]}
+        erreurs = []
+        enregistrement = {}
+        resolus = {}
+
+        for colonne in modele["colonnes"]:
+            valeur = brut[colonne.nom]
+            if colonne.requis and not valeur:
+                erreurs.append(f"« {colonne.nom} » est obligatoire")
+                continue
+            if not colonne.champ:
+                continue
+            if colonne.valeurs and valeur:
+                propre = _sans_accent(valeur)
+                if propre not in colonne.valeurs:
+                    erreurs.append(
+                        f"{colonne.nom.lower()} « {valeur} » inconnu "
+                        f"({', '.join(sorted(colonne.valeurs))})")
+                    continue
+            if colonne.reference:
+                if not valeur:
+                    continue
+                parent_id = resolus.get(colonne.parent)
+                identifiant = resout_reference(colonne.reference, societe_id,
+                                               valeur, parent_id)
+                if identifiant is None:
+                    libelle = LIBELLES_REFERENCE[colonne.reference]
+                    erreurs.append(f"{libelle} « {valeur} » introuvable")
+                    continue
+                resolus[colonne.nom] = identifiant
+                enregistrement[colonne.champ] = identifiant
+                continue
+            try:
+                enregistrement[colonne.champ] = CONVERTISSEURS[colonne.type](valeur)
+            except (ValueError, TypeError):
+                erreurs.append(f"« {colonne.nom} » : valeur « {valeur} » "
+                               "incompréhensible")
+
+        if cle_unique and not erreurs:
+            reference = str(enregistrement.get(cle_unique, "")).lower()
+            if reference and reference in deja_vus:
+                erreurs.append(f"« {brut.get(_nom_de_champ(modele, cle_unique))} » "
+                               "existe déjà")
+            elif reference:
+                deja_vus.add(reference)
+
+        erreurs += _controles_specifiques(societe_id, cle_modele, brut,
+                                          enregistrement)
+
+        for message in erreurs:
+            anomalies.append({"ligne": numero_ligne, "message": message})
+        apercu.append({"ligne": numero_ligne, "valeurs": brut, "erreurs": erreurs})
+        if not erreurs:
+            prets.append(enregistrement)
+
+    return {"prets": prets, "anomalies": anomalies, "apercu": apercu,
+            "nb_valides": len(prets), "nb_rejetes": len(apercu) - len(prets)}
+
+
+def _nom_de_champ(modele: dict, champ: str) -> str:
+    for colonne in modele["colonnes"]:
+        if colonne.champ == champ:
+            return colonne.nom
+    return champ
+
+
+def _controles_specifiques(societe_id, cle_modele, brut, enregistrement) -> list[str]:
+    """Les quelques règles qui ne se déduisent pas de la description."""
+    erreurs = []
+    if cle_modele == "comptes":
+        numero = brut["Compte"]
+        if numero and not numero.isdigit():
+            erreurs.append(f"le numéro de compte « {numero} » "
+                           "doit être composé de chiffres")
+    elif cle_modele == "lots":
+        # Le numéro d'un lot n'est unique qu'à l'intérieur de son programme.
+        programme_id = enregistrement.get("programme_id")
+        numero = enregistrement.get("numero")
+        if programme_id and numero and db.ligne(
+                "SELECT id FROM lots WHERE societe_id = ? AND programme_id = ? "
+                "AND numero = ? COLLATE NOCASE",
+                (societe_id, programme_id, numero)):
+            erreurs.append(f"le lot {numero} existe déjà dans ce programme")
+    elif cle_modele == "quittances":
+        # Un total absent se déduit du loyer et des charges.
+        if not enregistrement.get("total"):
+            enregistrement["total"] = (enregistrement.get("loyer", 0)
+                                       + enregistrement.get("charges", 0))
+        enregistrement["perimetre"] = _perimetre(
+            brut.get("Périmètre", ""),
+            db.valeur("SELECT perimetre_defaut FROM societes WHERE id = ?",
+                      (societe_id,), "declare"))
+    elif cle_modele == "immobilisations":
+        if not enregistrement.get("date_mise_service"):
+            enregistrement["date_mise_service"] = enregistrement.get(
+                "date_acquisition")
+        # Les comptes d'amortissement et de dotation se déduisent du compte
+        # d'immobilisation : inutile de les faire saisir.
+        from modules import immobilisations as mod_immo
+        if not enregistrement.get("compte_amort") and enregistrement.get("compte"):
+            enregistrement["compte_amort"] = mod_immo.compte_amortissement(
+                enregistrement["compte"])
+        enregistrement.setdefault("compte_dotation", None)
+        if not enregistrement["compte_dotation"]:
+            enregistrement["compte_dotation"] = "68112"
+        for champ, libelle in (("compte_amort", "compte d'amortissement"),
+                               ("compte_dotation", "compte de dotation")):
+            valeur = enregistrement.get(champ)
+            if valeur and not db.ligne(
+                    "SELECT id FROM comptes WHERE societe_id = ? AND numero = ?",
+                    (societe_id, valeur)):
+                erreurs.append(f"{libelle} « {valeur} » absent du plan comptable")
+    return erreurs
+
+
+def _valeur_defaut(defaut, societe_id, enregistrement):
+    """Un défaut peut être une valeur, ou une fonction qui la calcule."""
+    if not callable(defaut):
+        return defaut
+    try:
+        return defaut(societe_id, enregistrement)
+    except TypeError:
+        return defaut()
+
+
+def _importe_generique(societe_id, modele, rangs) -> int:
+    for enregistrement in rangs:
+        if not modele.get("sans_societe"):
+            enregistrement["societe_id"] = societe_id
+        for champ, defaut in modele.get("defauts", {}).items():
+            if enregistrement.get(champ) in (None, ""):
+                enregistrement[champ] = _valeur_defaut(defaut, societe_id,
+                                                       enregistrement)
+        if modele["table"] == "comptes":
+            enregistrement["classe"] = int(str(enregistrement["numero"])[0])
+        # Les champs restés vides sont omis : la valeur par défaut du schéma
+        # s'applique alors, plutôt qu'un NULL sur une colonne NOT NULL.
+        db.insere(modele["table"], {c: v for c, v in enregistrement.items()
+                                    if v is not None})
+    return len(rangs)
+
+
+# ---------------------------------------------------------------------------
+# Contrôles particuliers : écritures, factures, balance, règlements
 # ---------------------------------------------------------------------------
 
 def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
@@ -372,7 +1165,7 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
         "SELECT code FROM journaux WHERE societe_id = ?", (societe_id,))}
 
     for decalage, rang in enumerate(rangs):
-        numero_ligne = decalage + 2          # +1 en-tête, +1 pour compter de 1
+        numero_ligne = decalage + 2
         if not any(str(c).strip() for c in rang):
             continue
         cle = _valeur(rang, association, "N° écriture")
@@ -468,7 +1261,66 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
             "nb_valides": len(prets), "nb_rejetes": len(ordre) - len(prets)}
 
 
-MODES_REGLEMENT = {"espece", "cheque", "virement", "traite"}
+def analyse_balance(societe_id, rangs, association, date_reprise):
+    """Contrôle une balance de reprise : comptes connus et totaux égaux."""
+    anomalies, lignes, apercu = [], [], []
+    comptes_connus = {str(c["numero"]) for c in db.lignes(
+        "SELECT numero FROM comptes WHERE societe_id = ?", (societe_id,))}
+    total_debit = total_credit = 0
+    vus = set()
+
+    for decalage, rang in enumerate(rangs):
+        numero_ligne = decalage + 2
+        if not any(str(c).strip() for c in rang):
+            continue
+        compte = _valeur(rang, association, "Compte")
+        debit = _valeur(rang, association, "Débit")
+        credit = _valeur(rang, association, "Crédit")
+        erreurs = []
+        if not compte:
+            erreurs.append("compte manquant")
+        elif compte not in comptes_connus:
+            erreurs.append(f"le compte {compte} n'existe pas dans le plan comptable")
+        elif compte in vus:
+            erreurs.append(f"le compte {compte} apparaît deux fois")
+        else:
+            vus.add(compte)
+        montant_debit = util.centimes(debit) if debit else 0
+        montant_credit = util.centimes(credit) if credit else 0
+        if montant_debit and montant_credit:
+            erreurs.append("un compte porte un solde débiteur ou créditeur, "
+                           "pas les deux")
+        if not montant_debit and not montant_credit:
+            erreurs.append("aucun solde")
+
+        for message in erreurs:
+            anomalies.append({"ligne": numero_ligne, "message": message})
+        apercu.append({"ligne": numero_ligne, "compte": compte,
+                       "debit": montant_debit, "credit": montant_credit,
+                       "erreurs": erreurs})
+        if erreurs:
+            continue
+        total_debit += montant_debit
+        total_credit += montant_credit
+        lignes.append({
+            "compte": compte, "debit": montant_debit, "credit": montant_credit,
+            "libelle": _valeur(rang, association, "Intitulé") or "Report à nouveau",
+            "tiers_id": _tiers_id(societe_id, _valeur(rang, association, "Tiers")),
+        })
+
+    if lignes and total_debit != total_credit:
+        message = (f"balance déséquilibrée : total débit "
+                   f"{util.formate_montant(total_debit)} ≠ total crédit "
+                   f"{util.formate_montant(total_credit)} — écart de "
+                   f"{util.formate_montant(abs(total_debit - total_credit))}")
+        anomalies.append({"ligne": 0, "message": message})
+        lignes = []
+
+    prets = [{"date": date_reprise, "lignes": lignes,
+              "total": total_debit}] if lignes else []
+    return {"prets": prets, "anomalies": anomalies, "apercu": apercu,
+            "nb_valides": len(lignes), "total": total_debit,
+            "nb_rejetes": len([a for a in apercu if a["erreurs"]])}
 
 
 def analyse_factures(societe_id, rangs, association, defaut_perimetre, sens):
@@ -568,86 +1420,79 @@ def analyse_factures(societe_id, rangs, association, defaut_perimetre, sens):
             "nb_valides": len(prets), "nb_rejetes": len(ordre) - len(prets)}
 
 
-def _perimetre(valeur: str, defaut: str) -> str:
-    propre = _sans_accent(valeur)
-    if not propre:
-        return defaut
-    if propre.startswith("non") or "hors" in propre:
-        return "hors_declaration"
-    return "declare"
+SENS_REGLEMENT = {"encaissement", "decaissement"}
 
 
-def _tiers_id(societe_id: int, nom: str):
-    if not nom:
-        return None
-    trouve = db.ligne(
-        "SELECT id FROM tiers WHERE societe_id = ? AND "
-        "(raison_sociale = ? COLLATE NOCASE OR code = ? COLLATE NOCASE)",
-        (societe_id, nom, nom))
-    return trouve["id"] if trouve else None
-
-
-def analyse_simple(societe_id, rangs, association, modele, cle_modele):
-    """Contrôle générique pour les tables sans regroupement de lignes."""
+def analyse_reglements(societe_id, rangs, association):
+    """Rattache chaque règlement à sa facture et contrôle le reste dû."""
     prets, anomalies, apercu = [], [], []
-    requis = [c for c in modele["colonnes"] if c.requis]
+    cumul: dict[int, int] = {}
+
     for decalage, rang in enumerate(rangs):
         numero_ligne = decalage + 2
         if not any(str(c).strip() for c in rang):
             continue
-        valeurs = {c.nom: _valeur(rang, association, c.nom)
-                   for c in modele["colonnes"]}
-        erreurs = [f"« {c.nom} » est obligatoire"
-                   for c in requis if not valeurs[c.nom]]
-        erreurs += _controles_specifiques(societe_id, cle_modele, valeurs)
+        numero = _valeur(rang, association, "N° facture")
+        date = _date(_valeur(rang, association, "Date"))
+        montant = util.centimes(_valeur(rang, association, "Montant") or 0)
+        sens = _sans_accent(_valeur(rang, association, "Sens"))
+        mode = _sans_accent(_valeur(rang, association, "Mode"))
+        tresorerie = _valeur(rang, association, "Compte de trésorerie")
+
+        erreurs = []
+        facture = db.ligne(
+            "SELECT * FROM factures WHERE societe_id = ? AND numero = ? "
+            "COLLATE NOCASE", (societe_id, numero)) if numero else None
+        if not numero:
+            erreurs.append("« N° facture » est obligatoire")
+        elif not facture:
+            erreurs.append(f"la facture n° {numero} est introuvable : "
+                           "importez d'abord vos factures")
+        if not date:
+            erreurs.append("date de règlement incompréhensible")
+        if montant <= 0:
+            erreurs.append("montant absent ou nul")
+        if sens and sens not in SENS_REGLEMENT:
+            erreurs.append(f"sens « {sens} » inconnu "
+                           f"({', '.join(sorted(SENS_REGLEMENT))})")
+        if mode and mode not in MODES_REGLEMENT:
+            erreurs.append(f"mode « {mode} » inconnu "
+                           f"({', '.join(sorted(MODES_REGLEMENT))})")
+        tresorerie_id = resout_reference("tresorerie", societe_id, tresorerie)
+        if tresorerie and tresorerie_id is None:
+            erreurs.append(f"compte de trésorerie « {tresorerie} » introuvable")
+
+        if facture and not erreurs:
+            deja = facture["montant_regle"] + cumul.get(facture["id"], 0)
+            if deja + montant > facture["net_a_payer"]:
+                erreurs.append(
+                    f"le total réglé dépasserait le net à payer de la facture "
+                    f"{numero} ({util.formate_montant(facture['net_a_payer'])})")
+            else:
+                cumul[facture["id"]] = deja + montant - facture["montant_regle"]
+
         for message in erreurs:
             anomalies.append({"ligne": numero_ligne, "message": message})
-        apercu.append({"ligne": numero_ligne, "valeurs": valeurs,
-                       "erreurs": erreurs})
-        if not erreurs:
-            prets.append(valeurs)
+        apercu.append({"ligne": numero_ligne, "facture": numero,
+                       "montant": montant, "erreurs": erreurs})
+        if erreurs:
+            continue
+        prets.append({
+            "facture": facture, "date": date, "montant": montant,
+            "sens": sens or ("encaissement" if facture["sens"] == "vente"
+                             else "decaissement"),
+            "mode": mode or None, "tresorerie_id": tresorerie_id,
+            "reference": _valeur(rang, association, "Référence") or None,
+        })
+
     return {"prets": prets, "anomalies": anomalies, "apercu": apercu,
             "nb_valides": len(prets),
-            "nb_rejetes": len(apercu) - len(prets)}
+            "nb_rejetes": len([a for a in apercu if a["erreurs"]])}
 
 
-TYPES_TIERS = {"client", "fournisseur", "mandant", "locataire", "acquereur",
-               "salarie", "autre"}
-
-
-def _controles_specifiques(societe_id, cle_modele, valeurs) -> list[str]:
-    erreurs = []
-    if cle_modele == "tiers":
-        type_tiers = _sans_accent(valeurs["Type"])
-        if type_tiers and type_tiers not in TYPES_TIERS:
-            erreurs.append(f"type « {valeurs['Type']} » inconnu "
-                           f"({', '.join(sorted(TYPES_TIERS))})")
-        if valeurs["Raison sociale"] and db.ligne(
-                "SELECT id FROM tiers WHERE societe_id = ? AND "
-                "raison_sociale = ? COLLATE NOCASE",
-                (societe_id, valeurs["Raison sociale"])):
-            erreurs.append(f"« {valeurs['Raison sociale']} » existe déjà")
-    elif cle_modele == "comptes":
-        numero = valeurs["Compte"]
-        if numero and not numero.isdigit():
-            erreurs.append(f"le numéro de compte « {numero} » "
-                           "doit être composé de chiffres")
-        if numero and db.ligne(
-                "SELECT id FROM comptes WHERE societe_id = ? AND numero = ?",
-                (societe_id, numero)):
-            erreurs.append(f"le compte {numero} existe déjà")
-    elif cle_modele == "biens":
-        if valeurs["Référence"] and db.ligne(
-                "SELECT id FROM biens WHERE societe_id = ? AND reference = ? "
-                "COLLATE NOCASE", (societe_id, valeurs["Référence"])):
-            erreurs.append(f"la référence {valeurs['Référence']} existe déjà")
-    elif cle_modele == "salaries":
-        if valeurs["Matricule"] and db.ligne(
-                "SELECT id FROM salaries WHERE societe_id = ? AND matricule = ? "
-                "COLLATE NOCASE", (societe_id, valeurs["Matricule"])):
-            erreurs.append(f"le matricule {valeurs['Matricule']} existe déjà")
-    return erreurs
-
+# ---------------------------------------------------------------------------
+# Aiguillage
+# ---------------------------------------------------------------------------
 
 def _analyse(ctx, octets: bytes, cle_modele: str) -> dict:
     modele = MODELES[cle_modele]
@@ -674,12 +1519,17 @@ def _analyse(ctx, octets: bytes, cle_modele: str) -> dict:
                        (societe_id,), "declare")
     if cle_modele == "ecritures":
         resultat = analyse_ecritures(societe_id, rangs, association, defaut)
+    elif cle_modele == "balance_ouverture":
+        resultat = analyse_balance(societe_id, rangs, association,
+                                   ctx.champ("date_reprise"))
+    elif cle_modele == "reglements":
+        resultat = analyse_reglements(societe_id, rangs, association)
     elif "sens" in modele:
         resultat = analyse_factures(societe_id, rangs, association, defaut,
                                     modele["sens"])
     else:
-        resultat = analyse_simple(societe_id, rangs, association, modele,
-                                  cle_modele)
+        resultat = analyse_generique(societe_id, rangs, association, modele,
+                                     cle_modele)
     resultat.update({
         "modele": cle_modele,
         "libelle": modele["libelle"],
@@ -730,16 +1580,14 @@ def api_valide(ctx):
     with db.transaction():
         if cle == "ecritures":
             crees = _importe_ecritures(ctx, societe_id, prets)
+        elif cle == "balance_ouverture":
+            crees = _importe_balance(ctx, societe_id, prets[0])
+        elif cle == "reglements":
+            crees = _importe_reglements(ctx, societe_id, prets)
         elif cle.startswith("factures_"):
             crees = _importe_factures(ctx, societe_id, prets)
-        elif cle == "tiers":
-            crees = _importe_tiers(societe_id, prets)
-        elif cle == "comptes":
-            crees = _importe_comptes(societe_id, prets)
-        elif cle == "biens":
-            crees = _importe_biens(societe_id, prets)
         else:
-            crees = _importe_salaries(societe_id, prets)
+            crees = _importe_generique(societe_id, MODELES[cle], prets)
         db.trace("import", cle, societe_id,
                  {"crees": crees, "rejetes": resultat["nb_rejetes"]},
                  ctx.nom_utilisateur)
@@ -765,6 +1613,23 @@ def _importe_ecritures(ctx, societe_id, groupes) -> int:
     return len(groupes)
 
 
+def _importe_balance(ctx, societe_id, balance) -> int:
+    """Une seule écriture d'à-nouveaux, dans le journal AN."""
+    date = balance["date"] or db.valeur(
+        "SELECT date_debut FROM exercices WHERE societe_id = ? AND cloture = 0 "
+        "ORDER BY date_debut LIMIT 1", (societe_id,))
+    if not date:
+        raise ErreurApplicative("Aucun exercice ouvert : créez-le d'abord dans "
+                                "Paramètres > Exercices.")
+    compta.enregistre_ecriture(
+        societe_id=societe_id, journal_code="AN", date=date,
+        libelle="Balance de reprise", lignes=balance["lignes"],
+        module="import", source_type="balance_ouverture",
+        perimetre="declare", utilisateur=ctx.nom_utilisateur, valider=True,
+    )
+    return len(balance["lignes"])
+
+
 def _importe_factures(ctx, societe_id, groupes) -> int:
     from modules import facturation
     for groupe in groupes:
@@ -783,78 +1648,31 @@ def _importe_factures(ctx, societe_id, groupes) -> int:
     return len(groupes)
 
 
-def _importe_tiers(societe_id, rangs) -> int:
-    for valeurs in rangs:
-        db.insere("tiers", {
+def _importe_reglements(ctx, societe_id, rangs) -> int:
+    """Marque les factures réglées, sans écriture : la reprise l'a déjà portée."""
+    for r in rangs:
+        facture = r["facture"]
+        exercice = compta.exercice_pour_date(societe_id, r["date"])
+        db.insere("reglements", {
             "societe_id": societe_id,
-            "code": db.numero_suivant(societe_id, "tiers"),
-            "type": _sans_accent(valeurs["Type"]) or "client",
-            "raison_sociale": valeurs["Raison sociale"],
-            "nif": valeurs["NIF"] or None,
-            "nis": valeurs["NIS"] or None,
-            "rc": valeurs["RC"] or None,
-            "article_imposition": valeurs["Article"] or None,
-            "adresse": valeurs["Adresse"] or None,
-            "commune": valeurs["Commune"] or None,
-            "wilaya": valeurs["Wilaya"] or None,
-            "telephone": valeurs["Téléphone"] or None,
-            "email": valeurs["Courriel"] or None,
-            "actif": 1,
+            "exercice_id": exercice["id"],
+            "sens": r["sens"],
+            "date": r["date"],
+            "tiers_id": facture["tiers_id"],
+            "tresorerie_id": r["tresorerie_id"],
+            "montant": r["montant"],
+            "mode": r["mode"],
+            "reference": r["reference"],
+            "libelle": f"Reprise — facture {facture['numero']}",
+            "facture_id": facture["id"],
+            "perimetre": facture["perimetre"],
             "cree_le": util.maintenant(),
         })
-    return len(rangs)
-
-
-def _importe_comptes(societe_id, rangs) -> int:
-    for valeurs in rangs:
-        numero = valeurs["Compte"]
-        db.insere("comptes", {
-            "societe_id": societe_id,
-            "numero": numero,
-            "intitule": valeurs["Intitulé"],
-            "classe": int(numero[0]),
-            "lettrable": 1 if _sans_accent(valeurs["Lettrable"]).startswith(("o", "y"))
-                         else 0,
-            "actif": 1,
-        })
-    return len(rangs)
-
-
-def _importe_biens(societe_id, rangs) -> int:
-    for valeurs in rangs:
-        # Selon l'opération, le prix saisi est un prix de vente ou un loyer.
-        location = _sans_accent(valeurs["Opération"]).startswith("loc")
-        montant = util.centimes(valeurs["Prix"]) if valeurs["Prix"] else None
-        db.insere("biens", {
-            "societe_id": societe_id,
-            "reference": valeurs["Référence"],
-            "designation": valeurs["Désignation"],
-            "type_bien": _sans_accent(valeurs["Type"]) or "appartement",
-            "surface": util.centimes(valeurs["Surface"]) if valeurs["Surface"] else None,
-            "adresse": valeurs["Adresse"] or None,
-            "commune": valeurs["Commune"] or None,
-            "wilaya": valeurs["Wilaya"] or None,
-            "loyer_mensuel": (montant or 0) if location else 0,
-            "prix_demande": 0 if location else (montant or 0),
-            "proprietaire_id": _tiers_id(societe_id, valeurs["Propriétaire"]),
-            "statut": "disponible",
-            "cree_le": util.maintenant(),
-        })
-    return len(rangs)
-
-
-def _importe_salaries(societe_id, rangs) -> int:
-    for valeurs in rangs:
-        db.insere("salaries", {
-            "societe_id": societe_id,
-            "matricule": valeurs["Matricule"],
-            "nom": valeurs["Nom"],
-            "prenom": valeurs["Prénom"],
-            "poste": valeurs["Poste"] or None,
-            "date_embauche": _date(valeurs["Date d'embauche"]),
-            "salaire_base": util.centimes(valeurs["Salaire de base"])
-                            if valeurs["Salaire de base"] else 0,
-            "num_secu": valeurs["N° sécurité sociale"] or None,
-            "actif": 1,
+        regle = facture["montant_regle"] + r["montant"]
+        db.modifie("factures", facture["id"], {
+            "montant_regle": regle,
+            "statut": "reglee" if regle >= facture["net_a_payer"]
+                      else ("partielle" if facture["statut"] != "brouillon"
+                            else facture["statut"]),
         })
     return len(rangs)
