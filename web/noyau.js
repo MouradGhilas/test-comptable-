@@ -231,7 +231,94 @@ function notifie(message, genre = 'info', duree = 4200) {
 
 function erreur(err) {
   console.error(err);
-  notifie(err.message || String(err), 'danger', 7000);
+  const message = err.message || String(err);
+  // Une panne technique n'apprend rien à un comptable : on lui propose de la
+  // signaler plutôt que de le laisser photographier son écran.
+  const technique = err.nom !== 'reseau' && /Erreur interne|Erreur 5\d\d/.test(message);
+  notifie(message, 'danger', technique ? 12000 : 7000);
+  if (technique) proposeSignalement(message);
+}
+
+/** Invite discrète à signaler, affichée sous la notification d'erreur. */
+function proposeSignalement(message) {
+  const boite = document.createElement('div');
+  boite.className = 'notification danger';
+  boite.innerHTML = `<strong>Ce n'est pas de votre fait.</strong>
+    <div class="petit" style="margin:4px 0 8px">Envoyez le détail technique à
+    la personne qui suit le logiciel — aucune donnée comptable n'y figure.</div>
+    <button class="petit-bouton primaire">Signaler ce problème</button>`;
+  boite.querySelector('button').onclick = () => {
+    boite.remove();
+    modaleSignalement(message);
+  };
+  $('#notifications').appendChild(boite);
+  setTimeout(() => boite.remove(), 20000);
+}
+
+/** Montre le rapport avant tout envoi, et laisse choisir le moyen. */
+async function modaleSignalement(message = '') {
+  const ecran = location.hash || '/';
+  let d;
+  try {
+    d = await api(requete('/api/incidents/rapport', { ecran, message }));
+  } catch (err) { notifie(err.message, 'danger'); return; }
+
+  const conteneur = document.createElement('div');
+  conteneur.innerHTML = `
+    <div class="message info">
+      <strong>Voici exactement ce qui sera transmis</strong>
+      La version, le système et le journal technique — rien d'autre. Aucune
+      donnée comptable n'y figure : ni montant, ni nom de client, ni raison
+      sociale. Les chemins de fichiers sont masqués, car ils portent votre nom
+      de session.
+    </div>
+    <pre class="journal" id="rapport-incident">${ech(d.texte)}</pre>
+    <div class="rangee" style="margin-top:12px; flex-wrap:wrap">
+      <button id="rapport-copier">Copier</button>
+      <button id="rapport-fichier">Enregistrer le fichier</button>
+      ${d.canaux.length
+        ? `<button class="primaire" id="rapport-envoyer">Envoyer par
+             ${ech(d.canaux.map((c) => c.libelle).join(', '))}</button>`
+        : '<span class="petit">Aucun canal configuré : copiez le rapport ou '
+          + 'enregistrez-le, puis transmettez-le comme vous voulez.</span>'}
+    </div>`;
+
+  conteneur.querySelector('#rapport-copier').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(d.texte);
+      notifie('Rapport copié. Collez-le dans votre message.', 'succes');
+    } catch (err) {
+      // Sans presse-papiers (navigateur ancien), on sélectionne le texte.
+      const zone = conteneur.querySelector('#rapport-incident');
+      const selection = window.getSelection();
+      const plage = document.createRange();
+      plage.selectNodeContents(zone);
+      selection.removeAllRanges();
+      selection.addRange(plage);
+      notifie('Rapport sélectionné : faites Ctrl+C pour le copier.', 'info', 7000);
+    }
+  };
+  conteneur.querySelector('#rapport-fichier').onclick = () =>
+    telecharge('/api/incidents/fichier', { ecran, message });
+  const bouton = conteneur.querySelector('#rapport-envoyer');
+  if (bouton) {
+    bouton.onclick = async () => {
+      bouton.disabled = true;
+      bouton.textContent = 'Envoi…';
+      try {
+        const r = await envoie('/api/incidents/envoyer', { ecran, message });
+        notifie(`Signalement envoyé (${r.envoyes} destinataire(s)).`, 'succes');
+        fermeModale();
+      } catch (err) {
+        notifie(err.message, 'danger', 9000);
+        bouton.disabled = false;
+        bouton.textContent = 'Réessayer l\'envoi';
+      }
+    };
+  }
+
+  modale({ titre: 'Signaler un problème', contenu: conteneur, large: true,
+           boutons: [{ libelle: 'Fermer' }] });
 }
 
 /** Modale générique. `contenu` peut être du HTML ou un élément. */

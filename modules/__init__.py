@@ -16,6 +16,7 @@ from . import fichiers         # noqa: F401  pièces jointes, sauvegardes
 from . import rapports         # noqa: F401  résumés Telegram / courriel
 from . import imports          # noqa: F401  reprise de données depuis Excel
 from . import maj              # noqa: F401  mise à jour depuis l'application
+from . import incidents        # noqa: F401  signalement d'un problème
 
 __all__ = [
     "systeme", "comptabilite", "tiers", "facturation", "tresorerie", "agence",

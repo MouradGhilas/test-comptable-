@@ -744,6 +744,38 @@ async function ongletMaj(zone) {
     $('#maj-resultat').innerHTML = '';
   };
   $('#maj-controler').onclick = controleMaj;
+  annonceVersionPubliee();
+}
+
+/**
+ * Annonce une version plus récente, si une adresse de publication est
+ * configurée. Sans elle, aucun appel réseau n'est fait.
+ */
+async function annonceVersionPubliee() {
+  let d;
+  try { d = await api('/api/maj/verifier'); } catch (err) { return; }
+  if (!d.active) return;
+  const zone = $('#maj-resultat');
+  if (!zone) return;
+  if (!d.joignable) {
+    zone.innerHTML = `<div class="message info">
+      <strong>Impossible de vérifier les nouvelles versions</strong>
+      Pas de connexion pour l'instant. Cela n'empêche rien&nbsp;: l'application
+      fonctionne hors ligne.</div>`;
+    return;
+  }
+  if (!d.disponible) {
+    zone.innerHTML = `<div class="message succes">
+      <strong>Vous êtes à jour</strong>
+      La dernière version publiée est la ${ech(d.derniere || d.version)}.</div>`;
+    return;
+  }
+  zone.innerHTML = `<div class="message alerte">
+    <strong>La version ${ech(d.derniere)} est disponible</strong>
+    Vous êtes en ${ech(d.version)}.
+    ${d.lien ? `<div><a href="${ech(d.lien)}" target="_blank" rel="noopener">
+      Télécharger le fichier</a>, puis déposez-le ci-dessus.</div>` : ''}</div>
+    ${d.notes ? `<div class="notes-version">${notesEnHtml(d.notes)}</div>` : ''}`;
 }
 
 /** Rendu minimal des notes de version : titres, listes et gras. */
@@ -1108,7 +1140,8 @@ async function ongletSauvegarde(zone) {
       fenêtre de messages : les erreurs sont consignées dans un fichier. À
       transmettre en cas de problème inexpliqué.</p>
       <div id="zone-diagnostic"><div class="vide">Non chargé.</div></div>`,
-      `<button onclick="afficheDiagnostic()">Afficher le journal</button>`)}`;
+      `<button onclick="afficheDiagnostic()">Afficher le journal</button>
+       <button class="primaire" onclick="modaleSignalement()">Signaler un problème</button>`)}`;
 }
 
 async function afficheDiagnostic() {

@@ -31,6 +31,10 @@ DEFAUTS = {
     "duree_session_heures": 12,
     "sauvegarde_auto": True,
     "sauvegardes_a_conserver": 30,
+    # Adresse d'un petit fichier JSON annonçant la dernière version publiée.
+    # Vide par défaut : aucun appel réseau n'est alors effectué. Renseignée,
+    # l'application prévient qu'une mise à jour existe.
+    "url_versions": "",
 }
 
 

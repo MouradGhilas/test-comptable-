@@ -165,6 +165,43 @@ def api_etat(ctx):
     }
 
 
+@route("GET", "/api/maj/verifier")
+def api_verifie(ctx):
+    """Y a-t-il une version plus récente publiée ?
+
+    Sans adresse configurée, aucun appel réseau n'est fait : l'application
+    fonctionne hors ligne, et ne contacte rien à l'insu de l'utilisateur.
+    """
+    ctx.exige_role("admin", "comptable")
+    adresse = (config.get("url_versions") or "").strip()
+    if not adresse:
+        return {"active": False, "version": VERSION}
+
+    import json as _json
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen(adresse, timeout=6) as reponse:
+            publie = _json.loads(reponse.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError) as err:
+        # Pas d'Internet, adresse fautive : ce n'est pas une erreur de
+        # l'utilisateur, on le dit sans alarmer.
+        return {"active": True, "version": VERSION, "joignable": False,
+                "detail": str(err)}
+
+    derniere = str(publie.get("version") or "")
+    return {
+        "active": True,
+        "joignable": True,
+        "version": VERSION,
+        "derniere": derniere,
+        "disponible": bool(derniere)
+                      and version_en_tuple(derniere) > version_en_tuple(VERSION),
+        "notes": publie.get("notes", ""),
+        "lien": publie.get("lien", ""),
+    }
+
+
 @route("POST", "/api/maj/analyse")
 def api_analyse(ctx):
     """Contrôle le fichier déposé et annonce ce qu'il contient."""

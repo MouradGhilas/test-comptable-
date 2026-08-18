@@ -142,6 +142,20 @@ d'opération** (`ecritures.operation_ref`) plutôt qu'une écriture hybride : un
 et la liasse ne seraient plus établissables sur le seul déclaré. Le journal
 rappelle sur chaque part le montant de l'opération entière.
 
+### Signaler un problème
+
+Les pannes rencontrées jusqu'ici ont été diagnostiquées depuis des **photos
+d'écran**. L'application prépare désormais elle-même un rapport : version,
+système, écran concerné et dernières lignes de `donnees/journal.log`.
+
+* L'utilisateur **voit le rapport avant de l'envoyer**.
+* Il ne contient **aucune donnée comptable** — ni montant, ni nom de tiers, ni
+  raison sociale — et les chemins absolus sont masqués, car ils portent le nom
+  de la session.
+* Trois moyens, sans dépendance : **copier**, **enregistrer un fichier**, ou
+  **envoyer** par un canal Telegram ou courriel déjà configuré. Sans canal,
+  l'application le dit et propose les deux autres.
+
 ### Reprise de données depuis Excel
 
 L'application **fournit les en-têtes** : le comptable télécharge un modèle
