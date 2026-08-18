@@ -168,6 +168,43 @@ refuse le fichier **en indiquant le montant exact de l'écart**.
 > repartir ; le journal détaillé n'est utile que si vous voulez retrouver
 > l'historique complet dans l'application.
 
+### Remplissez le fichier comme vous tenez un journal
+
+Vous n'avez pas à répéter ce qui ne change pas. **Une case laissée vide reprend
+la valeur de la ligne du dessus** — c'est ainsi qu'on tient un journal, sur
+papier comme dans un tableur :
+
+| N° écriture | Date | Journal | Libellé | Compte | Débit | Crédit |
+|---|---|---|---|---|---|---|
+| 1 | 05/01/2026 | CAISSE | Encaissement loyer | 411 | | 9 000 |
+| | | | Encaissement loyer | 531 | 9 000 | |
+| 2 | 12/01/2026 | | Encaissement loyer | 411 | | 9 000 |
+| | | | Encaissement loyer | 531 | 9 000 | |
+| | | | **TOTAL** | | **18 000** | **18 000** |
+
+Ce fichier passe tel quel. Trois choses à savoir :
+
+- **Le journal s'écrit comme vous voulez** : son code (`CA`) ou son nom
+  (`CAISSE`, `Journal de caisse`).
+- **La ligne de totaux du bas est ignorée toute seule**, et l'application vous
+  dit laquelle elle a écartée.
+- **La colonne « N° écriture » est facultative.** Sans elle, les lignes d'une
+  même écriture sont reconnues par leur date, leur journal et leur libellé.
+
+### Si un compte est refusé
+
+Message type : *« le compte 530 n'existe pas dans le plan comptable — le plus
+proche dans votre plan : 53, 531. »*
+
+Votre ancien logiciel n'utilisait pas les mêmes numéros que le plan SCF livré.
+Deux solutions, au choix :
+
+1. **Corriger le fichier** : remplacer 530 par 531 (c'est le même compte).
+2. **Créer le compte** : modèle **Plan comptable**, une ligne `530 / Caisse`,
+   puis relancer l'import des écritures.
+
+La seconde est préférable si vous tenez à retrouver vos numéros habituels.
+
 ### Ce que l'import ne fait pas
 
 L'import **reprend votre situation, il ne recomptabilise pas le passé**. Les

@@ -172,7 +172,14 @@ feuille d'en-têtes de factures, une feuille de lignes — en respectant les
 filtres affichés, périmètre compris.
 
 * L'import se fait **en deux temps** : contrôle complet sans écriture, puis
-  validation. Chaque anomalie est rapportée avec son **numéro de ligne**.
+  validation. Chaque anomalie est rapportée avec son **numéro de ligne**, et le
+  message dit quoi faire — un compte absent propose les plus proches du plan,
+  un journal inconnu liste ceux qui existent.
+* Le fichier est lu **comme un journal se lit** : une cellule vide reprend la
+  valeur de la ligne du dessus, de sorte que la date, le journal et le numéro
+  ne s'écrivent qu'une fois par écriture. Le journal est reconnu par son code
+  ou par son intitulé, et la ligne de totaux d'un tableau est écartée d'elle-même
+  puis signalée.
 * Les écritures passent par `comptabilite.enregistre_ecriture`, donc par les
   mêmes contrôles que la saisie manuelle, et arrivent **en brouillon**.
 * Les lignes partageant un même « N° écriture » forment une écriture et doivent

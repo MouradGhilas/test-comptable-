@@ -253,6 +253,14 @@ MODELES = {
             "écriture : elles doivent s'équilibrer entre elles (total des débits",
             "égal au total des crédits).",
             "",
+            "Tenez votre fichier comme un journal : une case laissée vide reprend",
+            "la valeur de la ligne du dessus. Vous n'écrivez donc la date, le",
+            "journal et le numéro qu'une seule fois par écriture.",
+            "",
+            "Le journal s'écrit par son code (CA) ou par son nom (Caisse).",
+            "",
+            "Une ligne de totaux en bas du tableau est ignorée d'elle-même.",
+            "",
             "La colonne « Périmètre » accepte : Déclaré ou Non déclaré. Laissée",
             "vide, elle prend la valeur par défaut du dossier. Un même fichier",
             "peut donc contenir les deux.",
@@ -261,8 +269,12 @@ MODELES = {
             "Les dates s'écrivent JJ/MM/AAAA ou AAAA-MM-JJ.",
         ],
         "colonnes": [
+            # Facultative : à défaut, les lignes d'une même écriture sont
+            # reconnues par leur date, leur journal et leur libellé.
+            # « piece » n'est pas un synonyme ici : il désigne la colonne
+            # « N° de pièce » plus bas.
             Colonne("N° écriture", "Regroupe les lignes d'une même écriture",
-                    "1", requis=True, synonymes=("n° ecriture", "numero", "n°", "piece")),
+                    "1", synonymes=("n° ecriture", "numero", "n°", "n° ecr")),
             Colonne("Date", "Date de l'opération", "15/03/2026", requis=True),
             Colonne("Journal", "Code du journal (OD, VE, AC, BQ, CA…)", "VE",
                     requis=True),
@@ -1153,41 +1165,126 @@ def _importe_generique(societe_id, modele, rangs) -> int:
 # Contrôles particuliers : écritures, factures, balance, règlements
 # ---------------------------------------------------------------------------
 
+def resout_journal(societe_id: int, saisi: str) -> tuple[str | None, str | None]:
+    """Retrouve un journal par son code ou par son intitulé.
+
+    Un comptable écrit « CAISSE » ou « Journal de caisse » là où le logiciel
+    attend « CA » : refuser cela n'apprendrait rien à personne.
+    Renvoie (code, message d'anomalie).
+    """
+    journaux = db.lignes("SELECT code, libelle FROM journaux WHERE societe_id = ?",
+                         (societe_id,))
+    codes = ", ".join(sorted(j["code"] for j in journaux))
+    if not saisi:
+        return None, None
+    cherche = _sans_accent(saisi)
+    for j in journaux:
+        if _sans_accent(j["code"]) == cherche:
+            return j["code"], None
+    # Puis par intitulé : « caisse » retrouve « Journal de caisse ».
+    proches = [j for j in journaux
+               if cherche in _sans_accent(j["libelle"])
+               or _sans_accent(j["libelle"]) in cherche]
+    if len(proches) == 1:
+        return proches[0]["code"], None
+    if len(proches) > 1:
+        return None, (f"le journal « {saisi} » correspond à plusieurs journaux "
+                      f"({', '.join(p['code'] for p in proches)}) : indiquez son code")
+    return None, (f"le journal « {saisi} » n'existe pas — journaux disponibles : "
+                  f"{codes}")
+
+
+def comptes_proches(comptes_connus: set[str], numero: str, combien: int = 3) -> list[str]:
+    """Les comptes existants qui ressemblent le plus au numéro saisi."""
+    if not numero:
+        return []
+    meilleurs: list[tuple[int, str]] = []
+    for candidat in comptes_connus:
+        commun = 0
+        for a, b in zip(numero, candidat):
+            if a != b:
+                break
+            commun += 1
+        if commun >= 2:
+            meilleurs.append((commun, candidat))
+    meilleurs.sort(key=lambda x: (-x[0], len(x[1]), x[1]))
+    return [c for _, c in meilleurs[:combien]]
+
+
+def _est_ligne_de_total(libelle: str, compte: str, debit: int, credit: int) -> bool:
+    """Reconnaît la ligne de totaux que l'on met au bas d'un tableau Excel."""
+    if compte:
+        return False
+    if "total" in _sans_accent(libelle):
+        return True
+    return bool(debit and credit)
+
+
 def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
-    """Regroupe les lignes par numéro d'écriture et contrôle chaque groupe."""
+    """Regroupe les lignes par numéro d'écriture et contrôle chaque groupe.
+
+    Le fichier est lu comme un journal se lit : une case laissée vide reprend
+    la valeur de la ligne précédente. C'est ainsi qu'on tient un journal, sur
+    papier comme dans un tableur — la date, le journal et le numéro ne sont
+    écrits qu'une fois par écriture.
+    """
     groupes: dict[str, dict] = {}
     ordre: list[str] = []
     anomalies = []
+    ignorees = []
 
     comptes_connus = {str(c["numero"]) for c in db.lignes(
         "SELECT numero FROM comptes WHERE societe_id = ?", (societe_id,))}
-    journaux_connus = {str(j["code"]).upper() for j in db.lignes(
-        "SELECT code FROM journaux WHERE societe_id = ?", (societe_id,))}
+    journaux_resolus: dict[str, tuple[str | None, str | None]] = {}
+
+    # Dernières valeurs rencontrées, reprises quand la cellule est vide.
+    reprise = {"cle": "", "date": "", "journal": "", "libelle": "", "piece": "",
+               "perimetre": ""}
 
     for decalage, rang in enumerate(rangs):
         numero_ligne = decalage + 2
         if not any(str(c).strip() for c in rang):
             continue
-        cle = _valeur(rang, association, "N° écriture")
-        date = _valeur(rang, association, "Date")
-        journal = _valeur(rang, association, "Journal").upper()
-        libelle = _valeur(rang, association, "Libellé")
         compte = _valeur(rang, association, "Compte")
         debit = _valeur(rang, association, "Débit")
         credit = _valeur(rang, association, "Crédit")
-        perimetre = _valeur(rang, association, "Périmètre")
+        montant_debit = util.centimes(debit) if debit else 0
+        montant_credit = util.centimes(credit) if credit else 0
+        libelle_brut = _valeur(rang, association, "Libellé")
+
+        if _est_ligne_de_total(libelle_brut, compte, montant_debit, montant_credit):
+            ignorees.append(numero_ligne)
+            continue
+
+        # Une cellule vide continue l'écriture précédente.
+        cle = _valeur(rang, association, "N° écriture") or reprise["cle"]
+        date = _valeur(rang, association, "Date") or reprise["date"]
+        journal_saisi = _valeur(rang, association, "Journal") or reprise["journal"]
+        libelle = libelle_brut or reprise["libelle"]
+        piece = _valeur(rang, association, "N° de pièce") or reprise["piece"]
+        perimetre = _valeur(rang, association, "Périmètre") or reprise["perimetre"]
+        reprise.update({"cle": cle, "date": date, "journal": journal_saisi,
+                        "libelle": libelle, "piece": piece, "perimetre": perimetre})
+
+        if journal_saisi not in journaux_resolus:
+            journaux_resolus[journal_saisi] = resout_journal(societe_id, journal_saisi)
+        journal, erreur_journal = journaux_resolus[journal_saisi]
 
         erreurs = []
         if not cle:
-            cle = f"auto-{date}-{libelle}-{journal}"
+            cle = f"auto-{date}-{libelle}-{journal_saisi}"
         if not compte:
             erreurs.append("compte manquant")
         elif compte not in comptes_connus:
-            erreurs.append(f"le compte {compte} n'existe pas dans le plan comptable")
-        if journal and journal not in journaux_connus:
-            erreurs.append(f"le journal {journal} n'existe pas")
-        montant_debit = util.centimes(debit) if debit else 0
-        montant_credit = util.centimes(credit) if credit else 0
+            suggestions = comptes_proches(comptes_connus, compte)
+            precision = (f" — le plus proche dans votre plan : "
+                         f"{', '.join(suggestions)}" if suggestions else "")
+            erreurs.append(
+                f"le compte {compte} n'existe pas dans le plan comptable"
+                f"{precision}. Créez-le par le modèle « Plan comptable », ou "
+                "corrigez le fichier.")
+        if erreur_journal:
+            erreurs.append(erreur_journal)
         if montant_debit and montant_credit:
             erreurs.append("débit et crédit renseignés sur la même ligne")
         if not montant_debit and not montant_credit:
@@ -1197,14 +1294,16 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
         if groupe is None:
             iso = _date(date)
             if not iso:
-                erreurs.append(f"date « {date} » incompréhensible")
-            if not journal:
+                erreurs.append(
+                    f"date « {date} » incompréhensible" if date
+                    else "date manquante, et aucune date à reprendre plus haut")
+            if not journal_saisi:
                 erreurs.append("journal manquant")
             if not libelle:
                 erreurs.append("libellé manquant")
             groupe = groupes[cle] = {
                 "cle": cle, "date": iso, "journal": journal, "libelle": libelle,
-                "piece": _valeur(rang, association, "N° de pièce"),
+                "piece": piece,
                 "perimetre": _perimetre(perimetre, defaut_perimetre),
                 "lignes": [], "lignes_fichier": [], "erreurs": [],
                 "debit": 0, "credit": 0,
@@ -1258,12 +1357,13 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
     } for g in (groupes[c] for c in ordre)]
 
     return {"prets": prets, "anomalies": anomalies, "apercu": apercu,
-            "nb_valides": len(prets), "nb_rejetes": len(ordre) - len(prets)}
+            "nb_valides": len(prets), "nb_rejetes": len(ordre) - len(prets),
+            "lignes_ignorees": ignorees}
 
 
 def analyse_balance(societe_id, rangs, association, date_reprise):
     """Contrôle une balance de reprise : comptes connus et totaux égaux."""
-    anomalies, lignes, apercu = [], [], []
+    anomalies, lignes, apercu, ignorees = [], [], [], []
     comptes_connus = {str(c["numero"]) for c in db.lignes(
         "SELECT numero FROM comptes WHERE societe_id = ?", (societe_id,))}
     total_debit = total_credit = 0
@@ -1276,11 +1376,23 @@ def analyse_balance(societe_id, rangs, association, date_reprise):
         compte = _valeur(rang, association, "Compte")
         debit = _valeur(rang, association, "Débit")
         credit = _valeur(rang, association, "Crédit")
+        montant_debit_brut = util.centimes(debit) if debit else 0
+        montant_credit_brut = util.centimes(credit) if credit else 0
+        if _est_ligne_de_total(_valeur(rang, association, "Intitulé"), compte,
+                               montant_debit_brut, montant_credit_brut):
+            ignorees.append(numero_ligne)
+            continue
         erreurs = []
         if not compte:
             erreurs.append("compte manquant")
         elif compte not in comptes_connus:
-            erreurs.append(f"le compte {compte} n'existe pas dans le plan comptable")
+            suggestions = comptes_proches(comptes_connus, compte)
+            precision = (f" — le plus proche dans votre plan : "
+                         f"{', '.join(suggestions)}" if suggestions else "")
+            erreurs.append(
+                f"le compte {compte} n'existe pas dans le plan comptable"
+                f"{precision}. Créez-le par le modèle « Plan comptable », ou "
+                "corrigez le fichier.")
         elif compte in vus:
             erreurs.append(f"le compte {compte} apparaît deux fois")
         else:
@@ -1320,7 +1432,8 @@ def analyse_balance(societe_id, rangs, association, date_reprise):
               "total": total_debit}] if lignes else []
     return {"prets": prets, "anomalies": anomalies, "apercu": apercu,
             "nb_valides": len(lignes), "total": total_debit,
-            "nb_rejetes": len([a for a in apercu if a["erreurs"]])}
+            "nb_rejetes": len([a for a in apercu if a["erreurs"]]),
+            "lignes_ignorees": ignorees}
 
 
 def analyse_factures(societe_id, rangs, association, defaut_perimetre, sens):

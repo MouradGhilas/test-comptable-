@@ -881,6 +881,11 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
   const ignorees = (d.colonnes_ignorees || []).length
     ? `<p class="petit">Colonnes du fichier non utilisées :
        ${d.colonnes_ignorees.map(ech).join(', ')}.</p>` : '';
+  const lignesIgnorees = (d.lignes_ignorees || []).length
+    ? `<p class="petit">Ligne(s) de totaux ignorée(s) :
+       ${d.lignes_ignorees.join(', ')}. Une ligne sans compte dont le débit et
+       le crédit sont tous deux remplis est comprise comme un total de
+       tableau.</p>` : '';
 
   const resume = anomalies.length
     ? `<div class="message alerte">
@@ -907,7 +912,7 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
       + `${anomalies.length} anomalie(s)`
     : `Importer ${d.nb_valides} ligne(s)`;
 
-  zone.innerHTML = resume + ignorees + detail + `
+  zone.innerHTML = resume + ignorees + lignesIgnorees + detail + `
     <div class="rangee" style="margin-top:12px">
       ${d.nb_valides ? `<button class="primaire" id="bouton-importer">
         ${libelleImport}</button>` : ''}
