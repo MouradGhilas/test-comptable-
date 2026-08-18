@@ -483,7 +483,8 @@ App.pages.parametres = {
     const onglets = [['dossier', 'Dossier'], ['exercices', 'Exercices'],
       ['plan', 'Plan comptable'], ['fiscalite', 'Fiscalité'],
       ['notifications', 'Notifications'], ['import', 'Import de données'],
-      ['utilisateurs', 'Utilisateurs'], ['sauvegarde', 'Sauvegarde & données']];
+      ['utilisateurs', 'Utilisateurs'], ['sauvegarde', 'Sauvegarde & données'],
+      ['maj', 'Mise à jour']];
     zone.innerHTML = `<div class="onglets">${onglets.map(([v, l]) =>
       `<button class="${v === onglet ? 'actif' : ''}" onclick="navigue('/parametres/${v}')">${l}</button>`).join('')}</div>
       <div id="zone-onglet"><div class="vide">Chargement…</div></div>`;
@@ -491,7 +492,7 @@ App.pages.parametres = {
     const rendus = {
       dossier: ongletDossier, exercices: ongletExercices, plan: ongletPlan,
       fiscalite: ongletFiscalite, notifications: ongletNotifications,
-      import: ongletImport,
+      import: ongletImport, maj: ongletMaj,
       utilisateurs: ongletUtilisateurs, sauvegarde: ongletSauvegarde,
     };
     await (rendus[onglet] || ongletDossier)(cible);
@@ -707,6 +708,129 @@ async function nouvelUtilisateur() {
       },
     }],
   });
+}
+
+/* --------------------------------------------------- Mise à jour -------- */
+
+/** Fichier de mise à jour choisi, conservé entre le contrôle et l'application. */
+let _paquetMaj = null;
+
+async function ongletMaj(zone) {
+  const d = await api('/api/maj/etat');
+  zone.innerHTML = `
+    ${carte('Mettre à jour', `
+      <div class="message info">
+        <strong>Vous êtes en version ${ech(d.version)}</strong>
+        Quand vous recevez un fichier de mise à jour, déposez-le ici. Il est
+        contrôlé avant d'être appliqué, vos données sont sauvegardées, et
+        l'application se rouvre toute seule. <strong>Rien n'est perdu&nbsp;:</strong>
+        en cas de problème, la version précédente est remise en place
+        automatiquement.
+      </div>
+      <div class="rangee" style="align-items:flex-end; gap:12px">
+        <label class="champ" style="flex:1">
+          <span>Fichier de mise à jour (.zip)</span>
+          <input type="file" id="maj-fichier" accept=".zip"></label>
+        <button class="primaire" id="maj-controler">Contrôler le fichier</button>
+      </div>
+      <div id="maj-resultat"></div>`)}
+
+    ${d.changelog ? carte('Ce que contient votre version', `
+      <div class="notes-version">${notesEnHtml(d.changelog)}</div>`) : ''}`;
+
+  _paquetMaj = null;
+  $('#maj-fichier').onchange = (e) => {
+    _paquetMaj = e.target.files[0] || null;
+    $('#maj-resultat').innerHTML = '';
+  };
+  $('#maj-controler').onclick = controleMaj;
+}
+
+/** Rendu minimal des notes de version : titres, listes et gras. */
+function notesEnHtml(texte) {
+  return texte.split('\n').map((ligne) => {
+    if (/^##\s+/.test(ligne)) return `<h4>${ech(ligne.replace(/^##\s+/, ''))}</h4>`;
+    if (/^#\s+/.test(ligne)) return '';
+    if (/^[-*]\s+/.test(ligne)) {
+      return `<li>${gras(ligne.replace(/^[-*]\s+/, ''))}</li>`;
+    }
+    return ligne.trim() ? `<p>${gras(ligne)}</p>` : '';
+  }).join('');
+}
+
+function gras(texte) {
+  return ech(texte).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+                   .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+async function controleMaj() {
+  if (!_paquetMaj) { notifie('Choisissez d\'abord un fichier.', 'alerte'); return; }
+  const zone = $('#maj-resultat');
+  zone.innerHTML = '<div class="vide">Contrôle du fichier…</div>';
+  try {
+    const contenu = await litFichierBase64(_paquetMaj);
+    const d = await envoie('/api/maj/analyse', { contenu });
+    afficheControleMaj(zone, d, contenu);
+  } catch (err) {
+    zone.innerHTML = `<div class="message danger"><strong>Fichier refusé</strong>
+      ${ech(err.message)}</div>`;
+  }
+}
+
+function afficheControleMaj(zone, d, contenu) {
+  if (d.avertissement) {
+    zone.innerHTML = `<div class="message alerte">
+      <strong>Rien à faire</strong>${ech(d.avertissement)}</div>`;
+    return;
+  }
+  zone.innerHTML = `
+    <div class="message succes">
+      <strong>Version ${ech(d.version)} prête à être installée</strong>
+      Vous êtes en ${ech(d.version_installee)}. ${d.fichiers} fichier(s) seront
+      remplacés. Votre comptabilité n'est pas touchée.
+    </div>
+    ${d.changelog ? `<div class="notes-version">${notesEnHtml(d.changelog)}</div>` : ''}
+    <div class="rangee" style="margin-top:12px">
+      <button class="primaire" id="maj-appliquer">
+        Installer la version ${ech(d.version)}</button>
+    </div>`;
+
+  $('#maj-appliquer', zone).onclick = async () => {
+    const bouton = $('#maj-appliquer', zone);
+    bouton.disabled = true;
+    bouton.textContent = 'Installation en cours…';
+    try {
+      const r = await envoie('/api/maj/appliquer', { contenu });
+      zone.innerHTML = `<div class="message succes">
+        <strong>Mise à jour en cours</strong>${ech(r.message)}</div>`;
+      // Le serveur s'arrête : la sonde de reconnexion reprendra la main et
+      // rechargera la page dès que la nouvelle version répondra.
+      attendRetourApresMaj(r.version);
+    } catch (err) {
+      zone.innerHTML = `<div class="message danger">
+        <strong>Mise à jour refusée</strong>${ech(err.message)}</div>`;
+    }
+  };
+}
+
+/** Patiente pendant l'arrêt puis recharge dès que l'application répond. */
+function attendRetourApresMaj(version) {
+  const bandeau = document.createElement('div');
+  bandeau.className = 'bandeau-hors-ligne';
+  bandeau.innerHTML = `<strong>Installation de la version ${ech(version)}…</strong>
+    <span>L'application se ferme et se rouvre toute seule. Cette page se
+    rechargera d'elle-même — ne fermez pas la fenêtre.</span>`;
+  document.body.appendChild(bandeau);
+
+  let absent = false;
+  setInterval(async () => {
+    try {
+      const rep = await fetch('/api/etat', { cache: 'no-store' });
+      // On ne recharge qu'après avoir constaté l'arrêt : sinon on
+      // rechargerait l'ancienne version, encore en train de répondre.
+      if (rep.ok && absent) location.reload();
+    } catch (err) { absent = true; }
+  }, 2000);
 }
 
 /* ----------------------------------------------- Import de données ------ */

@@ -278,6 +278,15 @@ python3 app.py --donnees /chemin/vers/le/dossier
 Le code et les données vivent séparément : une mise à jour remplace le
 programme, jamais le dossier `donnees/`.
 
+Le chemin normal passe par l'application : **Paramètres → Mise à jour**,
+le fichier reçu est déposé, contrôlé, puis installé en un clic. L'application se
+ferme, se met à jour et se rouvre toute seule, **en rejouant ses options de
+lancement** (port, dossier de données) pour ne pas rouvrir sur une autre
+comptabilité. Le paquet est refusé s'il n'est pas une version de Cabinet Immo,
+s'il est incomplet ou s'il n'est pas plus récent que la version installée.
+
+En ligne de commande :
+
 ```bash
 python3 outils/mise_a_jour.py nouvelle_version.zip   # ou METTRE-A-JOUR.bat
 python3 outils/mise_a_jour.py --annuler              # retour arrière

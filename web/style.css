@@ -288,6 +288,14 @@ button.plat { border-color: transparent; background: none; }
 .totalite .saisie .col-hors { display: table-cell; }
 #bandeau-totalite { background: var(--fond); }
 
+/* Notes de version : lecture rapide de ce qu'apporte une mise à jour */
+.notes-version { max-height: 340px; overflow-y: auto; font-size: 13px;
+  line-height: 1.55; }
+.notes-version h4 { margin: 14px 0 6px; font-size: 13px; color: var(--accent); }
+.notes-version h4:first-child { margin-top: 0; }
+.notes-version li { margin-left: 18px; margin-bottom: 4px; }
+.notes-version p { margin-bottom: 6px; }
+
 /* Journal des incidents : texte brut, lisible, jamais débordant */
 pre.journal { max-height: 320px; overflow: auto; background: var(--fond);
   border: 1px solid var(--bordure); border-radius: 6px; padding: 10px 12px;

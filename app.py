@@ -171,6 +171,10 @@ def principal():
     print()
 
     serveur_http = serveur.demarre(hote, port)
+    # `shutdown()` ne peut pas être appelé depuis le fil qui sert la requête :
+    # il attendrait la fin de sa propre boucle. On le délègue à un autre fil.
+    serveur.demande_arret = lambda: threading.Thread(
+        target=serveur_http.shutdown, daemon=True).start()
 
     # Écoute Telegram et envoi des résumés à heure fixe.
     from modules import rapports
@@ -181,19 +185,24 @@ def principal():
 
     try:
         serveur_http.serve_forever()
+        print("\nArrêt demandé par l'application…")
     except KeyboardInterrupt:
         print("\nArrêt en cours…")
-        rapports.arrete_taches_de_fond()
-        if config.get("sauvegarde_auto", True):
-            try:
-                from modules.fichiers import cree_sauvegarde
-                chemin = cree_sauvegarde("arret")
-                print(f"Sauvegarde automatique : {chemin.name}")
-            except Exception as err:                      # noqa: BLE001
-                print(f"Sauvegarde automatique impossible : {err}")
-        serveur_http.shutdown()
-        print("Application arrêtée. Vos données restent dans "
-              f"{config.dossier_donnees}")
+
+    # Même conclusion que l'arrêt vienne de Ctrl+C ou d'une demande interne
+    # (une mise à jour, par exemple) : les données doivent être fermées de la
+    # même façon dans les deux cas.
+    rapports.arrete_taches_de_fond()
+    if config.get("sauvegarde_auto", True):
+        try:
+            from modules.fichiers import cree_sauvegarde
+            chemin = cree_sauvegarde("arret")
+            print(f"Sauvegarde automatique : {chemin.name}")
+        except Exception as err:                          # noqa: BLE001
+            print(f"Sauvegarde automatique impossible : {err}")
+    serveur_http.shutdown()
+    print("Application arrêtée. Vos données restent dans "
+          f"{config.dossier_donnees}")
     return 0
 
 

@@ -52,7 +52,8 @@ INTOUCHABLES = {"donnees", "configuration.json", "runtime", ".git"}
 
 #: Ce que contient une version : tout le reste est ignoré.
 ELEMENTS_PROGRAMME = ["app.py", "noyau", "modules", "reference", "web", "outils",
-                      "README.md", "LANCER.bat", "lancer.sh", "INSTALLER.bat"]
+                      "README.md", "GUIDE.md", "CHANGELOG.md",
+                      "LANCER.bat", "lancer.sh", "INSTALLER.bat"]
 
 
 def titre(texte):
@@ -155,6 +156,24 @@ def restaure_code() -> bool:
     return True
 
 
+def purge_bytecode() -> int:
+    """Supprime les dossiers __pycache__ de l'installation.
+
+    Python valide son bytecode sur la taille du source et son horodatage
+    **à la seconde près**. Deux versions dont le fichier fait la même taille,
+    remplacées dans la même seconde, laissent le cache passer pour valide :
+    l'application continuerait alors d'exécuter l'ancien code tout en
+    affichant le nouveau numéro de version. Le cas s'est produit.
+    """
+    supprimes = 0
+    for cache in RACINE.rglob("__pycache__"):
+        if "donnees" in cache.parts:
+            continue
+        shutil.rmtree(cache, ignore_errors=True)
+        supprimes += 1
+    return supprimes
+
+
 def applique_archive(archive: Path) -> int:
     fichiers = 0
     with zipfile.ZipFile(archive) as zf:
@@ -199,7 +218,21 @@ def principal() -> int:
                            help="ne pas créer de sauvegarde préalable (déconseillé)")
     analyseur.add_argument("--vers", metavar="DOSSIER",
                            help="installation à mettre à jour (défaut : celle-ci)")
+    analyseur.add_argument("--auto", action="store_true",
+                           help="ne rien demander : en cas de doute, renoncer")
+    analyseur.add_argument("--attendre", type=float, default=0, metavar="SECONDES",
+                           help="patienter avant de commencer (le temps que "
+                                "l'application se ferme)")
+    analyseur.add_argument("--relancer", action="store_true",
+                           help="rouvrir l'application une fois la mise à jour faite")
+    analyseur.add_argument("--relancer-options", default="", metavar="JSON",
+                           help="options de lancement à rejouer (port, dossier "
+                                "de données…), au format JSON")
     arguments = analyseur.parse_args()
+
+    if arguments.attendre:
+        import time
+        time.sleep(arguments.attendre)
 
     print("\n\033[1m═══ MISE À JOUR DE CABINET IMMO ═══\033[0m")
     print(f"Dossier : {RACINE}")
@@ -227,6 +260,11 @@ def principal() -> int:
             succes(f"Sauvegarde créée : {chemin.name}")
         except Exception as err:                             # noqa: BLE001
             echec(f"Sauvegarde impossible : {err}")
+            if arguments.auto:
+                # Sans personne devant l'écran, on renonce plutôt que de
+                # toucher au programme sans filet.
+                echec("Mise à jour abandonnée : aucune sauvegarde préalable.")
+                return 1
             reponse = input("  Continuer sans sauvegarde ? (o/N) ").strip().lower()
             if reponse not in ("o", "oui", "y"):
                 return 1
@@ -242,6 +280,9 @@ def principal() -> int:
     try:
         fichiers = applique_archive(archive)
         succes(f"{fichiers} fichier(s) de programme mis à jour")
+        caches = purge_bytecode()
+        if caches:
+            succes(f"{caches} cache(s) de bytecode purgé(s)")
     except Exception as err:                                 # noqa: BLE001
         echec(f"Installation impossible : {err}")
         restaure_code()
@@ -295,9 +336,46 @@ def principal() -> int:
     print("=" * 68)
     print(f"  Mise à jour terminée : version {ancienne_version} → {nouvelle_version}")
     print("  Vos données n'ont pas été touchées.")
-    print("  Relancez l'application (raccourci « Cabinet Immo »).")
+    if not arguments.relancer:
+        print("  Relancez l'application (raccourci « Cabinet Immo »).")
     print("=" * 68)
+
+    if arguments.relancer:
+        relance_application(arguments.relancer_options)
     return 0
+
+
+def relance_application(options_json: str = "") -> None:
+    """Rouvre l'application après une mise à jour lancée depuis l'interface.
+
+    Sans cela, l'utilisateur verrait sa fenêtre se fermer et devrait
+    comprendre qu'il lui faut rouvrir le raccourci.
+
+    Les options du lancement d'origine sont rejouées. Sans elles, une
+    installation démarrée sur un autre port, ou sur un dossier de données
+    déplacé — une clé USB, par exemple — rouvrirait sur les valeurs par
+    défaut, donc sur la mauvaise comptabilité.
+    """
+    import json
+    import subprocess
+    options = []
+    if options_json:
+        try:
+            options = [str(o) for o in json.loads(options_json)]
+        except ValueError:
+            echec("Options de relance illisibles : valeurs par défaut utilisées.")
+    executable = sys.executable
+    # pythonw.exe évite de rouvrir une fenêtre noire sous Windows.
+    sans_console = Path(executable).with_name("pythonw.exe")
+    if sans_console.exists():
+        executable = str(sans_console)
+    try:
+        subprocess.Popen([executable, str(RACINE / "app.py"), *options],
+                         cwd=str(RACINE))
+        detail = f" ({' '.join(options)})" if options else ""
+        print(f"  Application relancée{detail}.")
+    except OSError as err:
+        echec(f"Relance impossible ({err}). Rouvrez le raccourci « Cabinet Immo ».")
 
 
 if __name__ == "__main__":

@@ -31,6 +31,11 @@ from .config import config, journalise, APPLICATION, VERSION
 ERREURS_CONNEXION = (BrokenPipeError, ConnectionAbortedError,
                      ConnectionResetError)
 
+#: Renseigné par app.py au démarrage. Permet à une route de demander l'arrêt
+#: propre de l'application — la mise à jour en a besoin pour libérer les
+#: fichiers de programme avant qu'ils ne soient remplacés.
+demande_arret = None
+
 # ---------------------------------------------------------------------------
 # Erreurs applicatives
 # ---------------------------------------------------------------------------

@@ -262,14 +262,26 @@ Points utiles :
 
 ## Mettre à jour
 
-Deux façons, selon ce que vous recevez. **Les deux gardent vos données.**
+**Depuis l'application, c'est le plus simple.** Vous recevez un fichier
+`maj-….zip` : allez dans **Paramètres → Mise à jour**, choisissez le fichier,
+cliquez sur **Contrôler le fichier**.
+
+L'application vous dit alors quelle version il contient et ce qu'elle apporte.
+Si tout va bien, un bouton **Installer la version …** apparaît. L'application se
+ferme, s'installe et **se rouvre toute seule** ; la page se recharge d'elle-même.
+
+Un fichier qui n'est pas une version de Cabinet Immo, une archive abîmée pendant
+l'envoi, ou une version plus ancienne que la vôtre sont **refusés en disant
+pourquoi**. Rien n'est touché tant que vous n'avez pas cliqué sur Installer.
+
+### Les autres façons, si besoin
 
 **Vous recevez un fichier `…-installateur.py`** → double-cliquez dessus. Il
 reconnaît l'installation existante, sauvegarde la comptabilité et ne remplace
 que le programme.
 
-**Vous recevez un fichier `maj-….zip`** →
-1. Déposez-le dans `donnees\maj\` (créez le dossier s'il n'existe pas).
+**Sans passer par l'application** →
+1. Déposez le `.zip` dans `donnees\maj\` (créez le dossier s'il n'existe pas).
 2. Double-cliquez sur **`METTRE-A-JOUR.bat`**.
 
 L'outil sauvegarde vos données, remplace le programme, met la base au nouveau
