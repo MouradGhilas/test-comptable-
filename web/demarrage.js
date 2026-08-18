@@ -237,6 +237,32 @@ if (localStorage.getItem('theme') === 'sombre') {
   document.documentElement.dataset.theme = 'sombre';
 }
 
+/* Hauteur des lignes : voir plus de lignes d'un coup, ou respirer davantage.
+   Personne ne lit un journal de 300 écritures comme une balance de 20
+   comptes ; le réglage suit l'écran et l'habitude de chacun. */
+const DENSITES = [
+  ['', 'normal'],
+  ['compact', 'compact'],
+  ['aere', 'aéré'],
+];
+
+function appliqueDensite(valeur) {
+  const choix = DENSITES.find((d) => d[0] === valeur) || DENSITES[0];
+  if (choix[0]) document.documentElement.dataset.densite = choix[0];
+  else delete document.documentElement.dataset.densite;
+  const bouton = $('#bouton-densite');
+  if (bouton) bouton.textContent = `▤ Affichage : ${choix[1]}`;
+  return choix[0];
+}
+
+$('#bouton-densite').onclick = () => {
+  const actuel = document.documentElement.dataset.densite || '';
+  const suivant = DENSITES[(DENSITES.findIndex((d) => d[0] === actuel) + 1) % DENSITES.length][0];
+  localStorage.setItem('densite', appliqueDensite(suivant));
+};
+
+appliqueDensite(localStorage.getItem('densite') || '');
+
 // Raccourcis clavier du comptable
 document.addEventListener('keydown', (ev) => {
   if (!(ev.ctrlKey || ev.metaKey) || ev.shiftKey) return;

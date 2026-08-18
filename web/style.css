@@ -26,7 +26,19 @@
   --ombre: 0 1px 2px rgba(16,33,43,.06), 0 4px 14px rgba(16,33,43,.06);
   --rayon: 8px;
   --largeur-laterale: 246px;
+  /* Lecture des tableaux de chiffres : une ligne sur deux très légèrement
+     teintée, et une surbrillance nettement plus marquée pour suivre une
+     ligne du regard sur huit colonnes. */
+  --zebre: #eef3f6;
+  --survol: #e7eff2;
+  --survol-bord: #2d7189;
+  /* Hauteur de ligne des tableaux, pilotée par le réglage d'affichage. */
+  --interligne: 7px;
+  --taille-table: 12.8px;
 }
+
+html[data-densite="compact"] { --interligne: 3.5px; --taille-table: 12.2px; }
+html[data-densite="aere"]    { --interligne: 11px;  --taille-table: 13.4px; }
 
 html[data-theme="sombre"] {
   --fond: #12181d;
@@ -49,6 +61,9 @@ html[data-theme="sombre"] {
   --info-fond: #16263c;
   --info: #7fb0e8;
   --ombre: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+  --zebre: #1e262d;
+  --survol: #23343c;
+  --survol-bord: #52aecd;
 }
 
 * { box-sizing: border-box; }
@@ -183,21 +198,57 @@ nav a .pastille { margin-left: auto; background: var(--danger); color: #fff;
 .indicateur.danger .valeur { color: var(--danger); }
 
 /* ---------- Tableaux ---------- */
+/* `overflow-x: auto` fait de l'enveloppe un conteneur de défilement : un
+   en-tête `position: sticky` s'y accroche, mais à un conteneur qui n'a
+   aucune hauteur propre — il défilait donc avec la page et disparaissait
+   au bout de vingt lignes. Les listes longues reçoivent une hauteur bornée
+   (classe posée par `tableau()`) : elles défilent à l'intérieur, en-tête et
+   totaux restant sous les yeux. Les listes courtes ne changent pas, pour
+   ne pas semer des barres de défilement partout. */
 .enveloppe-table { overflow-x: auto; }
-table.donnees { width: 100%; border-collapse: collapse; font-size: 12.8px; }
+.enveloppe-table.defilante { max-height: calc(100vh - 236px); min-height: 320px;
+                             overflow-y: auto; }
+table.donnees { width: 100%; border-collapse: collapse; font-size: var(--taille-table); }
 table.donnees th { background: var(--fond-doux); text-align: left; padding: 8px 11px;
                    font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px;
                    font-weight: 700; color: var(--texte-doux); white-space: nowrap;
-                   border-bottom: 1px solid var(--bordure); position: sticky; top: 0; }
-table.donnees td { padding: 7px 11px; border-bottom: 1px solid var(--bordure); }
-table.donnees tbody tr:hover td { background: var(--fond-doux); }
+                   border-bottom: 1px solid var(--bordure-forte);
+                   position: sticky; top: 0; z-index: 2; }
+table.donnees td { padding: var(--interligne) 11px; border-bottom: 1px solid var(--bordure); }
+
+/* Une ligne sur deux teintée : sur vingt lignes de chiffres, c'est ce qui
+   empêche l'œil de sauter d'une ligne à l'autre en cours de lecture. */
+table.donnees tbody tr.paire td { background: var(--zebre); }
+/* La ligne survolée est franchement marquée, et bordée à gauche, pour
+   suivre un compte jusqu'à la huitième colonne sans se perdre. */
+table.donnees tbody tr:hover td { background: var(--survol); }
+table.donnees tbody tr:hover td:first-child { box-shadow: inset 3px 0 0 var(--survol-bord); }
 table.donnees tr.cliquable { cursor: pointer; }
 table.donnees tfoot td, table.donnees tr.total td {
-  font-weight: 700; background: var(--fond-doux); border-top: 2px solid var(--bordure-forte); }
+  font-weight: 700; background: var(--fond-doux); border-top: 2px solid var(--bordure-forte);
+  position: sticky; bottom: 0; z-index: 1; }
 table.donnees tr.sous-total td { font-weight: 650; background: var(--fond-doux); }
 table.donnees tr.groupe td { background: var(--primaire-fond); font-weight: 650;
                              color: var(--primaire-clair); }
+/* Coupure de classe comptable dans la balance : un filet et un intitulé
+   discrets, qui rendent au tableau la structure du plan comptable. */
+table.donnees tr.coupure td { background: var(--fond); color: var(--texte-doux);
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+  padding: 9px 11px 5px; border-bottom: 1px solid var(--bordure-forte); }
+table.donnees tr.coupure:hover td { background: var(--fond); box-shadow: none; }
 table.donnees td.compact { padding: 4px 8px; }
+
+/* Les centimes ne portent presque jamais l'information : ils restent
+   lisibles mais cessent de peser autant que les millions. */
+.dec { color: var(--texte-tres-doux); font-weight: 400; }
+td.num strong .dec, .valeur .dec { font-weight: 400; }
+/* Les montants nuls ne méritent pas l'attention d'un montant. */
+td.num .zero, dd.num .zero { color: var(--texte-tres-doux); font-weight: 400; }
+/* Dans une balance, les mouvements sont le travail, les soldes la réponse :
+   un filet sépare les deux et les soldes portent la couleur du texte plein
+   quand les mouvements passent en gris. */
+table.donnees th.solde, table.donnees td.solde { border-left: 1px solid var(--bordure-forte); }
+table.donnees th.solde { color: var(--texte); }
 .vide { padding: 34px 18px; text-align: center; color: var(--texte-doux); }
 .vide .grand { font-size: 30px; display: block; margin-bottom: 8px; opacity: .5; }
 
@@ -253,6 +304,11 @@ button.plat { border-color: transparent; background: none; }
 .etiquette.danger { background: var(--danger-fond); color: var(--danger); border-color: transparent; }
 .etiquette.info { background: var(--info-fond); color: var(--info); border-color: transparent; }
 .etiquette.primaire { background: var(--primaire-fond); color: var(--primaire-clair); border-color: transparent; }
+/* Une étiquette colorée sur chaque ligne de chaque tableau ne signale plus
+   rien : « validée » et « déclaré » sont l'ordinaire, ils se lisent sans
+   crier. La couleur reste pour ce qui demande une action. */
+.etiquette.ordinaire { background: transparent; color: var(--texte-tres-doux);
+                       border-color: transparent; font-weight: 600; padding: 2px 0; }
 
 /* ---------- Messages ---------- */
 .message { padding: 10px 13px; border-radius: 6px; margin-bottom: 13px;
@@ -407,4 +463,12 @@ table.saisie input:focus, table.saisie select:focus { background: var(--fond-car
   .barre-laterale, .barre-haute, .barre-outils, .notifications, button { display: none !important; }
   body, .contenu { background: #fff; padding: 0; }
   .carte { box-shadow: none; border: 1px solid #ccc; page-break-inside: avoid; }
+  /* À l'écran une longue liste défile dans son cadre ; sur le papier elle
+     doit sortir en entier, en-tête répété en haut de chaque page. */
+  .enveloppe-table.defilante { max-height: none; min-height: 0; overflow: visible; }
+  table.donnees thead { display: table-header-group; }
+  table.donnees th, table.donnees tfoot td { position: static; }
+  table.donnees tbody tr.paire td { background: #f4f4f4; -webkit-print-color-adjust: exact;
+                                    print-color-adjust: exact; }
+  .dec, td.num .zero { color: #555; }
 }

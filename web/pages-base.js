@@ -89,12 +89,14 @@ App.pages.accueil = {
       <div class="grille c2">
         ${carte('Activité de l\'exercice', graphique)}
         ${carte('Postes de bilan à surveiller', `<div class="liste-definitions">
-          <dt>Créances clients</dt><dd class="num">${fm(i.creances_clients, true)}</dd>
-          <dt>Dettes fournisseurs</dt><dd class="num">${fm(i.dettes_fournisseurs, true)}</dd>
-          <dt>Avances reçues sur ventes sur plan</dt><dd class="num">${fm(i.avances_clients_vsp, true)}</dd>
-          <dt>Dû aux propriétaires (gestion locative)</dt><dd class="num">${fm(i.du_aux_proprietaires, true)}</dd>
-          <dt>TVA collectée</dt><dd class="num">${fm(i.tva_collectee, true)}</dd>
-          <dt>TVA déductible</dt><dd class="num">${fm(i.tva_deductible, true)}</dd>
+          ${[['Créances clients', i.creances_clients],
+             ['Dettes fournisseurs', i.dettes_fournisseurs],
+             ['Avances reçues sur ventes sur plan', i.avances_clients_vsp],
+             ['Dû aux propriétaires (gestion locative)', i.du_aux_proprietaires],
+             ['TVA collectée', i.tva_collectee],
+             ['TVA déductible', i.tva_deductible]].map(([libelle, valeur]) =>
+            `<dt>${ech(libelle)}</dt><dd class="num">${
+              centimesDiscrets(montantNul(fm(valeur, true)))}</dd>`).join('')}
         </div>`)}
       </div>
 

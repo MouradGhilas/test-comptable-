@@ -153,6 +153,28 @@ function fmc(centimes) {
   return `<span class="${classe}">${fm(v)}</span>`;
 }
 
+/* Sur un écran de comptabilité, la même suite de chiffres se répète des
+   dizaines de fois et tout y a le même poids : « 146 000 000,00 » consacre
+   trois caractères sur douze à des centimes nuls. Les deux fonctions qui
+   suivent n'enlèvent rien — elles allègent visuellement ce qui ne porte pas
+   l'information, pour que les millions ressortent. Le montant reste exact,
+   copiable et exportable tel quel. */
+
+/** Passe les centimes d'un montant déjà formaté en gris clair. */
+function centimesDiscrets(contenu) {
+  const html = String(contenu ?? '');
+  // Un champ de saisie n'est pas un montant affiché : on n'y touche pas.
+  if (!html || html.includes('<input') || html.includes('<select')) return contenu;
+  return html.replace(/,(\d\d)(?!\d)/g, '<span class="dec">,$1</span>');
+}
+
+/** Marque « 0,00 » pour qu'un montant nul ne pèse pas comme un vrai montant. */
+function montantNul(contenu) {
+  const html = String(contenu ?? '');
+  return (html === '0,00' || html === '0,00 DA')
+    ? `<span class="zero">${html}</span>` : contenu;
+}
+
 /** Saisie utilisateur -> centimes. */
 function cts(valeur) {
   if (valeur === null || valeur === undefined || valeur === '') return 0;
@@ -440,26 +462,65 @@ function litFormulaire(racine, champs) {
   return donnees;
 }
 
-/** Tableau générique. `colonnes` : {titre, cle|rendu, classe, largeur}. */
+/**
+ * Tableau générique. `colonnes` : {titre, cle|rendu, classe, largeur,
+ * masquerSiVide}. Une colonne `masquerSiVide` dont aucune ligne n'est
+ * remplie disparaît, elle et son entrée de pied : une colonne vide occupe
+ * la place sans rien apprendre.
+ * `options.coupure(ligne)` renvoie l'intitulé d'une section ; une ligne de
+ * coupure est insérée à chaque changement.
+ */
 function tableau(colonnes, lignes, options = {}) {
   if (!lignes || !lignes.length) {
     return `<div class="vide"><span class="grand">${options.icone || '📭'}</span>
             ${ech(options.messageVide || 'Aucun élément à afficher.')}</div>`;
   }
-  const entetes = colonnes.map((c) =>
-    `<th class="${c.classe || ''}" ${c.largeur ? `style="width:${c.largeur}"` : ''}>${ech(c.titre)}</th>`
-  ).join('');
+  // Contenu de chaque cellule, calculé une seule fois : il sert à décider
+  // quelles colonnes sont vides avant d'écrire quoi que ce soit.
+  const grille = lignes.map((ligne, index) => colonnes.map(
+    (c) => c.rendu ? c.rendu(ligne, index) : ech(ligne[c.cle] ?? '')));
+  const gardees = colonnes.map((c, i) => !c.masquerSiVide
+    || grille.some((cellules) => String(cellules[i] ?? '').trim() !== ''));
+
+  const entetes = colonnes.map((c, i) => gardees[i]
+    ? `<th class="${c.classe || ''}" ${c.largeur ? `style="width:${c.largeur}"` : ''}>${ech(c.titre)}</th>`
+    : '').join('');
+  const nbColonnes = gardees.filter(Boolean).length;
+
+  let sectionCourante = null;
   const corps = lignes.map((ligne, index) => {
-    const cellules = colonnes.map((c) => {
-      const contenu = c.rendu ? c.rendu(ligne, index) : ech(ligne[c.cle] ?? '');
-      return `<td class="${c.classe || ''}">${contenu}</td>`;
+    const cellules = colonnes.map((c, i) => {
+      if (!gardees[i]) return '';
+      const classe = c.classe || '';
+      let contenu = grille[index][i];
+      if (classe.indexOf('num') >= 0) contenu = centimesDiscrets(montantNul(contenu));
+      return `<td class="${classe}">${contenu}</td>`;
     }).join('');
     const attributs = options.attributsLigne ? options.attributsLigne(ligne) : '';
-    return `<tr class="${options.clic ? 'cliquable' : ''}" ${attributs}>${cellules}</tr>`;
+    // Le rayage suit le rang de la donnée, pas celui de la ligne HTML : les
+    // lignes de coupure ne doivent pas inverser l'alternance derrière elles.
+    const classes = `${options.clic ? 'cliquable ' : ''}${index % 2 ? 'paire' : ''}`;
+    const rangee = `<tr class="${classes}" ${attributs}>${cellules}</tr>`;
+    if (!options.coupure) return rangee;
+    const section = options.coupure(ligne);
+    if (section === sectionCourante) return rangee;
+    sectionCourante = section;
+    return (section
+      ? `<tr class="coupure"><td colspan="${nbColonnes}">${ech(section)}</td></tr>`
+      : '') + rangee;
   }).join('');
-  const pied = options.pied ? `<tfoot><tr>${options.pied.map((c) =>
-    `<td class="${c.classe || ''}">${c.contenu ?? ''}</td>`).join('')}</tr></tfoot>` : '';
-  return `<div class="enveloppe-table"><table class="donnees">
+
+  const pied = options.pied ? `<tfoot><tr>${options.pied.map((c, i) => {
+    if (!gardees[i]) return '';
+    const classe = c.classe || '';
+    const contenu = c.contenu ?? '';
+    return `<td class="${classe}">${classe.indexOf('num') >= 0
+      ? centimesDiscrets(montantNul(contenu)) : contenu}</td>`;
+  }).join('')}</tr></tfoot>` : '';
+  // Au-delà d'une trentaine de lignes, la liste défile dans son cadre :
+  // c'est ce qui garde l'en-tête et les totaux visibles pendant la lecture.
+  const defilante = lignes.length > 30 && options.defilante !== false ? ' defilante' : '';
+  return `<div class="enveloppe-table${defilante}"><table class="donnees">
           <thead><tr>${entetes}</tr></thead><tbody>${corps}</tbody>${pied}</table></div>`;
 }
 
@@ -472,12 +533,29 @@ function carte(titre, contenu, actions = '', serre = false) {
 function indicateur(libelle, valeur, detail = '', genre = '') {
   return `<div class="indicateur ${genre}">
     <div class="libelle">${ech(libelle)}</div>
-    <div class="valeur">${valeur}</div>
+    <div class="valeur">${centimesDiscrets(valeur)}</div>
     ${detail ? `<div class="detail">${detail}</div>` : ''}</div>`;
 }
 
+/* Un comptable lit une balance par classe : les comptes de bilan d'abord,
+   puis la gestion. Vingt lignes d'affilée sans repère obligent à relire le
+   numéro de chaque compte pour savoir où l'on en est. */
+const CLASSES_SCF = {
+  1: 'Classe 1 — Capitaux',
+  2: 'Classe 2 — Immobilisations',
+  3: 'Classe 3 — Stocks et en-cours',
+  4: 'Classe 4 — Tiers',
+  5: 'Classe 5 — Financiers',
+  6: 'Classe 6 — Charges',
+  7: 'Classe 7 — Produits',
+};
+
+function classeScf(compte) {
+  return CLASSES_SCF[Number(String(compte || '').charAt(0))] || null;
+}
+
 const PERIMETRES = {
-  declare: ['Déclaré', 'info'],
+  declare: ['Déclaré', 'ordinaire'],
   hors_declaration: ['Hors déclaration', 'alerte'],
   tous: ['Vue réelle', ''],
 };
@@ -498,7 +576,7 @@ function bandeauPerimetre(perimetre, complement = '') {
 }
 
 const ETIQUETTES = {
-  brouillon: ['Brouillon', ''], validee: ['Validée', 'info'], payee: ['Payée', 'succes'],
+  brouillon: ['Brouillon', 'alerte'], validee: ['Validée', 'ordinaire'], payee: ['Payée', 'succes'],
   partielle: ['Partielle', 'alerte'], annulee: ['Annulée', 'danger'],
   actif: ['Actif', 'succes'], disponible: ['Disponible', 'succes'],
   reserve: ['Réservé', 'alerte'], vendu: ['Vendu', 'info'], livre: ['Livré', 'succes'],

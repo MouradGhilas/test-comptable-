@@ -46,6 +46,9 @@ App.pages['comptabilite/ecritures'] = {
         clic: true, icone: '📒',
         messageVide: 'Aucune écriture. Utilisez « + Écriture » ou laissez les modules métier les générer.',
         attributsLigne: (e) => `onclick="detailEcriture(${e.id})"`,
+        // Un journal se lit par mois : sans repère, trois cents lignes
+        // obligent à relire chaque date pour savoir où l'on en est.
+        coupure: (e) => fperiode(String(e.date || '').slice(0, 7)),
       }), '', true)}`;
   },
 };
@@ -347,19 +350,22 @@ App.pages['comptabilite/grand-livre'] = {
         tableau([
           { titre: 'Date', rendu: (l) => fdate(l.date), largeur: '90px' },
           { titre: 'Jal', cle: 'journal', largeur: '46px' },
-          { titre: 'N°', cle: 'num_ecriture' },
-          { titre: 'Pièce', cle: 'piece' },
+          { titre: 'N°', cle: 'num_ecriture', largeur: '104px' },
+          { titre: 'Pièce', cle: 'piece', largeur: '104px' },
           { titre: 'Libellé', rendu: (l) => ech(l.libelle || l.libelle_ecriture) },
-          { titre: 'Tiers', cle: 'tiers' },
-          { titre: 'Débit', classe: 'num', rendu: (l) => l.debit ? fm(l.debit) : '' },
-          { titre: 'Crédit', classe: 'num', rendu: (l) => l.credit ? fm(l.credit) : '' },
-          { titre: 'Solde', classe: 'num', rendu: (l) => fm(l.solde_progressif) },
-          { titre: 'Let.', cle: 'lettrage' },
+          { titre: 'Tiers', cle: 'tiers', largeur: '150px' },
+          /* Largeurs fixes : le grand livre empile une carte par compte et
+             des colonnes qui se décalent d'une carte à l'autre obligent à
+             relire l'en-tête à chaque fois. */
+          { titre: 'Débit', classe: 'num', largeur: '124px', rendu: (l) => l.debit ? fm(l.debit) : '' },
+          { titre: 'Crédit', classe: 'num', largeur: '124px', rendu: (l) => l.credit ? fm(l.credit) : '' },
+          { titre: 'Solde', classe: 'num solde', largeur: '130px', rendu: (l) => fmc(l.solde_progressif) },
+          { titre: 'Let.', cle: 'lettrage', largeur: '48px' },
         ], g.lignes, {
           pied: [{ contenu: '<strong>Totaux</strong>' }, {}, {}, {}, {}, {},
             { contenu: `<strong>${fm(g.total_debit)}</strong>`, classe: 'num' },
             { contenu: `<strong>${fm(g.total_credit)}</strong>`, classe: 'num' },
-            { contenu: `<strong>${fm(g.solde)}</strong>`, classe: 'num' }, {}],
+            { contenu: `<strong>${fmc(g.solde)}</strong>`, classe: 'num solde' }, {}],
         }), '', true)).join('')
         : '<div class="vide"><span class="grand">📖</span>Aucun mouvement sur cette sélection.</div>'}`;
   },
@@ -401,14 +407,19 @@ App.pages['comptabilite/balance'] = {
       ${carte('', tableau([
         { titre: 'Compte', cle: 'compte', largeur: '90px' },
         { titre: 'Intitulé', rendu: (l) => ech(l.intitule) },
-        { titre: 'Report débit', classe: 'num', rendu: (l) => l.report_debit ? fm(l.report_debit) : '' },
-        { titre: 'Report crédit', classe: 'num', rendu: (l) => l.report_credit ? fm(l.report_credit) : '' },
-        { titre: 'Mvt débit', classe: 'num', rendu: (l) => l.debit ? fm(l.debit) : '' },
-        { titre: 'Mvt crédit', classe: 'num', rendu: (l) => l.credit ? fm(l.credit) : '' },
-        { titre: 'Solde débit', classe: 'num', rendu: (l) => l.solde_debit ? `<strong>${fm(l.solde_debit)}</strong>` : '' },
-        { titre: 'Solde crédit', classe: 'num', rendu: (l) => l.solde_credit ? `<strong>${fm(l.solde_credit)}</strong>` : '' },
+        { titre: 'Report débit', classe: 'num', largeur: '128px', masquerSiVide: true,
+          rendu: (l) => l.report_debit ? fm(l.report_debit) : '' },
+        { titre: 'Report crédit', classe: 'num', largeur: '128px', masquerSiVide: true,
+          rendu: (l) => l.report_credit ? fm(l.report_credit) : '' },
+        { titre: 'Mvt débit', classe: 'num', largeur: '128px', rendu: (l) => l.debit ? fm(l.debit) : '' },
+        { titre: 'Mvt crédit', classe: 'num', largeur: '128px', rendu: (l) => l.credit ? fm(l.credit) : '' },
+        { titre: 'Solde débit', classe: 'num solde', largeur: '134px',
+          rendu: (l) => l.solde_debit ? `<strong>${fm(l.solde_debit)}</strong>` : '' },
+        { titre: 'Solde crédit', classe: 'num solde', largeur: '134px',
+          rendu: (l) => l.solde_credit ? `<strong>${fm(l.solde_credit)}</strong>` : '' },
       ], d.lignes, {
         icone: '⚖️', messageVide: 'Aucun mouvement comptable sur la période.',
+        coupure: niveau === '1' ? null : (l) => classeScf(l.compte),
         pied: [{ contenu: '<strong>TOTAUX</strong>' }, {},
           { contenu: fm(d.totaux.report_debit), classe: 'num' },
           { contenu: fm(d.totaux.report_credit), classe: 'num' },

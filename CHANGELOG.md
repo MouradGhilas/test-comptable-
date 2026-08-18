@@ -3,6 +3,33 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.6.0
+
+Cette version ne change rien aux calculs ni aux données : elle ne change que
+la façon dont les chiffres se présentent à l'écran.
+
+- **Les centimes cessent de peser autant que les millions.** « 146 000 000,00 »
+  garde ses centimes, en gris clair, pour que les millions se lisent d'abord.
+  Le montant reste exact, et l'export Excel est inchangé.
+- **La balance retrouve la structure du plan comptable** : une coupure à
+  chaque classe (Capitaux, Immobilisations, Stocks, Tiers, Financiers,
+  Charges, Produits), les soldes séparés des mouvements par un filet, et les
+  colonnes de report qui disparaissent quand elles sont vides.
+- **Le journal se lit par mois**, avec un titre à chaque changement.
+- **L'en-tête et la ligne de totaux restent visibles** pendant qu'on fait
+  défiler une longue liste. À l'impression, la liste ressort en entier.
+- **La ligne survolée est nettement marquée**, pour suivre un compte jusqu'à
+  la dernière colonne sans se perdre. Une ligne sur deux est légèrement
+  teintée.
+- **Les états ordinaires ne crient plus.** « Validée » et « Déclaré »
+  s'affichent en gris : la couleur est réservée à ce qui demande une action
+  (brouillon, hors déclaration, impayé). Rien n'est masqué.
+- **Réglage d'affichage** en bas du menu : normal, compact ou aéré, selon
+  votre écran. Le choix est conservé. Le thème clair / sombre est nommé plus
+  clairement au même endroit.
+- Dans le grand livre, les colonnes s'alignent d'un compte à l'autre et un
+  solde créditeur se distingue au premier coup d'œil.
+
 ## 1.5.0
 
 - **Pour bien démarrer.** Sur un dossier neuf, le tableau de bord affiche ce

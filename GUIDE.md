@@ -84,6 +84,23 @@ livrées sont des valeurs de départ, pas une référence légale.
 
 Raccourcis : `Ctrl+E` écriture · `Ctrl+F` facture · `Ctrl+T` tiers · `Échap` fermer.
 
+### Régler l'affichage
+
+En bas du menu de gauche, deux réglages qui ne touchent qu'à la présentation :
+
+- **Thème clair / sombre** ;
+- **Affichage : normal · compact · aéré** — la hauteur des lignes dans les
+  tableaux. *Compact* fait tenir davantage de lignes sur un petit écran,
+  *aéré* soulage la lecture sur un grand.
+
+Les deux choix sont conservés d'une session à l'autre, poste par poste.
+
+Dans les tableaux de chiffres, les centimes sont volontairement écrits en gris
+clair : les montants restent exacts et s'exportent tels quels, mais les
+millions se lisent d'abord. Les longues listes défilent dans leur cadre, en
+gardant l'en-tête et la ligne de totaux sous les yeux ; à l'impression, elles
+ressortent en entier.
+
 ## Déclaré et hors déclaration
 
 Chaque opération porte un **périmètre**, choisi à la saisie :
