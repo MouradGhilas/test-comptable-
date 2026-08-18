@@ -507,7 +507,7 @@ App.pages.parametres = {
       ['plan', 'Plan comptable'], ['fiscalite', 'Fiscalité'],
       ['notifications', 'Notifications'], ['import', 'Import de données'],
       ['utilisateurs', 'Utilisateurs'], ['sauvegarde', 'Sauvegarde & données'],
-      ['maj', 'Mise à jour']];
+      ['apparence', 'Personnalisation'], ['maj', 'Mise à jour']];
     zone.innerHTML = `<div class="onglets">${onglets.map(([v, l]) =>
       `<button class="${v === onglet ? 'actif' : ''}" onclick="navigue('/parametres/${v}')">${l}</button>`).join('')}</div>
       <div id="zone-onglet"><div class="vide">Chargement…</div></div>`;
@@ -515,7 +515,7 @@ App.pages.parametres = {
     const rendus = {
       dossier: ongletDossier, exercices: ongletExercices, plan: ongletPlan,
       fiscalite: ongletFiscalite, notifications: ongletNotifications,
-      import: ongletImport, maj: ongletMaj,
+      import: ongletImport, maj: ongletMaj, apparence: ongletApparence,
       utilisateurs: ongletUtilisateurs, sauvegarde: ongletSauvegarde,
     };
     await (rendus[onglet] || ongletDossier)(cible);
@@ -1512,4 +1512,73 @@ async function supprimeCanal(id) {
     notifie('Destinataire retiré.', 'succes');
     afficheRoute();
   } catch (err) { erreur(err); }
+}
+
+/* ------------------------------------------------- Personnalisation ----- */
+
+/* Un logiciel de comptabilité s'utilise huit heures par jour : ce qui plaît
+   à l'un fatigue l'autre. Rien ici ne touche aux données, aux calculs ni
+   aux exports — uniquement à ce que l'œil reçoit. Les réglages restent sur
+   le poste, pas dans le dossier : deux personnes sur la même comptabilité
+   gardent chacune son écran. */
+
+const APERCU_APPARENCE = [
+  ['401', 'Fournisseurs de stocks et services', '', '7 140 000,00', 'validee', 'declare'],
+  ['4191', 'Avances sur ventes sur plan (VSP)', '', '29 109 243,71', 'validee', 'declare'],
+  ['5121', 'Banque — compte d\'exploitation', '6 490 000,00', '2 411 830,50', 'brouillon', 'declare'],
+  ['606', 'Achats non stockés', '30 000,00', '', 'validee', 'hors_declaration'],
+];
+
+function apercuApparence() {
+  return tableau([
+    { titre: 'Compte', cle: 0, largeur: '80px', rendu: (l) => ech(l[0]) },
+    { titre: 'Intitulé', rendu: (l) => ech(l[1]) },
+    { titre: 'Débit', classe: 'num', largeur: '124px', rendu: (l) => l[2] },
+    { titre: 'Crédit', classe: 'num solde', largeur: '124px', rendu: (l) => l[3] },
+    { titre: 'État', rendu: (l) => etiquette(l[4]) },
+    { titre: 'Périmètre', rendu: (l) => badgePerimetre(l[5]) },
+  ], APERCU_APPARENCE, { coupure: (l) => classeScf(l[0]) });
+}
+
+function ongletApparence(zone) {
+  const bloc = (r) => {
+    const actuelle = Apparence.get(r.cle);
+    const choix = r.valeurs.map(([v, libelle]) => `
+      <button class="choix-apparence ${v === actuelle ? 'actif' : ''}"
+              data-reglage="${r.cle}" data-valeur="${v}">
+        ${r.pastilles ? `<span class="pastille-accent accent-${v}"></span>` : ''}
+        ${ech(libelle)}
+      </button>`).join('');
+    return `<div class="reglage-apparence">
+      <div class="titre-reglage">${ech(r.libelle)}</div>
+      <div class="aide">${ech(r.aide)}</div>
+      <div class="groupe-boutons">${choix}</div>
+    </div>`;
+  };
+
+  zone.innerHTML = `
+    <div class="message info">Ces réglages ne changent que la présentation.
+      Aucun montant, aucun calcul, aucun export n'en dépend. Ils restent sur
+      ce poste et sur ce navigateur : la comptabilité, elle, ne bouge pas.</div>
+
+    ${carte('Aperçu', `<div class="aide" style="margin-bottom:9px">Quatre lignes
+      pour voir l'effet de chaque réglage tout de suite. Elles sont fictives.</div>
+      <div id="apercu-apparence">${apercuApparence()}</div>`)}
+
+    ${carte('Réglages',
+      `<div class="grille-apparence">${APPARENCE_REGLAGES.map(bloc).join('')}</div>`,
+      '<button id="reinit-apparence">Revenir aux réglages livrés</button>')}`;
+
+  zone.querySelectorAll('.choix-apparence').forEach((bouton) => {
+    bouton.onclick = () => {
+      Apparence.change(bouton.dataset.reglage, bouton.dataset.valeur);
+      ongletApparence(zone);
+      notifie('Réglage appliqué.', 'succes');
+    };
+  });
+  $('#reinit-apparence', zone).onclick = () => {
+    Apparence.reinitialise();
+    ongletApparence(zone);
+    notifie('Réglages d\'apparence remis à leur valeur livrée.', 'succes');
+  };
 }

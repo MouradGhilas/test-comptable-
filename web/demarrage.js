@@ -227,41 +227,9 @@ $('#bouton-deconnexion').onclick = async () => {
   window.location.reload();
 };
 
-$('#bouton-theme').onclick = () => {
-  const actuel = document.documentElement.dataset.theme === 'sombre' ? 'clair' : 'sombre';
-  document.documentElement.dataset.theme = actuel;
-  localStorage.setItem('theme', actuel);
-};
-
-if (localStorage.getItem('theme') === 'sombre') {
-  document.documentElement.dataset.theme = 'sombre';
-}
-
-/* Hauteur des lignes : voir plus de lignes d'un coup, ou respirer davantage.
-   Personne ne lit un journal de 300 écritures comme une balance de 20
-   comptes ; le réglage suit l'écran et l'habitude de chacun. */
-const DENSITES = [
-  ['', 'normal'],
-  ['compact', 'compact'],
-  ['aere', 'aéré'],
-];
-
-function appliqueDensite(valeur) {
-  const choix = DENSITES.find((d) => d[0] === valeur) || DENSITES[0];
-  if (choix[0]) document.documentElement.dataset.densite = choix[0];
-  else delete document.documentElement.dataset.densite;
-  const bouton = $('#bouton-densite');
-  if (bouton) bouton.textContent = `▤ Affichage : ${choix[1]}`;
-  return choix[0];
-}
-
-$('#bouton-densite').onclick = () => {
-  const actuel = document.documentElement.dataset.densite || '';
-  const suivant = DENSITES[(DENSITES.findIndex((d) => d[0] === actuel) + 1) % DENSITES.length][0];
-  localStorage.setItem('densite', appliqueDensite(suivant));
-};
-
-appliqueDensite(localStorage.getItem('densite') || '');
+/* La bascule clair / sombre reste à portée de clic ; tout le reste des
+   réglages d'apparence vit dans Paramètres → Personnalisation. */
+$('#bouton-theme').onclick = () => Apparence.basculeTheme();
 
 // Raccourcis clavier du comptable
 document.addEventListener('keydown', (ev) => {

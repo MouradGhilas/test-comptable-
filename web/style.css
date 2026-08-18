@@ -37,8 +37,78 @@
   --taille-table: 12.8px;
 }
 
+/* --------------------------------------------------------------------------
+   Réglages d'apparence (Paramètres → Personnalisation)
+
+   Tous pilotés par un attribut posé sur <html> par `apparence.js`. Rien ici
+   ne touche aux chiffres : seulement à la façon dont ils se présentent.
+   -------------------------------------------------------------------------- */
+
 html[data-densite="compact"] { --interligne: 3.5px; --taille-table: 12.2px; }
 html[data-densite="aere"]    { --interligne: 11px;  --taille-table: 13.4px; }
+
+html[data-taille="petit"]      { --echelle: .92; }
+html[data-taille="grand"]      { --echelle: 1.09; }
+html[data-taille="tres-grand"] { --echelle: 1.2; }
+html[data-taille] body { font-size: calc(13.5px * var(--echelle, 1)); }
+html[data-taille] table.donnees { font-size: calc(var(--taille-table) * var(--echelle, 1)); }
+html[data-taille] h1 { font-size: calc(19px * var(--echelle, 1)); }
+html[data-taille] h2 { font-size: calc(15px * var(--echelle, 1)); }
+html[data-taille] .indicateur .valeur { font-size: calc(21px * var(--echelle, 1)); }
+
+/* Couleur d'accent : titres, liens, boutons principaux, ligne survolée.
+   Chaque teinte a sa version claire et sa version sombre — un fond de
+   surbrillance calculé pour le fond blanc devient illisible sur fond noir. */
+html[data-accent="nuit"] {
+  --primaire: #1b3a63; --primaire-clair: #2f6bb0; --primaire-fond: #e6edf7;
+  --survol: #e6edf7; --survol-bord: #2f6bb0;
+}
+html[data-accent="foret"] {
+  --primaire: #1f5136; --primaire-clair: #2e7d55; --primaire-fond: #e6f2ea;
+  --survol: #e6f2ea; --survol-bord: #2e7d55;
+}
+html[data-accent="terre"] {
+  --primaire: #7a3b21; --primaire-clair: #a75a33; --primaire-fond: #f8ece5;
+  --survol: #f8ece5; --survol-bord: #a75a33;
+}
+html[data-accent="prune"] {
+  --primaire: #5a2b52; --primaire-clair: #874a7d; --primaire-fond: #f4eaf2;
+  --survol: #f4eaf2; --survol-bord: #874a7d;
+}
+html[data-accent="graphite"] {
+  --primaire: #303a42; --primaire-clair: #4f5f6b; --primaire-fond: #eceff1;
+  --survol: #eceff1; --survol-bord: #4f5f6b;
+}
+html[data-theme="sombre"][data-accent="nuit"] {
+  --primaire: #5b96d8; --primaire-clair: #7ab0e8; --primaire-fond: #16263c;
+  --survol: #1d2f42; --survol-bord: #7ab0e8;
+}
+html[data-theme="sombre"][data-accent="foret"] {
+  --primaire: #4bab7c; --primaire-clair: #66c496; --primaire-fond: #14291f;
+  --survol: #1a3128; --survol-bord: #66c496;
+}
+html[data-theme="sombre"][data-accent="terre"] {
+  --primaire: #cd8158; --primaire-clair: #e09b73; --primaire-fond: #2f1d13;
+  --survol: #33241b; --survol-bord: #e09b73;
+}
+html[data-theme="sombre"][data-accent="prune"] {
+  --primaire: #b884ad; --primaire-clair: #cb9dc1; --primaire-fond: #2a1a27;
+  --survol: #30202d; --survol-bord: #cb9dc1;
+}
+html[data-theme="sombre"][data-accent="graphite"] {
+  --primaire: #93a4b0; --primaire-clair: #adbcc7; --primaire-fond: #232c33;
+  --survol: #28333b; --survol-bord: #adbcc7;
+}
+
+/* Réglages qui éteignent un effet plutôt que d'en ajouter un. */
+html[data-rayage="non"] table.donnees tbody tr.paire td { background: transparent; }
+html[data-centimes="normal"] .dec { color: inherit; font-weight: inherit; }
+html[data-centimes="normal"] td.num .zero,
+html[data-centimes="normal"] dd.num .zero { color: inherit; font-weight: inherit; }
+html[data-etiquettes="couleur"] .etiquette.ordinaire {
+  background: var(--info-fond); color: var(--info); padding: 2px 8px; }
+html[data-listes="page"] .enveloppe-table.defilante {
+  max-height: none; min-height: 0; overflow-y: visible; }
 
 html[data-theme="sombre"] {
   --fond: #12181d;
@@ -458,6 +528,29 @@ table.saisie input:focus, table.saisie select:focus { background: var(--fond-car
   .contenu { padding: 14px; }
   .barre-haute { padding: 11px 14px; }
 }
+
+/* ---------- Onglet Personnalisation ---------- */
+.grille-apparence { display: grid; gap: 16px;
+                    grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
+.reglage-apparence { border: 1px solid var(--bordure); border-radius: var(--rayon);
+                     padding: 12px 13px; background: var(--fond-doux); }
+.titre-reglage { font-weight: 650; font-size: 13px; margin-bottom: 2px; }
+.reglage-apparence .aide { margin: 0 0 9px; }
+button.choix-apparence { font-weight: 600; }
+button.choix-apparence.actif { background: var(--primaire); border-color: var(--primaire);
+                               color: #fff; }
+button.choix-apparence.actif:hover { background: var(--primaire-clair);
+                                     border-color: var(--primaire-clair); }
+.pastille-accent { width: 13px; height: 13px; border-radius: 50%; display: inline-block;
+                   border: 1px solid rgba(0,0,0,.18); }
+.pastille-accent.accent-ardoise  { background: #2d7189; }
+.pastille-accent.accent-nuit     { background: #2f6bb0; }
+.pastille-accent.accent-foret    { background: #2e7d55; }
+.pastille-accent.accent-terre    { background: #a75a33; }
+.pastille-accent.accent-prune    { background: #874a7d; }
+.pastille-accent.accent-graphite { background: #4f5f6b; }
+/* L'aperçu montre l'effet, il n'a pas à défiler dans son propre cadre. */
+#apercu-apparence .enveloppe-table.defilante { max-height: none; min-height: 0; }
 
 @media print {
   .barre-laterale, .barre-haute, .barre-outils, .notifications, button { display: none !important; }

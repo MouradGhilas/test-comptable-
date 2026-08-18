@@ -501,7 +501,7 @@ function tableau(colonnes, lignes, options = {}) {
     // lignes de coupure ne doivent pas inverser l'alternance derrière elles.
     const classes = `${options.clic ? 'cliquable ' : ''}${index % 2 ? 'paire' : ''}`;
     const rangee = `<tr class="${classes}" ${attributs}>${cellules}</tr>`;
-    if (!options.coupure) return rangee;
+    if (!options.coupure || Apparence.get('coupures') === 'non') return rangee;
     const section = options.coupure(ligne);
     if (section === sectionCourante) return rangee;
     sectionCourante = section;

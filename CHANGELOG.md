@@ -6,11 +6,15 @@ et après une mise à jour.
 ## 1.6.0
 
 Cette version ne change rien aux calculs ni aux données : elle ne change que
-la façon dont les chiffres se présentent à l'écran.
+la façon dont les chiffres se présentent à l'écran — et elle vous laisse
+décider comment.
 
-- **Les centimes cessent de peser autant que les millions.** « 146 000 000,00 »
-  garde ses centimes, en gris clair, pour que les millions se lisent d'abord.
-  Le montant reste exact, et l'export Excel est inchangé.
+- **Nouvel onglet Paramètres → Personnalisation.** Thème, couleur d'accent,
+  taille du texte, hauteur des lignes, traitement des centimes, rayage,
+  coupures, états ordinaires, défilement des longues listes. Un aperçu de
+  quatre lignes montre l'effet de chaque réglage tout de suite, et un bouton
+  ramène tout aux valeurs livrées. Les réglages restent sur le poste : deux
+  personnes sur le même dossier gardent chacune son écran.
 - **La balance retrouve la structure du plan comptable** : une coupure à
   chaque classe (Capitaux, Immobilisations, Stocks, Tiers, Financiers,
   Charges, Produits), les soldes séparés des mouvements par un filet, et les
@@ -24,11 +28,12 @@ la façon dont les chiffres se présentent à l'écran.
 - **Les états ordinaires ne crient plus.** « Validée » et « Déclaré »
   s'affichent en gris : la couleur est réservée à ce qui demande une action
   (brouillon, hors déclaration, impayé). Rien n'est masqué.
-- **Réglage d'affichage** en bas du menu : normal, compact ou aéré, selon
-  votre écran. Le choix est conservé. Le thème clair / sombre est nommé plus
-  clairement au même endroit.
 - Dans le grand livre, les colonnes s'alignent d'un compte à l'autre et un
   solde créditeur se distingue au premier coup d'œil.
+- Les centimes peuvent être affichés en gris clair pour laisser les millions
+  ressortir. **Ce n'est pas le réglage livré** : par défaut ils gardent la
+  couleur du reste. Le montant est exact dans tous les cas et les exports
+  Excel ne changent jamais.
 
 ## 1.5.0
 

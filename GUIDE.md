@@ -84,22 +84,33 @@ livrées sont des valeurs de départ, pas une référence légale.
 
 Raccourcis : `Ctrl+E` écriture · `Ctrl+F` facture · `Ctrl+T` tiers · `Échap` fermer.
 
-### Régler l'affichage
+### Personnaliser l'affichage
 
-En bas du menu de gauche, deux réglages qui ne touchent qu'à la présentation :
+**Paramètres → Personnalisation.** Rien de ce qui s'y règle ne touche aux
+données, aux calculs ni aux exports : uniquement à ce que l'œil reçoit. Un
+aperçu de quatre lignes montre l'effet de chaque choix immédiatement.
 
-- **Thème clair / sombre** ;
-- **Affichage : normal · compact · aéré** — la hauteur des lignes dans les
-  tableaux. *Compact* fait tenir davantage de lignes sur un petit écran,
-  *aéré* soulage la lecture sur un grand.
+| Réglage | Ce qu'il change |
+|---|---|
+| **Thème** | Clair, sombre, ou comme Windows. |
+| **Couleur d'accent** | Titres, liens, boutons principaux, ligne survolée. Six teintes. |
+| **Taille du texte** | Toute l'application, pas seulement les tableaux. |
+| **Hauteur des lignes** | Compact fait tenir plus de lignes, aéré soulage la lecture. |
+| **Les centimes** | Comme le reste (livré), ou en gris clair pour laisser ressortir les millions. Le montant reste exact et l'export Excel ne change pas. |
+| **Rayage** | Une ligne sur deux légèrement teintée, ou non. |
+| **Coupures** | Un titre à chaque classe comptable dans la balance, à chaque mois dans le journal. |
+| **États ordinaires** | « Validée » et « Déclaré » en gris, ou en couleur comme le reste. |
+| **Longues listes** | Défilent dans leur cadre — l'en-tête et les totaux restent visibles — ou avec toute la page. |
 
-Les deux choix sont conservés d'une session à l'autre, poste par poste.
+Un bouton **Revenir aux réglages livrés** remet tout en place.
 
-Dans les tableaux de chiffres, les centimes sont volontairement écrits en gris
-clair : les montants restent exacts et s'exportent tels quels, mais les
-millions se lisent d'abord. Les longues listes défilent dans leur cadre, en
-gardant l'en-tête et la ligne de totaux sous les yeux ; à l'impression, elles
-ressortent en entier.
+Ces réglages sont **propres au poste et au navigateur** : ils ne voyagent pas
+avec le dossier comptable, et deux personnes qui travaillent sur la même
+comptabilité gardent chacune son écran. La bascule rapide clair / sombre reste
+en bas du menu de gauche.
+
+À l'impression, les longues listes ressortent toujours en entier, en-tête
+répété en haut de chaque page, quel que soit le réglage d'écran.
 
 ## Déclaré et hors déclaration
 
