@@ -3,6 +3,14 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.6.1
+
+- **Après une mise à jour réussie, l'application dit ce qu'elle vient
+  d'apporter.** L'écran de confirmation ne se contente plus d'un « c'est
+  fait » : il affiche les nouveautés de la version installée, directement
+  sous vos yeux. Le compte rendu reste aussi rappelé en haut de
+  Paramètres → Mise à jour.
+
 ## 1.6.0
 
 Cette version ne change rien aux calculs ni aux données : elle ne change que

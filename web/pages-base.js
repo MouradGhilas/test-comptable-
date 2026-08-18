@@ -829,19 +829,47 @@ async function annonceVersionPubliee() {
 
 /** Rendu minimal des notes de version : titres, listes et gras. */
 function notesEnHtml(texte) {
-  return texte.split('\n').map((ligne) => {
-    if (/^##\s+/.test(ligne)) return `<h4>${ech(ligne.replace(/^##\s+/, ''))}</h4>`;
-    if (/^#\s+/.test(ligne)) return '';
-    if (/^[-*]\s+/.test(ligne)) {
-      return `<li>${gras(ligne.replace(/^[-*]\s+/, ''))}</li>`;
-    }
-    return ligne.trim() ? `<p>${gras(ligne)}</p>` : '';
-  }).join('');
+  // Un point de changelog court sur plusieurs lignes (retour à la ligne du
+  // fichier). Sans rassembler ces lignes, un « **gras** » ouvert sur l'une
+  // et fermé sur la suivante s'afficherait tel quel. On regroupe donc chaque
+  // puce ou paragraphe avant de le mettre en forme.
+  const sortie = [];
+  let bloc = null;   // { type: 'li' | 'p', texte }
+  const vide = () => {
+    if (!bloc) return;
+    sortie.push(bloc.type === 'li' ? `<li>${gras(bloc.texte)}</li>`
+                                   : `<p>${gras(bloc.texte)}</p>`);
+    bloc = null;
+  };
+  for (const ligne of String(texte).split('\n')) {
+    if (/^##\s+/.test(ligne)) { vide(); sortie.push(`<h4>${ech(ligne.replace(/^##\s+/, ''))}</h4>`); continue; }
+    if (/^#\s+/.test(ligne)) { vide(); continue; }
+    if (/^[-*]\s+/.test(ligne)) { vide(); bloc = { type: 'li', texte: ligne.replace(/^[-*]\s+/, '') }; continue; }
+    if (!ligne.trim()) { vide(); continue; }
+    // Ligne de continuation : rattachée au bloc en cours.
+    if (bloc) bloc.texte += ' ' + ligne.trim();
+    else bloc = { type: 'p', texte: ligne.trim() };
+  }
+  vide();
+  return sortie.join('');
 }
 
 function gras(texte) {
   return ech(texte).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
                    .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+/* La toute première section « ## … » du changelog : ce que la version qu'on
+   vient d'installer apporte. Sert à le montrer sur l'écran de confirmation,
+   pour qu'une mise à jour réussie dise enfin ce qu'elle a changé. */
+function notesDerniereVersion(changelog) {
+  if (!changelog) return '';
+  const lignes = String(changelog).split('\n');
+  const debut = lignes.findIndex((l) => /^##\s+/.test(l));
+  if (debut < 0) return '';
+  const suite = lignes.slice(debut + 1).findIndex((l) => /^##\s+/.test(l));
+  const fin = suite < 0 ? lignes.length : debut + 1 + suite;
+  return lignes.slice(debut, fin).join('\n').trim();
 }
 
 async function controleMaj() {
@@ -987,6 +1015,13 @@ async function montreResultatMaj(conclut) {
     || (etat.version_apres && etat.version_apres === etat.version_actuelle);
 
   if (reussi) {
+    // Ce que la nouvelle version apporte, montré sur la confirmation :
+    // une mise à jour réussie dit enfin ce qu'elle a changé.
+    let notes = '';
+    try {
+      const e = await api('/api/maj/etat');
+      notes = notesDerniereVersion(e.changelog);
+    } catch (err) { /* les notes sont un plus, pas un dû */ }
     conclut(`<div class="logo-grand">✅</div>
       <h2>Mise à jour faite</h2>
       <div class="message succes">Version ${ech(etat.version_avant || '?')} →
@@ -995,6 +1030,7 @@ async function montreResultatMaj(conclut) {
       ${etat.relance === false ? `<div class="message alerte">L'application
         n'a pas pu être rouverte automatiquement, mais vous l'avez rouverte :
         tout est en place.</div>` : ''}
+      ${notes ? `<div class="notes-version notes-nouveaute">${notesEnHtml(notes)}</div>` : ''}
       <button class="primaire" onclick="location.reload()">Continuer</button>`);
     return;
   }
