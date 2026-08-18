@@ -415,7 +415,6 @@ renseigner le serveur d'envoi.
 | L'application ne s'ouvre pas | Relancer l'installateur reçu (`INSTALLER.bat` ou le fichier `…-installateur.py`) : il répare l'installation sans toucher aux données. |
 | Double-clic sur le raccourci alors qu'elle tourne déjà | L'application ne se dédouble pas : elle ramène la fenêtre existante. |
 | Une erreur inexpliquée revient | **Paramètres → Sauvegarde & données → Signaler un problème.** L'application prépare un rapport technique, vous le lisez, puis vous le copiez, l'enregistrez ou l'envoyez. **Aucune donnée comptable n'y figure.** |
-| Une erreur inexpliquée revient (détail) | **Paramètres → Sauvegarde & données** affiche le journal des incidents (`donnees\journal.log`). Ce fichier contient de quoi diagnostiquer à distance. |
 | Une écriture est refusée | Le message dit exactement pourquoi (déséquilibre, compte inconnu, exercice clôturé). |
 | Erreur après une mise à jour | `METTRE-A-JOUR.bat --annuler` remet la version précédente. |
 | Doute sur les données | `DEMARRER.bat --verifier` contrôle l'intégrité et l'équilibre. |
