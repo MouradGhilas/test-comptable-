@@ -46,6 +46,27 @@ Le navigateur s'ouvre sur l'application. Vous créez :
 - votre compte (identifiant + mot de passe) ;
 - le dossier de l'entreprise (raison sociale, NIF, registre de commerce…).
 
+Ensuite, le tableau de bord affiche **« Pour bien démarrer »** : la liste de ce
+qu'il reste à faire, cochée au fur et à mesure. Elle disparaît toute seule une
+fois tout réglé. Suivez-la, elle remplace la lecture de ce guide.
+
+### Essayer sans rien risquer
+
+**Paramètres → Import de données → Créer un dossier d'essai.** Vous obtenez une
+année d'activité complète — un programme de logements, des ventes sur plan, des
+baux, des loyers, la paie, les déclarations — dans un dossier séparé du vôtre.
+Vous pouvez tout y essayer, et le supprimer d'un clic quand vous avez compris.
+
+### Où sont vos données
+
+Si votre comptabilité se trouve dans un dossier **OneDrive, Google Drive ou
+Dropbox**, l'application vous prévient. Ce n'est pas un détail : ces services
+recopient la base pendant que l'application écrit dedans, ce qui peut
+**l'abîmer définitivement**. Déplacez le dossier `donnees` hors de l'espace
+synchronisé — une sauvegarde sur clé USB protège mieux, et sans risque.
+
+## Vérifier les taux avant la première déclaration
+
 **Avant votre première déclaration**, allez dans **Fiscalité → Taux et barèmes**
 et vérifiez chaque valeur avec la loi de finances de l'année. Les valeurs
 livrées sont des valeurs de départ, pas une référence légale.

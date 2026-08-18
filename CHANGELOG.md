@@ -5,6 +5,16 @@ et après une mise à jour.
 
 ## 1.5.0
 
+- **Pour bien démarrer.** Sur un dossier neuf, le tableau de bord affiche ce
+  qu'il reste à faire, coché au fur et à mesure, puis la liste disparaît.
+- **Dossier d'essai en un clic** (Paramètres → Import de données) : une année
+  d'activité complète pour découvrir sans rien risquer, supprimable d'un clic.
+- **Avertissement si vos données sont dans OneDrive, Google Drive ou Dropbox.**
+  Une comptabilité stockée dans un dossier synchronisé peut être abîmée : le
+  service recopie la base pendant que l'application écrit dedans.
+- **Signaler un problème** : l'application prépare un rapport technique, vous
+  le lisez, puis vous le copiez, l'enregistrez ou l'envoyez. Aucune donnée
+  comptable n'y figure.
 - **Mise à jour depuis l'application.** Plus besoin de trouver `donnees\maj\`
   ni de lancer un fichier `.bat` : le fichier reçu se dépose directement dans
   Paramètres → Mise à jour. Il est contrôlé avant d'être appliqué, et

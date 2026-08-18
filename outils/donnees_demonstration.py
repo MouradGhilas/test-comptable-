@@ -21,19 +21,27 @@ from pathlib import Path
 RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
-analyseur = argparse.ArgumentParser(description=__doc__)
-analyseur.add_argument("--donnees", help="dossier de données")
-arguments = analyseur.parse_args()
+#: Lancé directement, le script accepte --donnees et ouvre lui-même la base.
+#: Importé par l'application — pour créer le jeu d'essai depuis l'interface —
+#: il ne touche ni aux arguments de la ligne de commande, qui sont ceux du
+#: serveur, ni à la base, déjà ouverte.
+AUTONOME = __name__ == "__main__"
 
 import noyau.config as module_config                                    # noqa: E402
-if arguments.donnees:
-    module_config.config = module_config.Configuration({"dossier_donnees": arguments.donnees})
+if AUTONOME:
+    analyseur = argparse.ArgumentParser(description=__doc__)
+    analyseur.add_argument("--donnees", help="dossier de données")
+    arguments = analyseur.parse_args()
+    if arguments.donnees:
+        module_config.config = module_config.Configuration(
+            {"dossier_donnees": arguments.donnees})
 
 from noyau import base as db                                            # noqa: E402
 from noyau import util                                                  # noqa: E402
 from noyau.serveur import hache_mot_de_passe                            # noqa: E402
 
-db.initialise()
+if AUTONOME:
+    db.initialise()
 
 from modules import systeme, comptabilite as compta, promotion, agence  # noqa: E402
 from modules import tiers as mod_tiers, facturation, paie, immobilisations  # noqa: E402
@@ -97,9 +105,10 @@ def etape(texte):
 
 
 def construire():
-    if db.ligne("SELECT id FROM societes WHERE code = 'DEMO'"):
+    existant = db.ligne("SELECT id FROM societes WHERE code = 'DEMO'")
+    if existant:
         print("Le dossier de démonstration existe déjà. Rien à faire.")
-        return
+        return existant["id"]
 
     if not db.valeur("SELECT COUNT(*) FROM utilisateurs", (), 0):
         with db.transaction():
@@ -479,6 +488,7 @@ def construire():
     print()
     print("  Lancez l'application :  python3 app.py")
     print("=" * 68)
+    return societe_id
 
 
 if __name__ == "__main__":

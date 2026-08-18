@@ -76,6 +76,156 @@ def api_diagnostic(ctx):
     }
 
 
+#: Services de synchronisation connus. Une base SQLite ouverte en mode WAL
+#: dans un dossier synchronisé se corrompt : le service recopie .db, .db-wal
+#: et .db-shm séparément, pendant que l'application écrit.
+SERVICES_SYNCHRONISES = {
+    "onedrive": "OneDrive", "google drive": "Google Drive",
+    "googledrive": "Google Drive", "dropbox": "Dropbox", "icloud": "iCloud",
+    "nextcloud": "Nextcloud", "mega": "MEGA", "pcloud": "pCloud",
+}
+
+
+def emplacement_risque() -> dict | None:
+    """Le dossier de données est-il dans un espace synchronisé ?"""
+    chemin = str(config.dossier_donnees).replace("\\", "/").lower()
+    compact = chemin.replace(" ", "").replace("/", "")
+    for service, nom in SERVICES_SYNCHRONISES.items():
+        if (f"/{service}/" in chemin or chemin.endswith(f"/{service}")
+                or service.replace(" ", "") in compact):
+            return {"service": nom}
+    return None
+
+
+@route("GET", "/api/premiers-pas")
+def api_premiers_pas(ctx):
+    """Ce qu'il reste à faire pour être vraiment prêt.
+
+    Affiché tant que tout n'est pas coché, puis disparaît. L'idée est
+    d'apprendre en faisant plutôt qu'en lisant un guide.
+    """
+    societe_id = ctx.arg_int("societe")
+    annee = int(util.aujourdhui()[:4])
+
+    taux_verifies = bool(db.valeur(
+        "SELECT COUNT(*) FROM parametres_fiscaux WHERE annee = ?", (annee,), 0))
+    nb_ecritures = db.valeur(
+        "SELECT COUNT(*) FROM ecritures WHERE societe_id = ?", (societe_id,), 0)
+    nb_tiers = db.valeur(
+        "SELECT COUNT(*) FROM tiers WHERE societe_id = ?", (societe_id,), 0)
+    sauvegardes = list(config.dossier_sauvegardes.glob("*.zip")) \
+        if config.dossier_sauvegardes.exists() else []
+    risque = emplacement_risque()
+
+    etapes = [
+        {"cle": "dossier", "titre": "Créer votre dossier d'entreprise",
+         "detail": "Raison sociale, NIF, registre de commerce.",
+         "fait": bool(societe_id), "lien": "#/parametres/dossier"},
+        {"cle": "taux", "titre": "Vérifier les taux fiscaux",
+         "detail": "Les valeurs livrées sont un point de départ, pas une "
+                   "référence légale : comparez-les à la loi de finances.",
+         "fait": taux_verifies, "lien": "#/fiscalite/parametres"},
+        {"cle": "donnees", "titre": "Reprendre vos données, ou essayer",
+         "detail": "Importez votre dossier existant, ou créez un jeu d'essai "
+                   "pour découvrir sans rien risquer.",
+         "fait": nb_ecritures > 0 or nb_tiers > 0,
+         "lien": "#/parametres/import"},
+        {"cle": "emplacement", "titre": "Vérifier où sont vos données",
+         "detail": (f"Votre comptabilité est dans un dossier synchronisé par "
+                    f"{risque['service']}. C'est risqué : le service recopie "
+                    "la base pendant que l'application écrit dedans, ce qui "
+                    "peut l'abîmer. Déplacez-la hors de ce dossier."
+                    if risque else
+                    "Votre comptabilité est dans un dossier local, hors de "
+                    "tout service de synchronisation. C'est ce qu'il faut."),
+         "fait": risque is None, "alerte": risque is not None,
+         "lien": "#/parametres/sauvegarde"},
+        {"cle": "sauvegarde", "titre": "Faire une première sauvegarde",
+         "detail": "Puis copiez le dossier « donnees » sur une clé USB : une "
+                   "sauvegarde restée sur le même disque ne protège de rien.",
+         "fait": bool(sauvegardes), "lien": "#/parametres/sauvegarde"},
+    ]
+    return {
+        "etapes": etapes,
+        "restant": sum(1 for e in etapes if not e["fait"]),
+        "termine": all(e["fait"] for e in etapes),
+        "dossier_donnees": str(config.dossier_donnees),
+    }
+
+
+@route("POST", "/api/demonstration")
+def api_demonstration(ctx):
+    """Crée un dossier d'essai complet, pour découvrir sans rien risquer.
+
+    Le jeu d'essai existait déjà, mais seulement en ligne de commande : donc
+    hors de portée de qui n'ouvre jamais un terminal. Il vit dans la même base
+    que les dossiers réels, sous le code « DEMO », et se supprime d'un clic.
+    """
+    ctx.interdit_lecture_seule()
+    ctx.exige_role("admin")
+    existant = db.ligne("SELECT id, raison_sociale FROM societes WHERE code = 'DEMO'")
+    if existant:
+        return {"id": existant["id"], "deja": True,
+                "message": "Le dossier de démonstration existe déjà."}
+
+    import importlib.util
+    chemin = config.dossier_reference.parent / "outils" / "donnees_demonstration.py"
+    if not chemin.exists():
+        raise ErreurApplicative(
+            "Le jeu d'essai n'est pas présent dans cette installation.")
+    specification = importlib.util.spec_from_file_location("_demo", chemin)
+    module = importlib.util.module_from_spec(specification)
+    try:
+        specification.loader.exec_module(module)
+        societe_id = module.construire()
+    except Exception as err:                                  # noqa: BLE001
+        raise ErreurApplicative(
+            f"Le dossier de démonstration n'a pas pu être créé : {err}") from err
+
+    db.trace("creation", "demonstration", societe_id, "jeu d'essai",
+             ctx.nom_utilisateur)
+    return {"id": societe_id, "deja": False,
+            "message": "Dossier de démonstration créé. Vous pouvez tout y "
+                       "essayer : il se supprime en un clic."}
+
+
+@route("DELETE", "/api/societes/<id>")
+def api_supprime_societe(ctx):
+    """Supprime un dossier et tout ce qu'il contient.
+
+    Le schéma est en cascade sur `societe_id` : écritures, factures, tiers,
+    biens et le reste partent avec lui. Une sauvegarde est prise avant, et le
+    dernier dossier ne peut pas être supprimé — l'application n'aurait plus
+    rien à afficher.
+    """
+    ctx.interdit_lecture_seule()
+    ctx.exige_role("admin")
+    identifiant = int(ctx.params["id"])
+    soc = db.ligne("SELECT * FROM societes WHERE id = ?", (identifiant,))
+    if not soc:
+        raise ErreurApplicative("Dossier introuvable.", 404)
+    if db.valeur("SELECT COUNT(*) FROM societes", (), 0) <= 1:
+        raise ErreurApplicative(
+            "C'est le seul dossier : il ne peut pas être supprimé. "
+            "Créez-en un autre d'abord.")
+    if soc["code"] != "DEMO" and ctx.champ("confirmation") != soc["raison_sociale"]:
+        raise ErreurApplicative(
+            "Pour supprimer ce dossier, recopiez exactement sa raison sociale.")
+
+    try:
+        from modules.fichiers import cree_sauvegarde
+        sauvegarde = cree_sauvegarde("avant_suppression_dossier").name
+    except Exception as err:                                  # noqa: BLE001
+        raise ErreurApplicative(
+            f"Sauvegarde préalable impossible ({err}) : suppression annulée.") from err
+
+    with db.transaction():
+        db.supprime("societes", identifiant)
+        db.trace("suppression", "societe", identifiant, soc["raison_sociale"],
+                 ctx.nom_utilisateur)
+    return {"supprime": soc["raison_sociale"], "sauvegarde": sauvegarde}
+
+
 @route("POST", "/api/installation", public=True)
 def api_installation(ctx):
     """Première installation : crée l'administrateur et le premier dossier."""

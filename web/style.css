@@ -288,6 +288,20 @@ button.plat { border-color: transparent; background: none; }
 .totalite .saisie .col-hors { display: table-cell; }
 #bandeau-totalite { background: var(--fond); }
 
+/* Premiers pas : ce qu'il reste à faire, coché au fur et à mesure */
+.premiers-pas { list-style: none; }
+.premiers-pas li { display: flex; gap: 12px; align-items: flex-start;
+  padding: 10px 0; border-bottom: 1px solid var(--bordure); }
+.premiers-pas li:last-child { border-bottom: none; }
+.premiers-pas li > div { flex: 1; }
+.premiers-pas .coche { flex: none; width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-weight: 700;
+  font-size: 12px; background: var(--fond); color: var(--texte-doux); }
+.premiers-pas li.fait .coche { background: var(--succes-fond); color: var(--succes); }
+.premiers-pas li.fait strong { color: var(--texte-doux); font-weight: 500; }
+.premiers-pas li.alerte .coche { background: var(--alerte-fond); color: var(--alerte); }
+.premiers-pas li.alerte strong { color: var(--alerte); }
+
 /* Notes de version : lecture rapide de ce qu'apporte une mise à jour */
 .notes-version { max-height: 340px; overflow-y: auto; font-size: 13px;
   line-height: 1.55; }

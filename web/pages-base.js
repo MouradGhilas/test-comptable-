@@ -7,9 +7,29 @@
 App.pages.accueil = {
   titre: 'Tableau de bord',
   async afficher(zone) {
-    const d = await charge('/api/tableau-de-bord');
+    const [d, pas] = await Promise.all([
+      charge('/api/tableau-de-bord'),
+      charge('/api/premiers-pas').catch(() => null),
+    ]);
     const i = d.indicateurs;
     sousTitre(`${d.societe.raison_sociale} — exercice ${d.exercice.libelle}`);
+
+    // Liste de démarrage : visible tant qu'il reste quelque chose à faire,
+    // puis elle disparaît d'elle-même.
+    const premiersPas = (pas && !pas.termine) ? carte('Pour bien démarrer', `
+      <p class="petit">Il reste ${pas.restant} point(s) à régler. Cette liste
+      disparaîtra une fois tout coché.</p>
+      <ul class="premiers-pas">
+        ${pas.etapes.map((e) => `
+          <li class="${e.fait ? 'fait' : ''} ${e.alerte ? 'alerte' : ''}">
+            <span class="coche">${e.fait ? '✓' : (e.alerte ? '!' : '·')}</span>
+            <div>
+              <strong>${ech(e.titre)}</strong>
+              <div class="petit">${ech(e.detail)}</div>
+            </div>
+            ${e.fait ? '' : `<a class="bouton petit-bouton" href="${e.lien}">Y aller</a>`}
+          </li>`).join('')}
+      </ul>`) : '';
 
     const alertes = d.alertes.map((a) => {
       const genre = { urgent: 'danger', important: 'alerte', info: 'info' }[a.gravite] || 'info';
@@ -51,6 +71,7 @@ App.pages.accueil = {
     }
 
     zone.innerHTML = `
+      ${premiersPas}
       ${alertes}
       <div class="grille c4" style="margin-bottom:16px">
         ${indicateur('Chiffre d\'affaires', fm(i.chiffre_affaires, true),
@@ -911,6 +932,17 @@ async function ongletImport(zone) {
       (ou les écritures importées) portent la comptabilité. Sans cela, tout
       serait compté deux fois.</p>`)}
 
+    ${carte('Essayer avant de se lancer', `
+      <p>Vous préférez voir à quoi ressemble un dossier rempli avant d'y mettre
+      vos propres données&nbsp;? L'application peut créer un
+      <strong>dossier d'essai</strong> contenant une année complète : un
+      programme de logements, des contrats de vente sur plan, des baux, des
+      loyers, la paie et les déclarations.</p>
+      <p class="petit">Il vit à côté du vôtre, sans jamais le toucher, et se
+      supprime en un clic quand vous n'en avez plus besoin.</p>
+      <div id="zone-demo"></div>`,
+      `<button id="bouton-demo">Créer un dossier d'essai</button>`)}
+
     ${d.groupes.map((groupe) => parGroupe(groupe).length
       ? carte(groupe, tableauModeles(parGroupe(groupe)), '', true) : '').join('')}
 
@@ -942,6 +974,45 @@ async function ongletImport(zone) {
   choix.onchange = () => { majDateReprise(); $('#import-resultat').innerHTML = ''; };
   majDateReprise();
   brancheDepot(zone, () => choix.value);
+  $('#bouton-demo', zone).onclick = creeDossierEssai;
+}
+
+async function creeDossierEssai() {
+  const bouton = $('#bouton-demo');
+  const zone = $('#zone-demo');
+  bouton.disabled = true;
+  bouton.textContent = 'Création en cours…';
+  zone.innerHTML = '<div class="vide">Une année d\'activité se construit…</div>';
+  try {
+    const r = await envoie('/api/demonstration', {});
+    zone.innerHTML = `<div class="message succes">
+      <strong>${ech(r.message)}</strong>
+      Choisissez « SARL EL BARAKA IMMOBILIER (démonstration) » dans la liste
+      des dossiers, en haut à gauche, pour l'explorer.</div>
+      <div class="rangee" style="margin-top:10px">
+        <button class="danger" id="bouton-demo-supprimer">
+          Supprimer le dossier d'essai</button>
+      </div>`;
+    await chargeSocietes();
+    $('#bouton-demo-supprimer').onclick = () => supprimeDossierEssai(r.id);
+  } catch (err) {
+    zone.innerHTML = `<div class="message danger">${ech(err.message)}</div>`;
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = 'Créer un dossier d\'essai';
+  }
+}
+
+async function supprimeDossierEssai(id) {
+  if (!await confirme('Supprimer le dossier d\'essai ?',
+    'Tout son contenu disparaît. Vos dossiers réels ne sont pas touchés, et '
+    + 'une sauvegarde est prise avant l\'opération.', 'Supprimer')) return;
+  try {
+    const r = await api(`/api/societes/${id}`, { method: 'DELETE', corps: {} });
+    notifie(`Dossier « ${r.supprime} » supprimé.`, 'succes');
+    await chargeSocietes();
+    afficheRoute();
+  } catch (err) { erreur(err); }
 }
 
 /** Câble le choix de fichier et le bouton de contrôle dans une zone donnée. */

@@ -38,14 +38,32 @@ Ensuite, pour ouvrir l'application : le raccourci **Cabinet Immo** du Bureau
 
 ### Découvrir avec un jeu d'essai
 
+**Depuis l'application** : Paramètres → Import de données → *Créer un dossier
+d'essai*. Une année d'activité complète — programme de 24 logements, contrats
+VSP, baux, loyers, paie et déclarations — apparaît dans un dossier séparé,
+à côté du vôtre, supprimable d'un clic.
+
+En ligne de commande, dans un dossier de données distinct :
+
 ```bash
 python3 outils/donnees_demonstration.py --donnees donnees_demo
 python3 app.py --donnees donnees_demo
 ```
 
-Identifiant `demo`, mot de passe `demo1234`. Vous obtenez une année d'activité
-complète : programme de 24 logements, contrats VSP, baux, loyers, paie et
-déclarations. **Utilisez un dossier séparé pour votre comptabilité réelle.**
+Identifiant `demo`, mot de passe `demo1234`.
+
+### Accompagnement au démarrage
+
+Sur un dossier neuf, le tableau de bord affiche **« Pour bien démarrer »** :
+créer le dossier, vérifier les taux fiscaux, reprendre ses données ou essayer,
+**vérifier où sont les données**, faire une première sauvegarde. Chaque point se
+coche tout seul, et la liste disparaît une fois complète.
+
+L'étape « où sont les données » n'est pas cosmétique : si le dossier `donnees`
+est sous **OneDrive, Google Drive ou Dropbox**, l'application avertit. La base
+est ouverte en mode WAL, et un service de synchronisation qui recopie
+`.db`, `.db-wal` et `.db-shm` séparément pendant que l'application écrit peut
+**corrompre la comptabilité**.
 
 ### Options utiles
 
