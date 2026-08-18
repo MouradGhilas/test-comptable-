@@ -316,12 +316,28 @@ Points utiles :
 cliquez sur **Contrôler le fichier**.
 
 L'application vous dit alors quelle version il contient et ce qu'elle apporte.
-Si tout va bien, un bouton **Installer la version …** apparaît. L'application se
-ferme, s'installe et **se rouvre toute seule** ; la page se recharge d'elle-même.
+Si tout va bien, un bouton **Installer la version …** apparaît. À partir de là,
+**vous n'avez plus rien à faire** : l'application se ferme, se sauvegarde,
+s'installe, se contrôle et **se rouvre toute seule**. Un écran d'attente montre
+les étapes ; à la réouverture, l'application affiche si la mise à jour a réussi
+— et sinon, pourquoi. Aucune fenêtre noire à surveiller, aucun bouton à
+relancer.
+
+Si quelque chose se passe mal en cours de route, la version précédente est
+**remise en place**, puis l'application **rouvre quand même** : vous n'êtes
+jamais laissé devant une fenêtre fermée, et le compte rendu vous dit ce qui a
+coincé. Le résultat de la dernière mise à jour reste consultable en haut de
+**Paramètres → Mise à jour**.
 
 Un fichier qui n'est pas une version de Cabinet Immo, une archive abîmée pendant
 l'envoi, ou une version plus ancienne que la vôtre sont **refusés en disant
 pourquoi**. Rien n'est touché tant que vous n'avez pas cliqué sur Installer.
+
+> La première fois — quand vous passez d'une version d'avant 1.6.0 à 1.6.0 —
+> c'est encore l'ancien mécanisme qui s'occupe de l'installation, car le
+> programme se met à jour avec ses propres outils du moment. Le
+> « tout-en-un-clic » décrit ci-dessus vaut pleinement pour **toutes les mises
+> à jour suivantes**.
 
 ### Les autres façons, si besoin
 
@@ -465,7 +481,8 @@ renseigner le serveur d'envoi.
 | Double-clic sur le raccourci alors qu'elle tourne déjà | L'application ne se dédouble pas : elle ramène la fenêtre existante. |
 | Une erreur inexpliquée revient | **Paramètres → Sauvegarde & données → Signaler un problème.** L'application prépare un rapport technique, vous le lisez, puis vous le copiez, l'enregistrez ou l'envoyez. **Aucune donnée comptable n'y figure.** |
 | Une écriture est refusée | Le message dit exactement pourquoi (déséquilibre, compte inconnu, exercice clôturé). |
-| Erreur après une mise à jour | `METTRE-A-JOUR.bat --annuler` remet la version précédente. |
+| La mise à jour reste ouverte dans une fenêtre noire, ou l'application ne rouvre pas | À partir de la 1.6.0, l'application se ferme et se rouvre seule ; rien à surveiller. Si vous mettez à jour **depuis** une version d'avant 1.6.0, cette fois-là seulement, fermez la fenêtre restée ouverte et rouvrez le raccourci **Cabinet Immo**. Les mises à jour suivantes n'auront plus ce souci. |
+| Erreur après une mise à jour | Le résultat s'affiche en haut de **Paramètres → Mise à jour**. La version précédente est déjà remise en place ; `METTRE-A-JOUR.bat --annuler` fait la même chose à la main. |
 | Doute sur les données | `DEMARRER.bat --verifier` contrôle l'intégrité et l'équilibre. |
 | Tout semble perdu | Paramètres → Sauvegarde → Restaurer une sauvegarde antérieure. |
 

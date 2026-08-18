@@ -56,6 +56,113 @@ ELEMENTS_PROGRAMME = ["app.py", "noyau", "modules", "reference", "web", "outils"
                       "LANCER.bat", "lancer.sh", "INSTALLER.bat"]
 
 
+# --------------------------------------------------------------- Journal --
+#
+# Une mise à jour lancée depuis l'interface se déroule sans personne devant
+# un terminal : l'application est fermée, il n'y a plus d'écran où écrire.
+# Chaque étape est donc consignée dans un fichier que l'application relira
+# à sa réouverture, pour dire ce qui s'est passé — succès comme échec.
+# Sans cela, un échec est parfaitement silencieux : c'est ce qui donnait
+# l'impression que « le bouton ne fait pas grand-chose ».
+
+def _fichier_etat() -> Path:
+    from noyau.config import config
+    dossier = config.dossier_donnees / "maj"
+    dossier.mkdir(parents=True, exist_ok=True)
+    return dossier / "etat-maj.json"
+
+
+#: Les étapes annoncées à l'utilisateur, dans l'ordre où il les verra.
+ETAPES_MAJ = [
+    ("fermeture", "Fermeture de l'application"),
+    ("sauvegarde", "Sauvegarde des données"),
+    ("installation", "Installation de la nouvelle version"),
+    ("migration", "Mise à niveau de la base"),
+    ("verification", "Vérification de la comptabilité"),
+    ("relance", "Réouverture de l'application"),
+]
+
+_etat_maj = {}
+
+
+def note_etat(etape_cle="", message="", **complements):
+    """Consigne où en est la mise à jour, sans jamais faire échouer celle-ci."""
+    import json
+    import time
+    if etape_cle:
+        _etat_maj["etape"] = etape_cle
+    if message:
+        _etat_maj["message"] = message
+    _etat_maj.update(complements)
+    _etat_maj["horodatage"] = time.time()
+    try:
+        _fichier_etat().write_text(
+            json.dumps(_etat_maj, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:                                        # noqa: BLE001
+        pass    # un journal illisible ne doit pas empêcher la mise à jour
+
+
+def processus_vivant(pid: int) -> bool:
+    """Le processus tourne-t-il encore ? Vrai en cas de doute."""
+    import os
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        # 0x400 = PROCESS_QUERY_INFORMATION ; un handle nul signifie que le
+        # processus a disparu (ou qu'il est inaccessible, cas où l'on
+        # préfère patienter plutôt que d'écrire sous ses pieds).
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return ctypes.windll.kernel32.GetLastError() != 87   # 87 = pid inconnu
+        sortie = ctypes.c_ulong()
+        ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(sortie))
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return sortie.value == 259                               # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    # Un processus terminé mais pas encore récupéré par son parent (zombie)
+    # existe toujours pour os.kill : sans ce contrôle, l'attente durerait
+    # jusqu'à sa limite. Sous Linux, l'état 'Z' de /proc tranche.
+    try:
+        with open(f"/proc/{pid}/stat", encoding="ascii", errors="replace") as f:
+            etat = f.read().rsplit(")", 1)[1].split()[0]
+        if etat == "Z":
+            return False
+    except (OSError, IndexError):
+        pass    # pas de /proc (autre système) : os.kill fait foi
+    return True
+
+
+def attend_fermeture(pid: int, limite: float = 180.0) -> bool:
+    """Patiente jusqu'à ce que l'application ait vraiment rendu ses fichiers.
+
+    Un simple délai fixe ne suffit pas : à la fermeture, l'application écrit
+    une sauvegarde dont la durée dépend du volume de pièces justificatives.
+    Commencer à remplacer les fichiers pendant ce temps, c'est courir après
+    un « fichier en cours d'utilisation » sous Windows — et un échec de mise
+    à jour parfaitement silencieux.
+    """
+    import time
+    if pid <= 0:
+        time.sleep(3.0)
+        return True
+    debut = time.monotonic()
+    while time.monotonic() - debut < limite:
+        if not processus_vivant(pid):
+            time.sleep(0.7)     # laisser le système libérer les descripteurs
+            return True
+        note_etat("fermeture",
+                  "L'application termine sa fermeture "
+                  f"({int(time.monotonic() - debut)} s).")
+        time.sleep(0.5)
+    return False
+
+
 def titre(texte):
     print(f"\n\033[1m{texte}\033[0m")
 
@@ -209,6 +316,22 @@ def version_installee() -> str:
         return "inconnue"
 
 
+def abandonne(arguments, etape_cle: str, message: str) -> int:
+    """Consigne un échec et rouvre la version restaurée si besoin.
+
+    Après l'attente du PID, l'application est déjà fermée : un échec qui se
+    contenterait de « return 1 » laisserait l'utilisateur devant une fenêtre
+    close, sans rien réouvrir. On rouvre donc la version précédente — elle
+    vient d'être remise en place — pour qu'il retrouve son écran et le compte
+    rendu de ce qui s'est passé.
+    """
+    note_etat(etape_cle, ok=False, message=message)
+    echec(message)
+    if arguments.relancer:
+        relance_application(arguments.relancer_options)
+    return 1
+
+
 def principal() -> int:
     analyseur = argparse.ArgumentParser(description=__doc__)
     analyseur.add_argument("archive", nargs="?", help="fichier .zip ou lien")
@@ -223,6 +346,9 @@ def principal() -> int:
     analyseur.add_argument("--attendre", type=float, default=0, metavar="SECONDES",
                            help="patienter avant de commencer (le temps que "
                                 "l'application se ferme)")
+    analyseur.add_argument("--attendre-pid", type=int, default=0, metavar="PID",
+                           help="attendre la fermeture réelle de ce processus "
+                                "plutôt qu'un délai fixe")
     analyseur.add_argument("--relancer", action="store_true",
                            help="rouvrir l'application une fois la mise à jour faite")
     analyseur.add_argument("--relancer-options", default="", metavar="JSON",
@@ -230,7 +356,16 @@ def principal() -> int:
                                 "de données…), au format JSON")
     arguments = analyseur.parse_args()
 
-    if arguments.attendre:
+    if arguments.attendre_pid:
+        note_etat("fermeture", "L'application se ferme.", ok=None,
+                  demarre_a=__import__("time").time())
+        if not attend_fermeture(arguments.attendre_pid):
+            note_etat("fermeture", ok=False, message=(
+                "L'application ne s'est pas fermée. Rien n'a été touché : "
+                "fermez-la puis relancez la mise à jour."))
+            echec("L'application ne s'est pas fermée ; mise à jour abandonnée.")
+            return 1
+    elif arguments.attendre:
         import time
         time.sleep(arguments.attendre)
 
@@ -246,11 +381,13 @@ def principal() -> int:
         return 1
 
     ancienne_version = version_installee()
+    note_etat(version_avant=ancienne_version)
     archive = trouve_archive(arguments.archive)
 
     # 1. Sauvegarde des données -------------------------------------------
     if not arguments.sans_sauvegarde:
         titre("1. Sauvegarde des données")
+        note_etat("sauvegarde", "Sauvegarde des données avant toute chose.")
         try:
             from modules.fichiers import cree_sauvegarde
             from noyau import base as db
@@ -263,14 +400,15 @@ def principal() -> int:
             if arguments.auto:
                 # Sans personne devant l'écran, on renonce plutôt que de
                 # toucher au programme sans filet.
-                echec("Mise à jour abandonnée : aucune sauvegarde préalable.")
-                return 1
+                return abandonne(arguments, "sauvegarde",
+                    f"Sauvegarde impossible ({err}). Rien n'a été touché.")
             reponse = input("  Continuer sans sauvegarde ? (o/N) ").strip().lower()
             if reponse not in ("o", "oui", "y"):
                 return 1
 
     # 2. Copie du code actuel ---------------------------------------------
     titre("2. Mise de côté de la version actuelle")
+    note_etat("installation", "Mise de côté de la version actuelle.")
     sauvegarde_code()
     succes(f"Version {ancienne_version} conservée "
            f"(revenir en arrière : mise_a_jour.py --annuler)")
@@ -287,10 +425,13 @@ def principal() -> int:
         echec(f"Installation impossible : {err}")
         restaure_code()
         succes("Version précédente restaurée.")
-        return 1
+        return abandonne(arguments, "installation",
+            f"Installation impossible ({err}). La version {ancienne_version} "
+            "a été remise en place et vos données sont intactes.")
 
     # 4. Migration de la base ---------------------------------------------
     titre("4. Mise à niveau de la base de données")
+    note_etat("migration", "Mise à niveau de la base de données.")
     for module in [m for m in list(sys.modules) if m.startswith(("noyau", "modules"))]:
         del sys.modules[module]
     try:
@@ -306,11 +447,15 @@ def principal() -> int:
     except Exception as err:                                 # noqa: BLE001
         echec(f"Migration impossible : {err}")
         restaure_code()
-        echec("Version précédente restaurée. Vos données sont intactes.")
-        return 1
+        succes("Version précédente restaurée. Vos données sont intactes.")
+        return abandonne(arguments, "migration",
+            f"Mise à niveau de la base impossible ({err}). La version "
+            f"{ancienne_version} a été remise en place et vos données sont "
+            "intactes.")
 
     # 5. Vérification ------------------------------------------------------
     titre("5. Vérification")
+    note_etat("verification", "Vérification de la comptabilité.")
     try:
         integrite = db.valeur("PRAGMA integrity_check", (), "?")
         desequilibrees = db.lignes(
@@ -323,13 +468,16 @@ def principal() -> int:
             echec(f"Contrôle négatif (intégrité : {integrite}, "
                   f"{len(desequilibrees)} écriture(s) déséquilibrée(s))")
             restaure_code()
-            echec("Version précédente restaurée.")
-            return 1
+            return abandonne(arguments, "verification",
+                "Contrôle de la comptabilité négatif après mise à jour. La "
+                f"version {ancienne_version} a été remise en place.")
         succes(f"Base saine — {ecritures} écriture(s), comptabilité équilibrée")
     except Exception as err:                                 # noqa: BLE001
         echec(f"Vérification impossible : {err}")
         restaure_code()
-        return 1
+        return abandonne(arguments, "verification",
+            f"Vérification impossible ({err}). La version {ancienne_version} "
+            "a été remise en place.")
 
     nouvelle_version = version_installee()
     print()
@@ -340,9 +488,32 @@ def principal() -> int:
         print("  Relancez l'application (raccourci « Cabinet Immo »).")
     print("=" * 68)
 
+    note_etat("relance", version_apres=nouvelle_version, ok=True, message=(
+        f"Mise à jour terminée : version {ancienne_version} → "
+        f"{nouvelle_version}. Vos données n'ont pas été touchées."))
+
     if arguments.relancer:
         relance_application(arguments.relancer_options)
+    note_etat("termine")
     return 0
+
+
+def _options_detachement() -> dict:
+    """Arguments Popen pour un processus qui doit survivre à l'outil.
+
+    Sous Windows, `start_new_session` est ignoré (subprocess le nomme
+    `unused_start_new_session`) : sans détachement explicite, la nouvelle
+    application reste rattachée à la console qui a lancé l'ancienne, et un
+    Ctrl+C ou la fermeture de cette fenêtre la tuerait. Défini ici, en dur,
+    pour ne dépendre d'aucun fichier que la mise à jour vient de remplacer.
+    """
+    import os
+    import subprocess
+    if os.name != "nt":
+        return {"start_new_session": True}
+    detache = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+    nouveau_groupe = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+    return {"creationflags": detache | nouveau_groupe, "close_fds": True}
 
 
 def relance_application(options_json: str = "") -> None:
@@ -371,11 +542,16 @@ def relance_application(options_json: str = "") -> None:
         executable = str(sans_console)
     try:
         subprocess.Popen([executable, str(RACINE / "app.py"), *options],
-                         cwd=str(RACINE))
+                         cwd=str(RACINE), **_options_detachement())
         detail = f" ({' '.join(options)})" if options else ""
         print(f"  Application relancée{detail}.")
+        note_etat(relance=True)
     except OSError as err:
         echec(f"Relance impossible ({err}). Rouvrez le raccourci « Cabinet Immo ».")
+        note_etat(relance=False, message=(
+            "La mise à jour est faite, mais l'application n'a pas pu être "
+            "rouverte automatiquement. Ouvrez le raccourci « Cabinet Immo » : "
+            "la nouvelle version est en place et vos données sont intactes."))
 
 
 if __name__ == "__main__":

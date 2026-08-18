@@ -30,6 +30,14 @@ décider comment.
   (brouillon, hors déclaration, impayé). Rien n'est masqué.
 - Dans le grand livre, les colonnes s'alignent d'un compte à l'autre et un
   solde créditeur se distingue au premier coup d'œil.
+- **Le bouton « Mettre à jour » fait toute la mise à jour, tout seul.** Plus
+  de fenêtre noire à surveiller ni à relancer à la main : vous déposez le
+  fichier, et l'application se ferme, s'installe, se contrôle et se rouvre
+  d'elle-même. Un écran d'attente montre les étapes, et à la réouverture
+  l'application affiche ce qui s'est passé — réussite ou échec, avec la
+  raison. En cas de pépin, la version précédente est remise en place puis
+  l'application rouvre quand même, pour ne jamais vous laisser devant un
+  écran fermé.
 - Les centimes peuvent être affichés en gris clair pour laisser les millions
   ressortir. **Ce n'est pas le réglage livré** : par défaut ils gardent la
   couleur du reste. Le montant est exact dans tous les cas et les exports

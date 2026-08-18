@@ -193,7 +193,13 @@ def principal():
     # (une mise à jour, par exemple) : les données doivent être fermées de la
     # même façon dans les deux cas.
     rapports.arrete_taches_de_fond()
-    if config.get("sauvegarde_auto", True):
+    # Une fermeture demandée pour une mise à jour saute la sauvegarde d'arrêt :
+    # l'outil en crée une juste après, sous le nom « avant_mise_a_jour ». Deux
+    # archives du même dossier coup sur coup, c'est deux fois l'attente et deux
+    # fois la place, pour la même protection.
+    if serveur.arret_pour_maj:
+        print("Fermeture pour mise à jour : l'outil prend le relais.")
+    elif config.get("sauvegarde_auto", True):
         try:
             from modules.fichiers import cree_sauvegarde
             chemin = cree_sauvegarde("arret")

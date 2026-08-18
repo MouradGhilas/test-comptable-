@@ -36,6 +36,12 @@ ERREURS_CONNEXION = (BrokenPipeError, ConnectionAbortedError,
 #: fichiers de programme avant qu'ils ne soient remplacés.
 demande_arret = None
 
+#: Vrai quand l'arrêt en cours prépare une mise à jour. L'application saute
+#: alors sa sauvegarde de fermeture : l'outil de mise à jour en fait une
+#: immédiatement après, et deux archives du même dossier à la suite doublent
+#: l'attente et l'espace disque sans rien protéger de plus.
+arret_pour_maj = False
+
 # ---------------------------------------------------------------------------
 # Erreurs applicatives
 # ---------------------------------------------------------------------------

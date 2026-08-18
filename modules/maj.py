@@ -20,9 +20,11 @@ from __future__ import annotations
 import base64
 import json
 import io
+import os
 import re
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -31,6 +33,7 @@ from noyau import serveur as mod_serveur
 from noyau import util
 from noyau.config import config, APPLICATION, VERSION, RACINE
 from noyau.serveur import ErreurApplicative, route
+from noyau.util import options_detachement
 
 TAILLE_MAX = 64 * 1024 * 1024
 
@@ -38,9 +41,80 @@ TAILLE_MAX = 64 * 1024 * 1024
 FICHIERS_ATTENDUS = ("app.py", "noyau/config.py", "noyau/base.py",
                      "noyau/schema.sql", "modules/comptabilite.py")
 
-#: Délai laissé à l'application pour se fermer avant que l'outil ne remplace
-#: les fichiers de programme.
+#: Délai annoncé à l'interface. L'outil, lui, attend la fermeture réelle de
+#: l'application : un délai fixe se fait rattraper par la sauvegarde d'arrêt
+#: dès que le dossier de pièces justificatives grossit.
 DELAI_FERMETURE = 3.0
+
+#: Les étapes annoncées pendant l'attente, dans l'ordre. Elles doivent rester
+#: identiques à ETAPES_MAJ de outils/mise_a_jour.py.
+ETAPES_MAJ = [
+    ("fermeture", "Fermeture de l'application"),
+    ("sauvegarde", "Sauvegarde des données"),
+    ("installation", "Installation de la nouvelle version"),
+    ("migration", "Mise à niveau de la base"),
+    ("verification", "Vérification de la comptabilité"),
+    ("relance", "Réouverture de l'application"),
+]
+
+
+def _fichier_etat() -> Path:
+    return config.dossier_donnees / "maj" / "etat-maj.json"
+
+
+def _prepare_etat(version_visee: str) -> None:
+    """Pose un état de départ, pour qu'une mise à jour qui échoue avant même
+    d'avoir démarré ne laisse pas l'écran précédent faire illusion."""
+    try:
+        _fichier_etat().write_text(json.dumps({
+            "etape": "fermeture",
+            "message": "L'application se ferme pour laisser la place.",
+            "version_avant": VERSION,
+            "version_visee": version_visee,
+            "horodatage": time.time(),
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def lit_etat_maj() -> dict | None:
+    """Ce que la dernière mise à jour a fait, tel que l'outil l'a consigné."""
+    fichier = _fichier_etat()
+    try:
+        etat = json.loads(fichier.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(etat, dict):
+        return None
+    etat["etapes"] = [{"cle": cle, "libelle": libelle} for cle, libelle in ETAPES_MAJ]
+    etat["version_actuelle"] = VERSION
+    # Une mise à jour réussie se reconnaît à la version qui a bougé, pas
+    # seulement au drapeau : c'est la version installée qui fait foi.
+    if etat.get("ok") is None and etat.get("version_visee"):
+        etat["ok"] = VERSION == etat["version_visee"] or None
+    journal = config.dossier_donnees / "maj" / "journal-maj.txt"
+    if journal.is_file():
+        try:
+            etat["journal"] = journal.read_text(encoding="utf-8", errors="replace")[-8000:]
+        except OSError:
+            pass
+    return etat
+
+
+@route("GET", "/api/maj/resultat")
+def api_resultat(ctx):
+    """Ce qu'a donné la dernière mise à jour lancée depuis l'application.
+
+    L'application est fermée pendant l'opération : il n'y a aucun moyen de
+    suivre les étapes en direct. Elle relit donc, à sa réouverture, ce que
+    l'outil a consigné — succès comme échec, avec la raison.
+    """
+    ctx.exige_role("admin")
+    etat = lit_etat_maj()
+    if not etat:
+        return {"present": False}
+    etat["present"] = True
+    return etat
 
 
 def version_en_tuple(texte: str) -> tuple:
@@ -250,21 +324,42 @@ def api_applique(ctx):
     # éventuellement sur une autre comptabilité que celle en cours.
     options = json.dumps(sys.argv[1:])
 
+    # La sortie de l'outil allait jusqu'ici dans le néant : un échec ne
+    # laissait aucune trace et l'utilisateur n'avait plus qu'une fenêtre
+    # muette. Elle est désormais conservée à côté de l'archive.
+    journal = dossier / "journal-maj.txt"
+    _prepare_etat(resultat["version"])
+    try:
+        sortie = journal.open("w", encoding="utf-8", errors="replace")
+    except OSError:
+        sortie = None
+
     try:
         subprocess.Popen(
             [sys.executable, str(outil), str(archive), "--auto", "--relancer",
              "--relancer-options", options,
-             "--attendre", str(DELAI_FERMETURE), "--vers", str(RACINE)],
-            cwd=str(RACINE), start_new_session=True,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+             # Attendre la fermeture réelle plutôt qu'un délai fixe : la
+             # sauvegarde d'arrêt dure ce que dure le dossier de pièces.
+             "--attendre-pid", str(os.getpid()),
+             "--vers", str(RACINE)],
+            cwd=str(RACINE), **options_detachement(),
+            stdin=subprocess.DEVNULL,
+            stdout=sortie or subprocess.DEVNULL,
+            stderr=subprocess.STDOUT)
     except OSError as err:
         raise ErreurApplicative(
             f"Impossible de lancer la mise à jour : {err}") from err
+    finally:
+        if sortie:
+            sortie.close()
 
     db.trace("mise_a_jour", "systeme", None,
              {"de": VERSION, "vers": resultat["version"]}, ctx.nom_utilisateur)
 
     # L'application doit libérer ses fichiers avant qu'ils ne soient remplacés.
+    # L'outil vient de recevoir notre PID : il attend la fermeture réelle, pas
+    # un délai. Inutile donc de retarder l'arrêt.
+    mod_serveur.arret_pour_maj = True
     if mod_serveur.demande_arret:
         mod_serveur.demande_arret()
 

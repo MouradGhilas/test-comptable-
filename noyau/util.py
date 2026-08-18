@@ -405,3 +405,22 @@ WILAYAS = [
     "53 In Salah", "54 In Guezzam", "55 Touggourt", "56 Djanet",
     "57 El M'Ghair", "58 El Meniaa",
 ]
+
+
+def options_detachement() -> dict:
+    """Arguments `subprocess.Popen` pour un processus qui doit survivre au sien.
+
+    `start_new_session` est **ignoré sous Windows** : la signature interne de
+    `subprocess` l'y nomme littéralement `unused_start_new_session`. Un
+    processus lancé sans plus de précaution reste donc rattaché à la console
+    qui a démarré l'application — un Ctrl+C dans cette fenêtre tue alors la
+    mise à jour en plein travail, et fermer la fenêtre suffit à l'interrompre.
+    Sous Windows il faut le détacher explicitement.
+    """
+    import os
+    import subprocess
+    if os.name != "nt":
+        return {"start_new_session": True}
+    detache = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+    nouveau_groupe = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+    return {"creationflags": detache | nouveau_groupe, "close_fds": True}

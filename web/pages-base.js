@@ -741,6 +741,7 @@ let _paquetMaj = null;
 async function ongletMaj(zone) {
   const d = await api('/api/maj/etat');
   zone.innerHTML = `
+    ${await compteRenduDerniereMaj()}
     ${carte('Mettre à jour', `
       <div class="message info">
         <strong>Vous êtes en version ${ech(d.version)}</strong>
@@ -768,6 +769,31 @@ async function ongletMaj(zone) {
   };
   $('#maj-controler').onclick = controleMaj;
   annonceVersionPubliee();
+}
+
+/* Si l'utilisateur a fermé l'onglet pendant l'installation — ou rouvert
+   l'application lui-même — il n'a jamais vu le résultat. Il le trouve ici. */
+async function compteRenduDerniereMaj() {
+  let etat = null;
+  try { etat = await api('/api/maj/resultat'); } catch (err) { return ''; }
+  if (!etat || !etat.present) return '';
+
+  const reussi = etat.ok === true
+    || (etat.version_apres && etat.version_apres === etat.version_actuelle);
+  const memeVersion = etat.version_avant === etat.version_actuelle;
+  // Un compte rendu de réussite déjà constaté n'a plus rien à dire.
+  if (reussi && memeVersion) return '';
+
+  if (reussi) {
+    return `<div class="message succes"><strong>Dernière mise à jour&nbsp;:
+      version ${ech(etat.version_avant || '?')} → ${ech(etat.version_actuelle)},
+      faite.</strong> Vos données n'ont pas été touchées.</div>`;
+  }
+  return `<div class="message danger">
+    <strong>La dernière mise à jour n'a pas abouti.</strong>
+    ${ech(etat.message || '')} Vous êtes en version ${ech(etat.version_actuelle)}.
+    ${etat.journal ? `<details><summary>Détail technique</summary>
+      <pre class="journal">${ech(etat.journal)}</pre></details>` : ''}</div>`;
 }
 
 /**
@@ -868,24 +894,121 @@ function afficheControleMaj(zone, d, contenu) {
   };
 }
 
-/** Patiente pendant l'arrêt puis recharge dès que l'application répond. */
-function attendRetourApresMaj(version) {
-  const bandeau = document.createElement('div');
-  bandeau.className = 'bandeau-hors-ligne';
-  bandeau.innerHTML = `<strong>Installation de la version ${ech(version)}…</strong>
-    <span>L'application se ferme et se rouvre toute seule. Cette page se
-    rechargera d'elle-même — ne fermez pas la fenêtre.</span>`;
-  document.body.appendChild(bandeau);
+/* La mise à jour se déroule alors que l'application est fermée : impossible
+   de suivre les étapes en direct, il n'y a plus personne pour répondre. On
+   montre donc où l'on en est, on attend le retour, puis on affiche ce que
+   l'outil a réellement fait — succès comme échec. Une attente muette qui ne
+   finit jamais, c'est ce qui donnait l'impression que le bouton ne faisait
+   rien. */
 
-  let absent = false;
-  setInterval(async () => {
+const ETAPES_ATTENDUES = [
+  'Fermeture de l\'application',
+  'Sauvegarde des données',
+  'Installation de la nouvelle version',
+  'Mise à niveau de la base',
+  'Vérification de la comptabilité',
+  'Réouverture de l\'application',
+];
+
+//: Au-delà, on cesse d'attendre et on dit quoi faire plutôt que de tourner.
+const DELAI_MAX_MAJ = 300;
+
+/** Panneau plein écran : attente, puis résultat réel de la mise à jour. */
+function attendRetourApresMaj(version) {
+  const panneau = document.createElement('div');
+  panneau.className = 'ecran-maj';
+  panneau.innerHTML = `<div class="carte-maj">
+      <div class="logo-grand">⚙️</div>
+      <h2>Installation de la version ${ech(version)}</h2>
+      <p class="petit">L'application se ferme, s'installe et se rouvre toute
+        seule. Ne fermez pas cette fenêtre : elle vous dira ce qui s'est passé.</p>
+      <ol class="etapes-maj">${ETAPES_ATTENDUES.map((e) =>
+        `<li>${ech(e)}</li>`).join('')}</ol>
+      <div class="barre-attente"><div></div></div>
+      <p class="petit" id="maj-compteur">Fermeture en cours…</p>
+    </div>`;
+  document.body.appendChild(panneau);
+
+  const corps = $('.carte-maj', panneau);
+  const debut = Date.now();
+  let absente = false;
+
+  const secondes = () => Math.round((Date.now() - debut) / 1000);
+
+  const conclut = (html) => {
+    clearInterval(minuteur);
+    corps.innerHTML = html;
+  };
+
+  const minuteur = setInterval(async () => {
+    const compteur = $('#maj-compteur', panneau);
+    if (compteur) {
+      compteur.textContent = absente
+        ? `Installation en cours… (${secondes()} s)`
+        : `Fermeture en cours… (${secondes()} s)`;
+    }
+    if (secondes() > DELAI_MAX_MAJ) {
+      conclut(`<div class="logo-grand">⏳</div>
+        <h2>L'application n'a pas rouvert</h2>
+        <div class="message alerte">La mise à jour a été lancée, mais
+          l'application ne répond toujours pas après ${DELAI_MAX_MAJ} secondes.
+          <strong>Vos données n'ont rien perdu</strong> : une sauvegarde a été
+          faite avant toute chose, et l'outil remet la version précédente en
+          place s'il n'a pas pu aller au bout.</div>
+        <p>Ouvrez le raccourci <strong>Cabinet Immo</strong>. L'écran
+          Paramètres → Mise à jour vous dira ce que l'installation a donné.</p>
+        <button class="primaire" onclick="location.reload()">Réessayer maintenant</button>`);
+      return;
+    }
     try {
       const rep = await fetch('/api/etat', { cache: 'no-store' });
-      // On ne recharge qu'après avoir constaté l'arrêt : sinon on
-      // rechargerait l'ancienne version, encore en train de répondre.
-      if (rep.ok && absent) location.reload();
-    } catch (err) { absent = true; }
-  }, 2000);
+      // On n'agit qu'après avoir constaté l'arrêt : sinon on lirait
+      // l'ancienne version, encore en train de répondre.
+      if (rep.ok && absente) { clearInterval(minuteur); montreResultatMaj(conclut); }
+    } catch (err) { absente = true; }
+  }, 1500);
+}
+
+/** Lit ce que l'outil a consigné et le présente sans enjoliver. */
+async function montreResultatMaj(conclut) {
+  let etat = null;
+  try { etat = await api('/api/maj/resultat'); } catch (err) { /* voir plus bas */ }
+
+  if (!etat || !etat.present) {
+    conclut(`<div class="logo-grand">✅</div>
+      <h2>L'application a rouvert</h2>
+      <p>Elle n'a pas trouvé de compte rendu de la mise à jour. Vérifiez la
+        version affichée en haut du menu.</p>
+      <button class="primaire" onclick="location.reload()">Continuer</button>`);
+    return;
+  }
+
+  const reussi = etat.ok === true
+    || (etat.version_apres && etat.version_apres === etat.version_actuelle);
+
+  if (reussi) {
+    conclut(`<div class="logo-grand">✅</div>
+      <h2>Mise à jour faite</h2>
+      <div class="message succes">Version ${ech(etat.version_avant || '?')} →
+        <strong>${ech(etat.version_actuelle)}</strong>. Vos données n'ont pas
+        été touchées.</div>
+      ${etat.relance === false ? `<div class="message alerte">L'application
+        n'a pas pu être rouverte automatiquement, mais vous l'avez rouverte :
+        tout est en place.</div>` : ''}
+      <button class="primaire" onclick="location.reload()">Continuer</button>`);
+    return;
+  }
+
+  conclut(`<div class="logo-grand">⚠️</div>
+    <h2>La mise à jour n'a pas abouti</h2>
+    <div class="message danger">${ech(etat.message
+      || 'L\'outil s\'est interrompu sans laisser de raison.')}</div>
+    <p class="petit">Version installée : <strong>${ech(etat.version_actuelle)}</strong>.
+      Une sauvegarde a été faite avant toute opération ; elle est dans
+      Paramètres → Sauvegarde &amp; données.</p>
+    ${etat.journal ? `<details><summary>Détail technique</summary>
+      <pre class="journal">${ech(etat.journal)}</pre></details>` : ''}
+    <button class="primaire" onclick="location.reload()">Continuer</button>`);
 }
 
 /* ----------------------------------------------- Import de données ------ */
