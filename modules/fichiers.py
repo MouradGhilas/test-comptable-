@@ -19,7 +19,7 @@ from pathlib import Path
 
 from noyau import base as db
 from noyau import util
-from noyau.config import config, APPLICATION, VERSION
+from noyau.config import config, APPLICATION, VERSION, RACINE as RACINE_APPLICATION
 from noyau.serveur import ErreurApplicative, route, Reponse
 
 EXTENSIONS_AUTORISEES = {
@@ -139,6 +139,9 @@ def api_liste_sauvegardes(ctx):
         "dossier_donnees": str(config.dossier_donnees),
         "taille_base": config.base_de_donnees.stat().st_size
                        if config.base_de_donnees.exists() else 0,
+        # Ces archives sont sur le même disque que la comptabilité : l'écran
+        # doit pouvoir dire depuis quand il en existe une copie ailleurs.
+        "copie_externe": etat_copie_externe(),
     }
 
 
@@ -304,4 +307,151 @@ def api_verifie(ctx):
         "pieces_manquantes": pieces_manquantes[:50],
         "conforme": (integrite == "ok" and not orphelines and not desequilibrees
                      and not comptes_inconnus),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Copie hors du poste
+#
+# Les sauvegardes sont rangées dans `donnees/sauvegardes/`, c'est-à-dire sur
+# le même disque que la comptabilité elle-même. Une panne de disque, un vol
+# ou un rançongiciel emporte donc les comptes ET toutes leurs copies d'un
+# seul coup. Le guide conseillait une clé USB hebdomadaire ; rien ne le
+# rappelait ni ne le vérifiait. Ces routes permettent de faire la copie
+# depuis l'application, et surtout de voir quand elle date.
+# ---------------------------------------------------------------------------
+
+#: Au-delà, l'application le signale : une copie trop vieille ne protège
+#: plus grand-chose.
+JOURS_AVANT_RAPPEL = 7
+
+
+def _lit_copie_externe() -> dict:
+    brut = db.valeur("SELECT valeur FROM meta WHERE cle = 'copie_externe'")
+    if not brut:
+        return {}
+    try:
+        valeur = json.loads(brut)
+    except ValueError:
+        return {}
+    return valeur if isinstance(valeur, dict) else {}
+
+
+def _ecrit_copie_externe(destination: Path, nom: str) -> dict:
+    etat = {"date": util.maintenant(), "destination": str(destination), "nom": nom}
+    with db.transaction():
+        db.execute("INSERT OR REPLACE INTO meta (cle, valeur) VALUES (?, ?)",
+                   ("copie_externe", json.dumps(etat, ensure_ascii=False)))
+    return etat
+
+
+def etat_copie_externe() -> dict:
+    """Où en est la dernière copie hors du poste, et depuis quand."""
+    etat = dict(_lit_copie_externe())
+    etat["seuil_jours"] = JOURS_AVANT_RAPPEL
+    date = etat.get("date")
+    if not date:
+        etat["jours"] = None
+        etat["a_rappeler"] = True
+        return etat
+    import datetime
+    try:
+        quand = datetime.datetime.fromisoformat(date)
+    except ValueError:
+        etat["jours"] = None
+        etat["a_rappeler"] = True
+        return etat
+    jours = (datetime.datetime.now() - quand).days
+    etat["jours"] = jours
+    etat["a_rappeler"] = jours >= JOURS_AVANT_RAPPEL
+    return etat
+
+
+def _verifie_destination(brut: str) -> Path:
+    """Un emplacement qui protège vraiment : ailleurs que le dossier de travail."""
+    if not brut or not brut.strip():
+        raise ErreurApplicative(
+            "Indiquez où copier la sauvegarde : une clé USB (E:\\), un disque "
+            "externe, ou un dossier d'un autre disque.")
+    try:
+        destination = Path(brut.strip()).expanduser().resolve()
+    except (OSError, ValueError) as err:
+        raise ErreurApplicative(f"Emplacement illisible : {err}") from err
+
+    if not destination.exists():
+        raise ErreurApplicative(
+            f"« {destination} » est introuvable. Si c'est une clé USB, "
+            "vérifiez qu'elle est bien branchée, puis réessayez.")
+    if not destination.is_dir():
+        raise ErreurApplicative(
+            f"« {destination} » n'est pas un dossier. Indiquez un dossier, "
+            "pas un fichier.")
+
+    # Copier à côté de l'original ne protège de rien : c'est le disque entier
+    # que l'on cherche à ne pas perdre.
+    for interdit, motif in (
+        (config.dossier_donnees, "dans votre dossier de données"),
+        (RACINE_APPLICATION, "dans le dossier du programme"),
+    ):
+        try:
+            destination.relative_to(Path(interdit).resolve())
+        except ValueError:
+            continue
+        raise ErreurApplicative(
+            f"Cet emplacement est {motif} : la copie serait perdue en même "
+            "temps que l'original. Choisissez une clé USB ou un autre disque.")
+
+    essai = destination / ".cabinet_immo_essai"
+    try:
+        essai.write_bytes(b"")
+        essai.unlink()
+    except OSError as err:
+        raise ErreurApplicative(
+            f"Impossible d'écrire dans « {destination} » ({err}). Vérifiez "
+            "que le support n'est pas protégé en écriture.") from err
+    return destination
+
+
+@route("POST", "/api/sauvegardes/copier")
+def api_copie_externe(ctx):
+    """Copie une sauvegarde hors du poste, et retient où et quand."""
+    ctx.interdit_lecture_seule()
+    ctx.exige_role("admin", "comptable")
+    destination = _verifie_destination(ctx.champ("destination", ""))
+
+    nom = Path(ctx.champ("nom") or "").name
+    if nom:
+        source = (config.dossier_sauvegardes / nom).resolve()
+        try:
+            source.relative_to(config.dossier_sauvegardes.resolve())
+        except ValueError:
+            raise ErreurApplicative("Sauvegarde inconnue.")
+        if not source.is_file():
+            raise ErreurApplicative(f"La sauvegarde « {nom} » n'existe plus.")
+    else:
+        # Aucune précision : la plus récente, en la créant au besoin pour que
+        # la copie reflète bien la comptabilité d'aujourd'hui.
+        archives = sorted(config.dossier_sauvegardes.glob("*.zip"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
+        source = archives[0] if archives else cree_sauvegarde("copie_externe")
+
+    cible = destination / source.name
+    try:
+        shutil.copy2(source, cible)
+    except OSError as err:
+        raise ErreurApplicative(
+            f"Copie impossible ({err}). Si c'est une clé USB, vérifiez "
+            "qu'il reste de la place et qu'elle n'a pas été retirée.") from err
+
+    etat = _ecrit_copie_externe(destination, source.name)
+    db.trace("copie_externe", "systeme", None,
+             {"nom": source.name, "destination": str(destination)},
+             ctx.nom_utilisateur)
+    return {
+        "nom": source.name,
+        "destination": str(destination),
+        "chemin": str(cible),
+        "taille": cible.stat().st_size,
+        "date": etat["date"],
+        "message": f"Sauvegarde copiée dans {destination}.",
     }

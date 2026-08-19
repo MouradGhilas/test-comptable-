@@ -3,6 +3,19 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.6.3
+
+- **Copie de vos sauvegardes hors du poste**, dans Paramètres → Sauvegarde &
+  données. Jusqu'ici les sauvegardes étaient rangées à côté de la
+  comptabilité, donc **sur le même disque** : une panne, un vol ou un
+  rançongiciel emportait les comptes et toutes leurs copies d'un seul coup.
+  Vous branchez une clé USB, vous indiquez sa lettre, vous cliquez.
+- **L'application vous dit depuis quand la dernière copie date**, et le
+  signale au bout d'une semaine. Elle refuse de copier dans votre dossier de
+  données ou dans celui du programme : cela ne protégerait de rien.
+- Une clé débranchée, un support plein ou protégé en écriture donnent un
+  message clair au lieu d'une erreur technique.
+
 ## 1.6.2
 
 - **Correction de la panne qui empêchait toute mise à jour depuis

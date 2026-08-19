@@ -1356,6 +1356,8 @@ async function ongletSauvegarde(zone) {
       `<button class="primaire" onclick="lanceSauvegarde()">Sauvegarder maintenant</button>
        <button onclick="verifieIntegrite()">Vérifier l'intégrité</button>`)}
 
+    ${carteCopieExterne(sauvegardes.copie_externe || {})}
+
     ${carte('Sauvegardes disponibles', tableau([
       { titre: 'Fichier', cle: 'nom' },
       { titre: 'Date', cle: 'date' },
@@ -1374,6 +1376,13 @@ async function ongletSauvegarde(zone) {
       <div id="zone-diagnostic"><div class="vide">Non chargé.</div></div>`,
       `<button onclick="afficheDiagnostic()">Afficher le journal</button>
        <button class="primaire" onclick="modaleSignalement()">Signaler un problème</button>`)}`;
+
+  // Le chemin d'une clé USB contient souvent une apostrophe ou un antislash :
+  // on branche le bouton plutôt que de glisser la valeur dans un onclick.
+  $('#copie-lancer', zone).onclick = copieSauvegardeExterne;
+  $('#copie-destination', zone).addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); copieSauvegardeExterne(); }
+  });
 }
 
 async function afficheDiagnostic() {
@@ -1740,4 +1749,78 @@ function ongletApparence(zone) {
     ongletApparence(zone);
     notifie('Réglages d\'apparence remis à leur valeur livrée.', 'succes');
   };
+}
+
+/* ------------------------------------------ Copie hors du poste --------- */
+
+/* Les sauvegardes vivent dans le dossier de données, donc sur le disque qui
+   porte déjà la comptabilité : une panne, un vol ou un rançongiciel emporte
+   les comptes et toutes leurs copies ensemble. Cet écran rend la copie
+   ailleurs faisable en un clic — et surtout visible quand elle date. */
+
+function carteCopieExterne(etat) {
+  const jours = etat.jours;
+  const jamais = !etat.date;
+  const enRetard = etat.a_rappeler;
+
+  const bandeau = jamais
+    ? `<div class="message alerte"><strong>Vos sauvegardes sont sur le même
+        disque que votre comptabilité.</strong> Une panne de disque, un vol ou
+        un rançongiciel emporterait les comptes et toutes leurs copies d'un
+        seul coup. Copiez-les sur une clé USB ou un disque externe.</div>`
+    : (enRetard
+      ? `<div class="message alerte"><strong>Dernière copie il y a ${jours} jour(s).</strong>
+          Tout ce qui a été saisi depuis n'existe qu'à un seul endroit.</div>`
+      : `<div class="message succes"><strong>Copie faite il y a
+          ${jours === 0 ? "moins d'un jour" : jours + ' jour(s)'}.</strong>
+          Votre comptabilité existe à deux endroits.</div>`);
+
+  const memoire = etat.destination || localStorage.getItem('copie_destination') || '';
+
+  return carte('Copie hors du poste', `
+    ${bandeau}
+    <p class="aide">Branchez la clé USB, indiquez sa lettre (par exemple
+      <code>E:\\</code>) ou le dossier d'un disque externe, puis copiez. La
+      sauvegarde la plus récente est copiée telle quelle&nbsp;; si aucune
+      n'existe encore, elle est créée pour l'occasion.</p>
+    <div class="rangee" style="align-items:flex-end; gap:12px">
+      <label class="champ" style="flex:1">
+        <span>Où copier</span>
+        <input id="copie-destination" value="${ech(memoire)}"
+               placeholder="E:\\ ou D:\\sauvegardes-compta"></label>
+      <button class="primaire" id="copie-lancer">Copier maintenant</button>
+    </div>
+    <div id="copie-resultat"></div>
+    ${etat.date ? `<div class="petit" style="margin-top:8px">Dernière copie :
+      ${ech(etat.date)} — <code>${ech(etat.destination || '')}</code></div>` : ''}`);
+}
+
+async function copieSauvegardeExterne() {
+  const champ = $('#copie-destination');
+  const zone = $('#copie-resultat');
+  const bouton = $('#copie-lancer');
+  const destination = (champ.value || '').trim();
+  if (!destination) {
+    notifie('Indiquez d\'abord où copier.', 'alerte');
+    champ.focus();
+    return;
+  }
+  bouton.disabled = true;
+  zone.innerHTML = '<div class="vide">Copie en cours…</div>';
+  try {
+    const d = await envoie('/api/sauvegardes/copier', { destination });
+    // On retient l'emplacement : la même clé USB revient chaque semaine.
+    localStorage.setItem('copie_destination', destination);
+    zone.innerHTML = `<div class="message succes"><strong>${ech(d.nom)}</strong>
+      copiée dans <code>${ech(d.destination)}</code>. Vous pouvez retirer le
+      support.</div>`;
+    notifie('Copie faite.', 'succes');
+    // Le bandeau du haut doit refléter la nouvelle date.
+    await afficheRoute();
+  } catch (err) {
+    zone.innerHTML = `<div class="message danger"><strong>Copie impossible</strong>
+      ${ech(err.message)}</div>`;
+  } finally {
+    bouton.disabled = false;
+  }
 }

@@ -305,9 +305,26 @@ Points utiles :
 ## Sauvegarder
 
 - Une sauvegarde part automatiquement à chaque fermeture de l'application.
-- **Une fois par semaine**, copiez le dossier `donnees` sur une clé USB.
-  Une sauvegarde restée sur le même disque ne protège de rien.
 - Pour revenir en arrière : Paramètres → Sauvegarde → Restaurer.
+
+### La copie hors du poste — la seule qui protège vraiment
+
+Les sauvegardes sont rangées dans le dossier `donnees`, donc **sur le disque
+qui porte déjà la comptabilité**. Une panne de disque, un vol ou un
+rançongiciel emporterait les comptes *et* toutes leurs copies d'un seul coup.
+
+**Une fois par semaine :** branchez une clé USB, allez dans
+**Paramètres → Sauvegarde & données → Copie hors du poste**, indiquez la
+lettre du lecteur (`E:\` par exemple) et cliquez sur **Copier maintenant**.
+L'emplacement est retenu : les fois suivantes, il n'y a plus qu'à cliquer.
+
+L'application affiche depuis quand date la dernière copie, et le signale au
+bout d'une semaine. Elle refuse de copier dans le dossier de données ou dans
+celui du programme — ce serait mettre la copie sur le disque qu'on cherche
+justement à ne pas perdre.
+
+Gardez la clé ailleurs que sur le bureau où se trouve l'ordinateur : un vol
+ou un dégât des eaux emporte volontiers les deux.
 
 ## Mettre à jour
 
