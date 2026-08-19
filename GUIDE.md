@@ -71,6 +71,11 @@ synchronisé — une sauvegarde sur clé USB protège mieux, et sans risque.
 et vérifiez chaque valeur avec la loi de finances de l'année. Les valeurs
 livrées sont des valeurs de départ, pas une référence légale.
 
+Tout y est modifiable, **y compris le barème IRG des salaires** : ses tranches
+s'ajoutent, se corrigent et se retirent une par une, et c'est lui qui commande
+tous les bulletins de paie. Comme il change presque à chaque loi de finances,
+c'est la première chose à contrôler en début d'exercice.
+
 ## Au quotidien
 
 | Pour… | Aller dans |
@@ -301,6 +306,25 @@ Points utiles :
 - Les en-têtes sont reconnus même avec des accents, des majuscules ou des
   variantes courantes (`numero`, `intitule`, `compte general`…).
 - Le CSV enregistré depuis Excel est accepté aussi.
+
+## Le justificatif de chaque écriture
+
+Ouvrez une écriture (un clic sur sa ligne dans le journal), puis, en bas :
+**Justificatifs → Ajouter**. Déposez le scan ou la photo de la facture.
+
+C'est le geste qui rend une comptabilité défendable : lors d'un contrôle, on
+ne demande pas le libellé, on demande la pièce. Le fichier est rangé dans
+votre dossier de données, et il part avec les sauvegardes comme avec la copie
+sur clé USB.
+
+Dans le journal, un **trombone** signale les écritures déjà justifiées. Pour
+voir celles qui restent à documenter, cochez **« Sans justificatif »** puis
+**Filtrer** — c'est le premier geste à faire avant une clôture ou un
+contrôle.
+
+Formats acceptés : PDF, images (photo de téléphone comprise), documents
+bureautiques, jusqu'à 20 Mo par pièce. Si un scan dépasse, refaites-le en
+noir et blanc ou en qualité réduite.
 
 ## Sauvegarder
 

@@ -3,6 +3,23 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.6.4
+
+- **Le justificatif se rattache enfin à l'écriture.** Ouvrez une écriture,
+  déposez le scan ou la photo de la facture : c'est elle qu'on vous
+  demandera lors d'un contrôle. Le fichier est rangé dans votre dossier de
+  données, part avec les sauvegardes et avec la copie sur clé USB.
+- **Le journal montre d'un coup d'œil ce qui manque** : un trombone sur les
+  écritures justifiées, et une case **« Sans justificatif »** pour n'afficher
+  que celles qui restent à documenter.
+- Formats acceptés : PDF, images, documents bureautiques, jusqu'à 20 Mo. Un
+  fichier d'un autre type est refusé en disant pourquoi.
+- **Le barème IRG devient modifiable** (Fiscalité → Paramètres). Sa remarque
+  disait « à vérifier et adapter » alors qu'il était le seul paramètre
+  affiché en lecture seule — or la loi de finances le change presque chaque
+  année, et il commande tous les bulletins de paie. Les tranches s'ajoutent,
+  se modifient et se retirent une par une.
+
 ## 1.6.3
 
 - **Copie de vos sauvegardes hors du poste**, dans Paramètres → Sauvegarde &

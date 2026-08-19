@@ -673,6 +673,12 @@ def api_ecritures(ctx):
                           "OR e.reference LIKE ?)")
         motif = "%" + ctx.arg("q") + "%"
         params += [motif, motif, motif, motif]
+    # Retrouver les écritures dont le justificatif manque est le premier
+    # geste avant un contrôle : c'est un filtre, pas une recherche à l'œil.
+    if ctx.arg("sans_piece") == "1":
+        conditions.append(
+            "NOT EXISTS (SELECT 1 FROM pieces_jointes pj "
+            "WHERE pj.entite = 'ecriture' AND pj.entite_id = e.id)")
     fragment, params_perimetre = clause_perimetre(ctx.perimetre())
     if fragment:
         conditions.append(fragment.replace(" AND ", "", 1))
@@ -680,7 +686,9 @@ def api_ecritures(ctx):
     limite = min(ctx.arg_int("limite", 200) or 200, 2000)
     ecritures = db.lignes(
         "SELECT e.*, j.code AS journal, j.libelle AS journal_libelle, "
-        "  (SELECT COALESCE(SUM(debit),0) FROM lignes WHERE ecriture_id = e.id) AS montant "
+        "  (SELECT COALESCE(SUM(debit),0) FROM lignes WHERE ecriture_id = e.id) AS montant, "
+        "  (SELECT COUNT(*) FROM pieces_jointes pj "
+        "     WHERE pj.entite = 'ecriture' AND pj.entite_id = e.id) AS nb_pieces "
         "FROM ecritures e JOIN journaux j ON j.id = e.journal_id "
         f"WHERE {' AND '.join(conditions)} "
         "ORDER BY e.date DESC, e.id DESC LIMIT ?",

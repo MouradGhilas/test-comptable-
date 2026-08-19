@@ -11,6 +11,7 @@ App.pages['comptabilite/ecritures'] = {
       du: route.parametres.du || '',
       au: route.parametres.au || '',
       q: route.parametres.q || '',
+      sans_piece: route.parametres.sans_piece || '',
     };
     actionsPage(`<button class="primaire" onclick="saisieEcriture()">+ Écriture</button>
       <button onclick="telecharge('/api/export/journal', ${JSON.stringify(filtres).replace(/"/g, "'")})">Exporter le journal</button>`);
@@ -30,6 +31,8 @@ App.pages['comptabilite/ecritures'] = {
         </select></label>
         <label class="champ"><span>Du</span><input type="date" id="f-du" value="${filtres.du}"></label>
         <label class="champ"><span>Au</span><input type="date" id="f-au" value="${filtres.au}"></label>
+        <label class="champ"><span><input type="checkbox" id="f-sans-piece"
+          ${filtres.sans_piece === '1' ? 'checked' : ''}> Sans justificatif</span></label>
         <button onclick="appliqueFiltresEcritures()">Filtrer</button>
       </div>
       ${carte(`${d.total} écriture(s)`, tableau([
@@ -39,6 +42,12 @@ App.pages['comptabilite/ecritures'] = {
         { titre: 'Pièce', cle: 'piece' },
         { titre: 'Libellé', rendu: (e) => ech(e.libelle) },
         { titre: 'Montant', classe: 'num', rendu: (e) => fm(e.montant) },
+        // Un trombone vaut mieux qu'une colonne de plus : présent ou absent,
+        // cela se voit en balayant la liste.
+        { titre: '', classe: 'centre', largeur: '34px',
+          rendu: (e) => e.nb_pieces
+            ? `<span title="${e.nb_pieces} justificatif(s)">📎</span>`
+            : '<span class="discret" title="Aucun justificatif">·</span>' },
         { titre: 'État', rendu: (e) => e.validee ? etiquette('validee') : etiquette('brouillon') },
         { titre: 'Périmètre', rendu: (e) => badgePerimetre(e.perimetre) + rappelOperation(e) },
         { titre: 'Origine', rendu: (e) => `<span class="tres-petit">${ech(e.module || '')}</span>` },
@@ -67,6 +76,7 @@ function appliqueFiltresEcritures() {
     const v = $(`#f-${c}`).value;
     if (v) p.set(c, v);
   }
+  if ($('#f-sans-piece').checked) p.set('sans_piece', '1');
   navigue(`/comptabilite/ecritures?${p}`);
 }
 
@@ -100,7 +110,8 @@ async function detailEcriture(id) {
         pied: [{ contenu: '<strong>TOTAUX</strong>' }, {}, {}, {},
           { contenu: `<strong>${fm(totalDebit)}</strong>`, classe: 'num' },
           { contenu: `<strong>${fm(totalCredit)}</strong>`, classe: 'num' }, {}],
-      })}`,
+      })}
+      <div id="zone-justificatifs">${blocJustificatifs('ecriture', id, e.pieces || [])}</div>`,
     boutons: [
       { libelle: 'Fermer' },
       {
@@ -116,6 +127,7 @@ async function detailEcriture(id) {
       },
     ],
   });
+  brancheJustificatifs('ecriture', id);
 }
 
 /* ------------------------------------------------- Saisie d'écriture ---- */

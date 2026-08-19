@@ -529,6 +529,15 @@ table.saisie input:focus, table.saisie select:focus { background: var(--fond-car
   .barre-haute { padding: 11px 14px; }
 }
 
+/* ---------- Justificatifs ---------- */
+fieldset.justificatifs { margin-top: 14px; }
+.liste-pieces { list-style: none; margin: 0; padding: 0; }
+.liste-pieces li { display: flex; align-items: center; gap: 10px; padding: 5px 0;
+                   border-bottom: 1px solid var(--bordure); }
+.liste-pieces li:last-child { border-bottom: none; }
+.liste-pieces a { flex: 1; word-break: break-all; }
+.liste-pieces .tres-petit { white-space: nowrap; }
+
 /* ---------- Écran de mise à jour ---------- */
 /* Pendant l'installation l'application est fermée : cet écran est la seule
    chose que l'utilisateur a sous les yeux. Il doit donc dire où l'on en est,

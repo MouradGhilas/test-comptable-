@@ -682,3 +682,113 @@ function actionsPage(html) { $('#actions-page').innerHTML = html; }
 function sousTitre(texte) { $('#sous-titre-page').textContent = texte; }
 
 window.addEventListener('hashchange', afficheRoute);
+
+/* ------------------------------------------------- Justificatifs -------- */
+
+/* Une écriture sans sa pièce est une écriture indéfendable : le jour d'un
+   contrôle, c'est la facture qu'on demande, pas le libellé. Le stockage, les
+   routes et l'inclusion dans les sauvegardes existaient déjà — il manquait
+   seulement de quoi s'en servir. Écrit une fois pour toutes les entités
+   (écriture, facture, bail, contrat…), même si seule l'écriture s'en sert
+   pour l'instant. */
+
+const TAILLE_MAX_PIECE = 20 * 1024 * 1024;
+
+function _octets(n) {
+  const ko = Number(n || 0) / 1024;
+  return ko < 1024 ? `${Math.max(1, Math.round(ko))} Ko`
+                   : `${(ko / 1024).toFixed(1)} Mo`;
+}
+
+/** Liste des pièces d'une entité + zone de dépôt. */
+function blocJustificatifs(entite, entiteId, pieces) {
+  const lignes = (pieces || []).map((p) => `
+    <li>
+      <a href="/fichiers/${ech(encodeURI(p.chemin))}" target="_blank" rel="noopener">${ech(p.nom_fichier)}</a>
+      <span class="tres-petit">${_octets(p.taille)} · ${ech((p.cree_le || '').slice(0, 10))}</span>
+      <button class="petit-bouton danger" data-piece="${p.id}"
+              title="Retirer ce justificatif">Retirer</button>
+    </li>`).join('');
+
+  return `<fieldset class="justificatifs">
+    <legend>Justificatifs${pieces && pieces.length ? ` (${pieces.length})` : ''}</legend>
+    ${lignes ? `<ul class="liste-pieces">${lignes}</ul>`
+             : `<p class="aide">Aucune pièce rattachée. Ajoutez le scan ou la
+                photo de la facture : c'est elle qu'on vous demandera.</p>`}
+    <div class="rangee" style="align-items:center; gap:10px; margin-top:8px">
+      <input type="file" id="pj-fichier"
+             accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.tif,.tiff,.doc,.docx,.xls,.xlsx,.csv,.txt,.odt,.ods">
+      <button class="petit-bouton primaire" id="pj-ajouter"
+              data-entite="${ech(entite)}" data-id="${entiteId}">Ajouter</button>
+    </div>
+    <div id="pj-message"></div>
+  </fieldset>`;
+}
+
+/** Branche le dépôt et le retrait, une fois la fenêtre affichée. */
+function brancheJustificatifs(entite, entiteId) {
+  const bouton = $('#pj-ajouter');
+  if (!bouton) return;
+  bouton.onclick = () => deposeJustificatif(entite, entiteId);
+  document.querySelectorAll('#zone-justificatifs [data-piece]').forEach((b) => {
+    b.onclick = () => retireJustificatif(b.dataset.piece, entite, entiteId, b);
+  });
+}
+
+async function rafraichitJustificatifs(entite, entiteId) {
+  const zone = $('#zone-justificatifs');
+  if (!zone) return;
+  const d = await charge('/api/pieces', { entite, entite_id: entiteId });
+  zone.innerHTML = blocJustificatifs(entite, entiteId, d.pieces || []);
+  brancheJustificatifs(entite, entiteId);
+}
+
+async function deposeJustificatif(entite, entiteId) {
+  const champ = $('#pj-fichier');
+  const message = $('#pj-message');
+  const fichier = champ && champ.files[0];
+  if (!fichier) { notifie('Choisissez d\'abord un fichier.', 'alerte'); return; }
+  // Contrôlé ici pour éviter d'encoder 40 Mio avant de se faire refuser.
+  if (fichier.size > TAILLE_MAX_PIECE) {
+    message.innerHTML = `<div class="message alerte">Ce fichier fait
+      ${_octets(fichier.size)}. Maximum : 20 Mo — scannez en qualité réduite,
+      ou en noir et blanc.</div>`;
+    return;
+  }
+  const bouton = $('#pj-ajouter');
+  bouton.disabled = true;
+  message.innerHTML = '<div class="petit">Enregistrement…</div>';
+  try {
+    const contenu = await litFichierBase64(fichier);
+    await envoie('/api/pieces', {
+      entite, entite_id: entiteId, contenu,
+      nom_fichier: fichier.name, type_mime: fichier.type || '',
+    });
+    notifie('Justificatif ajouté.', 'succes');
+    await rafraichitJustificatifs(entite, entiteId);
+  } catch (err) {
+    message.innerHTML = `<div class="message danger">${ech(err.message)}</div>`;
+    bouton.disabled = false;
+  }
+}
+
+/* La confirmation se fait sur le bouton lui-même, en deux temps. Passer par
+   `confirme()` ouvrirait une seconde fenêtre dans la même boîte
+   (`#corps-modale`) et effacerait l'écriture qu'on est en train de
+   consulter — le piège avait déjà coûté une correction sur l'écran d'import. */
+async function retireJustificatif(id, entite, entiteId, bouton) {
+  if (bouton && bouton.dataset.confirme !== '1') {
+    bouton.dataset.confirme = '1';
+    bouton.textContent = 'Confirmer ?';
+    bouton.title = 'Le fichier sera supprimé du dossier. L\'écriture ne bouge pas.';
+    setTimeout(() => {
+      if (!bouton.isConnected || bouton.dataset.confirme !== '1') return;
+      delete bouton.dataset.confirme;
+      bouton.textContent = 'Retirer';
+    }, 4000);
+    return;
+  }
+  await api(`/api/pieces/${id}`, { method: 'DELETE' });
+  notifie('Justificatif retiré.', 'succes');
+  await rafraichitJustificatifs(entite, entiteId);
+}

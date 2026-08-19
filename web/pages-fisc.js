@@ -329,14 +329,16 @@ async function vueParametresFiscaux(zone, route) {
   actionsPage('');
 
   const rendu = (p) => {
+    // Le barème IRG change à presque chaque loi de finances, et il commande
+    // tous les bulletins de paie. C'était pourtant le seul paramètre affiché
+    // en lecture seule, alors que sa remarque dit « à vérifier et adapter ».
     if (p.unite === 'bareme') {
       let tranches = [];
       try { tranches = JSON.parse(p.valeur); } catch { tranches = []; }
-      return `<td colspan="2"><table class="donnees" style="margin:0">
-        <thead><tr><th>Jusqu'à (DA/mois)</th><th class="num">Taux</th></tr></thead>
-        <tbody>${tranches.map((t) => `<tr>
-          <td>${t.plafond === null ? 'Au-delà' : fm(t.plafond)}</td>
-          <td class="num">${ft(t.taux)} %</td></tr>`).join('')}</tbody></table></td>`;
+      return `<td colspan="2"><div id="bareme-${ech(p.cle)}"
+                data-bareme="${ech(p.cle)}">${lignesBareme(tranches)}</div>
+        <button class="petit-bouton" onclick="ajouteTrancheBareme('${ech(p.cle)}')"
+          style="margin-top:6px">+ Ajouter une tranche</button></td>`;
     }
     const valeur = p.unite === 'pourcentage' ? ft(p.valeur)
       : (p.unite === 'montant' ? pourChamp(p.valeur) : p.valeur);
@@ -379,6 +381,17 @@ async function enregistreParametres(annee) {
     else if (unite === 'montant') valeur = cts(valeur);
     return { cle: el.dataset.cle, valeur, unite };
   });
+  // Les barèmes ne sont pas de simples champs : ils se relisent tranche
+  // par tranche. Le serveur accepte déjà une liste et la range en JSON.
+  for (const zone of $$('[data-bareme]')) {
+    const tranches = litBareme(zone.dataset.bareme);
+    if (!tranches || !tranches.length) continue;
+    if (tranches.some((t) => t.plafond !== null && t.plafond <= 0)) {
+      notifie('Chaque tranche doit avoir un plafond supérieur à zéro.', 'alerte');
+      return;
+    }
+    parametres.push({ cle: zone.dataset.bareme, valeur: tranches, unite: 'bareme' });
+  }
   try {
     await envoie('/api/parametres-fiscaux', { annee, parametres }, 'PUT');
     notifie(`Paramètres fiscaux ${annee} enregistrés.`, 'succes');
@@ -737,4 +750,68 @@ async function cedeImmo(id) {
       },
     }],
   });
+}
+
+/* ------------------------------------------------- Barème progressif ---- */
+
+/* Un barème est une suite de tranches : « jusqu'à X, tel taux », la dernière
+   valant « au-delà ». On le saisit tranche par tranche plutôt qu'en JSON —
+   c'est un comptable qui le recopie de la loi de finances, pas un
+   informaticien. */
+
+function lignesBareme(tranches) {
+  const rangs = tranches.length ? tranches : [{ plafond: 0, taux: 0 }, { plafond: null, taux: 0 }];
+  return `<table class="donnees" style="margin:0">
+    <thead><tr><th>Jusqu'à (DA/mois)</th><th class="num" style="width:90px">Taux %</th>
+      <th style="width:34px"></th></tr></thead>
+    <tbody>${rangs.map((t, i) => {
+      const derniere = t.plafond === null || t.plafond === undefined;
+      return `<tr data-tranche>
+        <td>${derniere
+          ? '<em class="discret">Au-delà</em><input type="hidden" data-plafond value="">'
+          : `<input class="num" data-plafond value="${ech(pourChamp(t.plafond))}">`}</td>
+        <td><input class="num" data-taux value="${ech(ft(t.taux))}"></td>
+        <td>${derniere ? ''
+          : `<button class="petit-bouton danger" onclick="retireTrancheBareme(this)"
+               title="Retirer cette tranche">×</button>`}</td>
+      </tr>`;
+    }).join('')}</tbody></table>`;
+}
+
+/** Relit les tranches saisies, dans l'ordre des montants. */
+function litBareme(cle) {
+  const zone = document.querySelector(`[data-bareme="${cle}"]`);
+  if (!zone) return null;
+  const tranches = [...zone.querySelectorAll('[data-tranche]')].map((tr) => {
+    const brut = tr.querySelector('[data-plafond]').value;
+    const taux = Math.round(
+      parseFloat(String(tr.querySelector('[data-taux]').value).replace(',', '.') || 0) * 100);
+    return { plafond: String(brut).trim() === '' ? null : cts(brut), taux };
+  });
+  // La tranche ouverte se place toujours en dernier, quel que soit l'ordre
+  // de saisie ; les autres se rangent par montant croissant.
+  const finies = tranches.filter((t) => t.plafond !== null)
+                         .sort((a, b) => a.plafond - b.plafond);
+  const ouverte = tranches.find((t) => t.plafond === null);
+  return ouverte ? [...finies, ouverte] : finies;
+}
+
+function ajouteTrancheBareme(cle) {
+  const zone = document.querySelector(`[data-bareme="${cle}"]`);
+  const tranches = litBareme(cle) || [];
+  const finies = tranches.filter((t) => t.plafond !== null);
+  const ouverte = tranches.find((t) => t.plafond === null) || { plafond: null, taux: 0 };
+  const dernier = finies.length ? finies[finies.length - 1].plafond : 0;
+  finies.push({ plafond: dernier, taux: ouverte.taux });
+  zone.innerHTML = lignesBareme([...finies, ouverte]);
+}
+
+function retireTrancheBareme(bouton) {
+  const ligne = bouton.closest('[data-tranche]');
+  const zone = bouton.closest('[data-bareme]');
+  ligne.remove();
+  // Une seule tranche restante n'aurait plus de sens : on garde l'ouverte.
+  if (!zone.querySelectorAll('[data-tranche]').length) {
+    zone.innerHTML = lignesBareme([{ plafond: null, taux: 0 }]);
+  }
 }
