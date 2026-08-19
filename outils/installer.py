@@ -171,7 +171,28 @@ def ecrit_lanceur_unix() -> None:
 
 # ---------------------------------------------------------------------------
 
+def sortie_utf8() -> None:
+    """Rend l'affichage insensible à la page de codes de Windows.
+
+    Une console française hérite de cp1252 : le moindre caractère
+    semi-graphique du cadre d'accueil y lèverait UnicodeEncodeError et
+    empêcherait le démarrage. `errors="replace"` sert de garde-fou — un
+    caractère manquant doit dégrader l'affichage, jamais arrêter le
+    programme.
+    """
+    import sys
+    for flux in (sys.stdout, sys.stderr):
+        # pythonw.exe ne fournit aucun flux : il n'y a alors rien à régler.
+        if flux is None:
+            continue
+        try:
+            flux.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def principal() -> int:
+    sortie_utf8()
     print()
     print("  " + "=" * 58)
     print("    CABINET IMMO — Installation")

@@ -332,7 +332,34 @@ def abandonne(arguments, etape_cle: str, message: str) -> int:
     return 1
 
 
+def sortie_utf8() -> None:
+    """Rend l'affichage insensible à la page de codes de Windows.
+
+    Une console française hérite de cp1252, et un fichier ouvert par un
+    processus fils aussi : le moindre « → » ou « ═ » y lève alors
+    UnicodeEncodeError. Comme la toute première ligne affichée par cet outil
+    contenait un cadre en caractères semi-graphiques, la mise à jour mourait
+    avant même de commencer — sans rien installer, et sans rien dire quand la
+    sortie partait au néant.
+
+    On force donc l'UTF-8, avec `errors="replace"` en garde-fou : un
+    caractère manquant doit dégrader l'affichage, jamais interrompre une
+    mise à jour. Défini sur place, sans import : ce fichier doit tenir même
+    quand le reste du programme vient d'être remplacé.
+    """
+    import sys
+    for flux in (sys.stdout, sys.stderr):
+        # pythonw.exe ne fournit aucun flux : il n'y a alors rien à régler.
+        if flux is None:
+            continue
+        try:
+            flux.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass    # flux exotique : on continue, quitte à perdre un accent
+
+
 def principal() -> int:
+    sortie_utf8()
     analyseur = argparse.ArgumentParser(description=__doc__)
     analyseur.add_argument("archive", nargs="?", help="fichier .zip ou lien")
     analyseur.add_argument("--annuler", action="store_true",

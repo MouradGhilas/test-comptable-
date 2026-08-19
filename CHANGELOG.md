@@ -3,6 +3,19 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.6.2
+
+- **Correction de la panne qui empêchait toute mise à jour depuis
+  l'application.** Sur un Windows français, l'affichage utilise la page de
+  codes cp1252, qui ne connaît ni les cadres `═` ni les flèches `→` de
+  l'outil de mise à jour. Celui-ci s'arrêtait donc sur sa toute première
+  ligne, avant d'avoir rien installé — et comme sa sortie partait au néant,
+  cela se voyait seulement à un chargement qui n'en finissait pas. C'était
+  la vraie raison du « bouton qui ne fait pas grand-chose ».
+- L'application, l'outil de mise à jour et l'installateur forcent désormais
+  l'UTF-8 pour leur affichage, avec un garde-fou : un caractère qui passe
+  mal dégrade l'affichage, il n'interrompt plus jamais une mise à jour.
+
 ## 1.6.1
 
 - **Après une mise à jour réussie, l'application dit ce qu'elle vient

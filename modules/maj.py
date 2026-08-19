@@ -334,6 +334,15 @@ def api_applique(ctx):
     except OSError:
         sortie = None
 
+    # Le fils écrit dans un fichier, dont il choisit l'encodage d'après la
+    # page de codes du système : sur un Windows français, cp1252. Le moindre
+    # caractère semi-graphique de son cadre d'accueil y levait alors une
+    # UnicodeEncodeError, et la mise à jour mourait à sa première ligne. On
+    # impose l'UTF-8 par l'environnement, en plus du garde-fou que l'outil
+    # pose lui-même : celui-ci n'existe pas dans les versions déjà installées.
+    environnement = dict(os.environ, PYTHONIOENCODING="utf-8:replace",
+                         PYTHONUTF8="1")
+
     try:
         subprocess.Popen(
             [sys.executable, str(outil), str(archive), "--auto", "--relancer",
@@ -342,7 +351,7 @@ def api_applique(ctx):
              # sauvegarde d'arrêt dure ce que dure le dossier de pièces.
              "--attendre-pid", str(os.getpid()),
              "--vers", str(RACINE)],
-            cwd=str(RACINE), **options_detachement(),
+            cwd=str(RACINE), **options_detachement(), env=environnement,
             stdin=subprocess.DEVNULL,
             stdout=sortie or subprocess.DEVNULL,
             stderr=subprocess.STDOUT)

@@ -118,6 +118,18 @@ def dossier_installation(ici: Path) -> Path:
 
 
 def principal():
+    # Cet installateur est le filet de secours : c'est lui qu'on lance quand
+    # la mise à jour depuis l'application ne passe pas. Il ne doit donc
+    # jamais échouer sur un simple caractère accentué, quelle que soit la
+    # page de codes de la console.
+    for flux in (sys.stdout, sys.stderr):
+        if flux is None:
+            continue
+        try:
+            flux.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
     print()
     print("  " + "=" * 58)
     print("    CABINET IMMO " + VERSION + " — installation")
