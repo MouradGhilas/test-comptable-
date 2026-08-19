@@ -1565,18 +1565,8 @@ async function ongletNotifications(zone) {
     }), '<button class="primaire" onclick="ajouteCanal()">+ Destinataire</button>', true)}
 
     <div class="grille c2">
-      ${carte('Telegram' + (d.telegram_configure ? ' ✓' : ''), `
-        <p class="petit">Créez un bot une seule fois : ouvrez Telegram, cherchez
-          <strong>@BotFather</strong>, envoyez <code>/newbot</code>, choisissez un nom,
-          puis collez ici le jeton qu'il vous donne.</p>
-        <label class="champ"><span>Jeton du bot</span>
-          <input id="tg-token" type="password" placeholder="${d.telegram_configure ? '•••••• (déjà enregistré)' : '123456789:AAE...'}"></label>
-        <button class="primaire" onclick="enregistreReglagesNotif()">Enregistrer</button>
-        <div class="separateur"></div>
-        <p class="petit"><strong>Côté destinataire :</strong> il installe Telegram,
-          ouvre votre bot, et envoie le code d'appairage affiché ci-dessus.
-          Ensuite il peut écrire « situation », « trésorerie » ou « loyers »
-          à tout moment et reçoit la réponse dans la seconde.</p>`)}
+      ${carte('Telegram' + (d.telegram_configure ? ' ✓' : ''),
+        etapesTelegram(d))}
 
       ${carte('Courriel' + (d.smtp_configure ? ' ✓' : ''), `
         <p class="petit">Facultatif — utile si le destinataire préfère l'e-mail.</p>
@@ -1822,5 +1812,72 @@ async function copieSauvegardeExterne() {
       ${ech(err.message)}</div>`;
   } finally {
     bouton.disabled = false;
+  }
+}
+
+/* --------------------------------------------- Telegram, pas à pas ------ */
+
+/* Le code d'appairage n'est pas global : il en existe un PAR destinataire, et
+   il n'apparaît donc qu'une fois le destinataire créé. L'écran disait
+   « le code affiché ci-dessus » devant un tableau vide — on montre plutôt
+   où l'on en est, dans l'ordre, et le code là où on le cherche. */
+
+function etapesTelegram(d) {
+  const enAttente = (d.canaux || []).filter(
+    (c) => c.type === 'telegram' && !c.destinataire);
+  const appaires = (d.canaux || []).filter(
+    (c) => c.type === 'telegram' && c.destinataire);
+  const fait = (v) => v ? '<span class="vert">✓</span>' : '<span class="discret">·</span>';
+
+  const codes = enAttente.map((c) => `
+    <div class="code-appairage">
+      <div>
+        <div class="petit">Code pour <strong>${ech(c.libelle)}</strong></div>
+        <div class="jeton-appairage">${ech(c.code_appairage || '—')}</div>
+      </div>
+      <button class="petit-bouton" onclick="copieCode('${ech(c.code_appairage || '')}')">Copier</button>
+    </div>`).join('');
+
+  return `
+    <ol class="etapes-telegram">
+      <li>${fait(d.telegram_configure)} <strong>Créer le bot</strong> — une seule
+        fois. Dans Telegram, cherchez <strong>@BotFather</strong>, envoyez
+        <code>/newbot</code>, choisissez un nom, puis collez ici le jeton
+        qu'il vous donne.
+        <label class="champ" style="margin-top:6px"><span>Jeton du bot</span>
+          <input id="tg-token" type="password"
+            placeholder="${d.telegram_configure ? '•••••• (déjà enregistré)' : '123456789:AAE...'}"></label>
+        <button class="primaire" onclick="enregistreReglagesNotif()">Enregistrer</button>
+      </li>
+
+      <li>${fait(enAttente.length || appaires.length)} <strong>Ajouter le
+        destinataire</strong> — c'est lui qui fait apparaître le code.
+        ${(enAttente.length || appaires.length) ? '' :
+          `<div class="message alerte" style="margin-top:6px">Aucun destinataire
+            Telegram pour l'instant : c'est pour cela qu'aucun code ne
+            s'affiche. Créez-en un avec le bouton
+            <strong>« + Destinataire »</strong> ci-dessus.</div>`}
+      </li>
+
+      <li>${fait(appaires.length)} <strong>Lui transmettre le code</strong> —
+        il installe Telegram, ouvre votre bot, et envoie ce code. Une seule
+        fois : il n'expire pas.
+        ${codes || (appaires.length
+          ? `<div class="message succes" style="margin-top:6px">
+              ${appaires.length} destinataire(s) déjà appairé(s).</div>`
+          : '')}
+      </li>
+    </ol>
+    <p class="petit">Une fois appairé, il écrit « situation », « trésorerie »
+      ou « loyers » à tout moment et reçoit la réponse dans la seconde.</p>`;
+}
+
+async function copieCode(code) {
+  if (!code) return;
+  try {
+    await navigator.clipboard.writeText(code);
+    notifie('Code copié — collez-le dans WhatsApp.', 'succes');
+  } catch (err) {
+    notifie(`Copie impossible. Le code est : ${code}`, 'alerte', 12000);
   }
 }

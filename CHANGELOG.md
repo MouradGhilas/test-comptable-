@@ -3,6 +3,16 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.6.5
+
+- **Telegram : le parcours est enfin dit dans l'ordre.** L'écran renvoyait
+  au « code d'appairage affiché ci-dessus » alors qu'aucun code n'existe
+  tant qu'aucun destinataire n'a été créé — le code est propre à chaque
+  destinataire. Trois étapes numérotées montrent maintenant où vous en êtes,
+  et disent quoi faire quand il n'y a encore rien.
+- **Le code s'affiche en grand, avec un bouton « Copier »** : il est fait
+  pour être recopié dans WhatsApp ou lu au téléphone. Il n'expire pas.
+
 ## 1.6.4
 
 - **Le justificatif se rattache enfin à l'écriture.** Ouvrez une écriture,

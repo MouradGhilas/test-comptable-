@@ -529,6 +529,19 @@ table.saisie input:focus, table.saisie select:focus { background: var(--fond-car
   .barre-haute { padding: 11px 14px; }
 }
 
+/* ---------- Telegram, pas à pas ---------- */
+.etapes-telegram { margin: 0 0 10px; padding-left: 20px; }
+.etapes-telegram li { margin-bottom: 14px; font-size: 12.5px; }
+.etapes-telegram li:last-child { margin-bottom: 6px; }
+/* Le code se lit à voix haute au téléphone, et se recopie dans WhatsApp :
+   il doit être gros, espacé, et sans ambiguïté entre O et 0. */
+.code-appairage { display: flex; align-items: center; justify-content: space-between;
+                  gap: 12px; margin-top: 8px; padding: 8px 12px;
+                  background: var(--alerte-fond); border-radius: var(--rayon); }
+.jeton-appairage { font-family: "Consolas", "SF Mono", "Menlo", monospace;
+                   font-size: 20px; font-weight: 700; letter-spacing: 3px;
+                   color: var(--alerte); }
+
 /* ---------- Justificatifs ---------- */
 fieldset.justificatifs { margin-top: 14px; }
 .liste-pieces { list-style: none; margin: 0; padding: 0; }

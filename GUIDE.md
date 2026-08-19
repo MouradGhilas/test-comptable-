@@ -456,8 +456,13 @@ arrivent dans **Telegram**.
 3. **+ Destinataire** : nom (« Papa »), canal **Telegram**, fréquence
    (tous les jours à 8 h, par exemple), et le périmètre des chiffres
    (réels ou déclaré uniquement).
-4. Un **code d'appairage** s'affiche (6 caractères). Le transmettre au
-   destinataire.
+4. Un **code d'appairage** s'affiche alors (6 caractères), dans la carte
+   *Telegram* et dans la colonne *État* du tableau. Un bouton **Copier** le
+   met dans le presse-papiers, prêt à coller dans WhatsApp. Il n'expire pas.
+
+> Le code n'apparaît qu'**après** la création du destinataire : il y en a un
+> par destinataire, et non un seul pour toute l'application. Tant que la
+> liste est vide, il n'y a donc aucun code à transmettre — c'est normal.
 
 ## Côté dirigeant
 
