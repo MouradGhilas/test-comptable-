@@ -1507,3 +1507,99 @@ def api_export_journal(ctx):
     return Reponse(classeur.octets(),
                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                    f"journal_{soc['code']}_{du}_{au}.xlsx")
+
+
+# ---------------------------------------------------------------------------
+# Modèles d'écriture
+#
+# Le loyer de février ressemble à celui de janvier, la paie de mars à celle de
+# février. Sans modèle, tout se retape : le journal, le libellé, chaque compte,
+# chaque montant. Un modèle garde la forme et ne laisse que la date à saisir.
+# ---------------------------------------------------------------------------
+
+#: Ce qu'on retient d'une ligne. Les montants sont indicatifs et se corrigent
+#: à chaque emploi — un loyer change, une paie varie avec les primes.
+_CHAMPS_MODELE = ("compte", "tiers_id", "libelle", "debit", "credit",
+                  "debit_hors", "credit_hors")
+
+
+def _lignes_modele(brutes) -> list[dict]:
+    """Nettoie les lignes reçues : rien d'autre que la forme de l'écriture."""
+    lignes = []
+    for l in brutes or []:
+        if not isinstance(l, dict) or not util.nettoie(l.get("compte")):
+            continue
+        ligne = {"compte": util.nettoie(l.get("compte")),
+                 "libelle": util.nettoie(l.get("libelle")) or ""}
+        tiers = l.get("tiers_id")
+        ligne["tiers_id"] = int(tiers) if str(tiers or "").isdigit() else None
+        for champ in ("debit", "credit", "debit_hors", "credit_hors"):
+            ligne[champ] = util.centimes(l.get(champ))
+        lignes.append(ligne)
+    return lignes
+
+
+@route("GET", "/api/modeles-ecriture")
+def api_modeles_ecriture(ctx):
+    modeles = db.lignes(
+        "SELECT * FROM modeles_ecriture WHERE societe_id = ? "
+        "ORDER BY emplois DESC, nom", (ctx.arg_int("societe"),))
+    for m in modeles:
+        try:
+            m["lignes"] = json.loads(m["lignes"])
+        except (TypeError, ValueError):
+            m["lignes"] = []
+    return {"modeles": modeles}
+
+
+@route("POST", "/api/modeles-ecriture")
+def api_cree_modele_ecriture(ctx):
+    ctx.interdit_lecture_seule()
+    nom = util.nettoie(ctx.champ_requis("nom"))
+    lignes = _lignes_modele(ctx.champ("lignes"))
+    if not lignes:
+        raise ErreurApplicative(
+            "Un modèle sans ligne ne servirait à rien : gardez au moins les "
+            "comptes de l'écriture.")
+    societe_id = ctx.entier("societe_id")
+    if db.valeur("SELECT COUNT(*) FROM modeles_ecriture "
+                 "WHERE societe_id = ? AND nom = ?", (societe_id, nom), 0):
+        raise ErreurApplicative(f"Un modèle « {nom} » existe déjà.")
+    with db.transaction():
+        identifiant = db.insere("modeles_ecriture", {
+            "societe_id": societe_id,
+            "nom": nom,
+            "journal": util.nettoie(ctx.champ_requis("journal")),
+            "libelle": util.nettoie(ctx.champ("libelle")) or "",
+            "perimetre": ctx.champ("perimetre") or "declare",
+            "lignes": json.dumps(lignes, ensure_ascii=False),
+            "cree_le": util.maintenant(),
+        })
+        db.trace("creation", "modele_ecriture", identifiant, nom, ctx.nom_utilisateur)
+    return {"id": identifiant, "nom": nom}
+
+
+@route("POST", "/api/modeles-ecriture/<id>/employe")
+def api_modele_employe(ctx):
+    """Compte un emploi : les modèles les plus utilisés remontent en tête."""
+    ctx.interdit_lecture_seule()
+    identifiant = int(ctx.params["id"])
+    with db.transaction():
+        db.execute("UPDATE modeles_ecriture SET emplois = emplois + 1, "
+                   "dernier_emploi = ? WHERE id = ?",
+                   (util.maintenant(), identifiant))
+    return {"ok": True}
+
+
+@route("DELETE", "/api/modeles-ecriture/<id>")
+def api_supprime_modele_ecriture(ctx):
+    ctx.interdit_lecture_seule()
+    identifiant = int(ctx.params["id"])
+    modele = db.ligne("SELECT * FROM modeles_ecriture WHERE id = ?", (identifiant,))
+    if not modele:
+        raise ErreurApplicative("Modèle introuvable.", 404)
+    with db.transaction():
+        db.supprime("modeles_ecriture", identifiant)
+        db.trace("suppression", "modele_ecriture", identifiant, modele["nom"],
+                 ctx.nom_utilisateur)
+    return {"ok": True}

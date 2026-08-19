@@ -307,6 +307,28 @@ Points utiles :
   variantes courantes (`numero`, `intitule`, `compte general`…).
 - Le CSV enregistré depuis Excel est accepté aussi.
 
+## Ne pas retaper deux fois la même écriture
+
+Le loyer de février ressemble à celui de janvier, la paie de mars à celle de
+février. Deux façons d'éviter de tout resaisir :
+
+**Dupliquer** — ouvrez l'écriture du mois dernier dans le journal, cliquez sur
+**Dupliquer**. Tout est repris (journal, libellé, comptes, tiers, montants)
+sauf la date, qui repart d'aujourd'hui, et le numéro de pièce. Vous corrigez
+ce qui a changé, vous validez.
+
+**Les modèles** — pour ce qui revient tous les mois. Ouvrez **+ Écriture**,
+remplissez-la, puis **« Garder comme modèle »** et donnez-lui un nom
+(*Loyer du local*, *Paie mensuelle*…). Ensuite, le bouton
+**« Depuis un modèle »** en haut du journal la rejoue en un clic.
+
+Les modèles les plus employés remontent d'eux-mêmes en tête de liste. Un
+modèle qui ne sert plus s'oublie sans toucher aux écritures déjà passées —
+un modèle n'est pas de la comptabilité, juste une saisie mise de côté.
+
+> Le périmètre est conservé dans les deux cas : dupliquer une opération hors
+> déclaration ne la rend pas déclarée.
+
 ## Le justificatif de chaque écriture
 
 Ouvrez une écriture (un clic sur sa ligne dans le journal), puis, en bas :

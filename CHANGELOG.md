@@ -3,6 +3,21 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.6.6
+
+- **Dupliquer une écriture.** Ouvrez une écriture, cliquez sur
+  **Dupliquer** : la saisie se rouvre avec le même journal, le même libellé,
+  les mêmes comptes, tiers et montants. Seule la date repart d'aujourd'hui,
+  et le numéro de pièce reste à vous. Le périmètre d'origine est conservé —
+  une opération hors déclaration ne devient pas déclarée par mégarde.
+- **Modèles d'écriture.** Le loyer, la paie, les charges fixes reviennent
+  chaque mois à l'identique. Remplissez la saisie une fois, cliquez sur
+  **« Garder comme modèle »**, donnez-lui un nom. Ensuite, le bouton
+  **« Depuis un modèle »** du journal la rejoue en un clic.
+- Les modèles les plus employés remontent en tête de liste, et chacun
+  indique combien de fois il a servi. Un modèle s'oublie quand il ne sert
+  plus ; les écritures déjà passées, elles, ne bougent pas.
+
 ## 1.6.5
 
 - **Telegram : le parcours est enfin dit dans l'ordre.** L'écran renvoyait

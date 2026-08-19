@@ -141,7 +141,7 @@ SCHEMA = Path(__file__).parent / "schema.sql"
 
 #: Version du schéma attendue par cette version du programme.
 #: À incrémenter dès qu'une migration est ajoutée ci-dessous.
-VERSION_SCHEMA = 4
+VERSION_SCHEMA = 5
 
 
 def colonnes(table: str) -> set[str]:
@@ -217,11 +217,37 @@ def _migration_4() -> None:
     ajoute_colonne("ecritures", "operation_ref", "TEXT")
 
 
+def _migration_5() -> None:
+    """Modèles d'écriture : rejouer une saisie qui revient chaque mois.
+
+    Le loyer, la paie, les charges fixes reviennent à l'identique à la date
+    près. Un modèle garde la forme de l'écriture pour éviter de la retaper.
+    Ce n'est pas de la comptabilité : rien n'est écrit dans `lignes` tant que
+    le modèle n'a pas été rejoué.
+    """
+    execute("""
+        CREATE TABLE IF NOT EXISTS modeles_ecriture (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            societe_id   INTEGER NOT NULL REFERENCES societes(id) ON DELETE CASCADE,
+            nom          TEXT NOT NULL,
+            journal      TEXT NOT NULL,
+            libelle      TEXT NOT NULL DEFAULT '',
+            perimetre    TEXT NOT NULL DEFAULT 'declare',
+            lignes       TEXT NOT NULL DEFAULT '[]',
+            dernier_emploi TEXT,
+            emplois      INTEGER NOT NULL DEFAULT 0,
+            cree_le      TEXT NOT NULL
+        )""")
+    execute("CREATE INDEX IF NOT EXISTS idx_modeles_ecr_soc "
+            "ON modeles_ecriture(societe_id, nom)")
+
+
 #: version -> fonction de migration. Exécutées dans l'ordre croissant.
 MIGRATIONS = {
     2: _migration_2,
     3: _migration_3,
     4: _migration_4,
+    5: _migration_5,
 }
 
 

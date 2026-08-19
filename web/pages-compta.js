@@ -14,6 +14,7 @@ App.pages['comptabilite/ecritures'] = {
       sans_piece: route.parametres.sans_piece || '',
     };
     actionsPage(`<button class="primaire" onclick="saisieEcriture()">+ Écriture</button>
+      <button onclick="choisitModeleEcriture()">Depuis un modèle</button>
       <button onclick="telecharge('/api/export/journal', ${JSON.stringify(filtres).replace(/"/g, "'")})">Exporter le journal</button>`);
 
     const [d, journaux] = await Promise.all([
@@ -115,6 +116,10 @@ async function detailEcriture(id) {
     boutons: [
       { libelle: 'Fermer' },
       {
+        libelle: 'Dupliquer',
+        action: () => { dupliqueEcriture(e); return false; },
+      },
+      {
         libelle: 'Extourner', classe: 'danger',
         action: async () => {
           if (!await confirme('Contre-passer cette écriture ?',
@@ -201,6 +206,7 @@ async function saisieEcriture(prefill = {}) {
       <td class="col-hors"><input class="l-credit-hors num" inputmode="decimal" value="${donnees.credit_hors ? pourChamp(donnees.credit_hors) : ''}"></td>
       <td><button class="plat petit-bouton" title="Supprimer">✕</button></td>`;
     if (donnees.compte) $('.l-compte', tr).value = donnees.compte;
+    if (donnees.tiers_id) $('.l-tiers', tr).value = donnees.tiers_id;
     $('button', tr).onclick = () => { tr.remove(); recalcule(); };
     $$('input, select', tr).forEach((el) => {
       el.oninput = recalcule;
@@ -292,7 +298,11 @@ async function saisieEcriture(prefill = {}) {
   $('#e-journal', conteneur).value = prefill.journal
     || (journaux.journaux.some((j) => j.code === 'OD') ? 'OD' : journaux.journaux[0]?.code);
   $('#ajout-ligne', conteneur).onclick = () => ajouteLigne();
-  if (App.etat.perimetre && App.etat.perimetre !== 'tous') {
+  if (prefill.perimetre) {
+    // Reprise d'une écriture ou d'un modèle : son périmètre fait foi, sinon
+    // dupliquer une opération hors déclaration la rendrait déclarée.
+    $('#e-perimetre', conteneur).value = prefill.perimetre;
+  } else if (App.etat.perimetre && App.etat.perimetre !== 'tous') {
     $('#e-perimetre', conteneur).value = App.etat.perimetre;
   } else {
     // En vue réelle, la saisie en totalité est le mode qui correspond.
@@ -302,11 +312,15 @@ async function saisieEcriture(prefill = {}) {
   appliqueMode();
 
   modale({
-    titre: 'Nouvelle écriture comptable',
+    titre: prefill.titre || 'Nouvelle écriture comptable',
     contenu: conteneur,
     large: true,
     boutons: [
       { libelle: 'Annuler' },
+      {
+        libelle: 'Garder comme modèle',
+        action: () => { gardeModeleEcriture(conteneur, litLignes); return false; },
+      },
       {
         libelle: 'Enregistrer en brouillon',
         action: () => enregistreEcriture(conteneur, litLignes, false),
@@ -985,5 +999,126 @@ async function regleFacture(id) {
         afficheRoute();
       },
     }],
+  });
+}
+
+/* ------------------------------------------- Modèles et duplication ----- */
+
+/* Le loyer de février ressemble à celui de janvier, la paie de mars à celle
+   de février. Sans cela, tout se retape : journal, libellé, chaque compte,
+   chaque montant. Deux chemins pour le même besoin — reprendre une écriture
+   qu'on a sous les yeux, ou rejouer une forme mise de côté une fois pour
+   toutes. */
+
+/** Rouvre la saisie pré-remplie à partir d'une écriture existante. */
+function dupliqueEcriture(e) {
+  fermeModale();
+  saisieEcriture({
+    titre: `Copie de l'écriture ${e.numero}`,
+    journal: e.journal,
+    libelle: e.libelle,
+    piece: '',                      // le numéro de pièce, lui, est propre à l'original
+    perimetre: e.perimetre,
+    // La date reste celle du jour : c'est ce qu'on veut neuf fois sur dix,
+    // et une date recopiée par inadvertance se voit mal.
+    lignes: (e.lignes || []).map((l) => ({
+      compte: l.compte, tiers_id: l.tiers_id, libelle: l.libelle,
+      debit: l.debit, credit: l.credit,
+    })),
+  });
+}
+
+/** Met la saisie en cours de côté, sous un nom. */
+async function gardeModeleEcriture(conteneur, litLignes) {
+  const lignes = litLignes();
+  if (!lignes.length) {
+    notifie('Renseignez au moins une ligne avant de garder un modèle.', 'alerte');
+    return;
+  }
+  const nom = prompt('Nom du modèle (ex : « Loyer du local », « Paie mensuelle ») :',
+                     $('#e-libelle', conteneur).value || '');
+  if (!nom || !nom.trim()) return;
+  try {
+    await envoie('/api/modeles-ecriture', {
+      nom: nom.trim(),
+      journal: $('#e-journal', conteneur).value,
+      libelle: $('#e-libelle', conteneur).value,
+      perimetre: $('#e-perimetre', conteneur).value,
+      lignes,
+    });
+    notifie(`Modèle « ${nom.trim()} » gardé. Vous le retrouverez sous « Depuis un modèle ».`,
+            'succes', 7000);
+  } catch (err) { erreur(err); }
+}
+
+/** Liste des modèles, pour en rejouer un. */
+async function choisitModeleEcriture() {
+  const d = await charge('/api/modeles-ecriture');
+  if (!d.modeles.length) {
+    modale({
+      titre: 'Aucun modèle pour l\'instant',
+      contenu: `<p>Un modèle garde la forme d'une écriture qui revient — le
+        loyer, la paie, les charges fixes — pour n'avoir plus qu'à changer
+        la date.</p>
+        <p class="petit">Pour en créer un : ouvrez <strong>+ Écriture</strong>,
+        remplissez-la, puis cliquez sur <strong>« Garder comme modèle »</strong>.
+        Vous pouvez aussi ouvrir une écriture existante et la
+        <strong>Dupliquer</strong>.</p>`,
+      boutons: [{ libelle: 'Fermer' }],
+    });
+    return;
+  }
+  modale({
+    titre: 'Écrire depuis un modèle',
+    large: true,
+    contenu: tableau([
+      { titre: 'Modèle', rendu: (m) => `<strong>${ech(m.nom)}</strong>` },
+      { titre: 'Journal', cle: 'journal', largeur: '70px' },
+      { titre: 'Libellé', rendu: (m) => ech(m.libelle || '') },
+      { titre: 'Lignes', classe: 'num', largeur: '70px',
+        rendu: (m) => String((m.lignes || []).length) },
+      { titre: 'Périmètre', rendu: (m) => badgePerimetre(m.perimetre) },
+      { titre: 'Employé', classe: 'num', largeur: '80px',
+        rendu: (m) => m.emplois ? `${m.emplois} fois` : '<span class="discret">—</span>' },
+      {
+        titre: '', classe: 'num',
+        rendu: (m) => `<button class="petit-bouton primaire" data-modele="${m.id}">Utiliser</button>
+          <button class="petit-bouton danger" data-oublie="${m.id}">Oublier</button>`,
+      },
+    ], d.modeles, { messageVide: 'Aucun modèle.' }),
+    boutons: [{ libelle: 'Fermer' }],
+  });
+
+  const parId = Object.fromEntries(d.modeles.map((m) => [String(m.id), m]));
+  document.querySelectorAll('[data-modele]').forEach((b) => {
+    b.onclick = () => employeModeleEcriture(parId[b.dataset.modele]);
+  });
+  document.querySelectorAll('[data-oublie]').forEach((b) => {
+    // Confirmation sur le bouton : une seconde fenêtre remplacerait celle-ci.
+    b.onclick = async () => {
+      if (b.dataset.sur !== '1') {
+        b.dataset.sur = '1';
+        b.textContent = 'Confirmer ?';
+        return;
+      }
+      await api(`/api/modeles-ecriture/${b.dataset.oublie}`, { method: 'DELETE' });
+      notifie('Modèle oublié.', 'succes');
+      choisitModeleEcriture();
+    };
+  });
+}
+
+function employeModeleEcriture(modele) {
+  if (!modele) return;
+  fermeModale();
+  // Le compteur sert à remonter les modèles les plus employés ; il ne doit
+  // pas empêcher la saisie s'il échoue.
+  envoie(`/api/modeles-ecriture/${modele.id}/employe`, {}).catch(() => {});
+  saisieEcriture({
+    titre: `Écriture depuis « ${modele.nom} »`,
+    journal: modele.journal,
+    libelle: modele.libelle,
+    perimetre: modele.perimetre,
+    lignes: modele.lignes || [],
   });
 }

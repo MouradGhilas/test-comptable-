@@ -923,3 +923,27 @@ CREATE TABLE IF NOT EXISTS canaux_notification (
     cree_le        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_canaux_soc ON canaux_notification(societe_id, actif);
+
+-- ---------------------------------------------------------------------------
+-- 17. Modèles d'écriture
+--
+-- Le loyer de février ressemble à celui de janvier, la paie de mars à celle
+-- de février. Un modèle garde la forme de l'écriture — journal, libellé,
+-- comptes, tiers, montants habituels — pour la rejouer en changeant la date.
+-- Les lignes sont conservées en JSON : elles ne sont pas de la comptabilité,
+-- seulement une saisie mise de côté, et n'ont donc pas à peupler `lignes`.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS modeles_ecriture (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    societe_id   INTEGER NOT NULL REFERENCES societes(id) ON DELETE CASCADE,
+    nom          TEXT NOT NULL,
+    journal      TEXT NOT NULL,
+    libelle      TEXT NOT NULL DEFAULT '',
+    perimetre    TEXT NOT NULL DEFAULT 'declare',
+    lignes       TEXT NOT NULL DEFAULT '[]',
+    dernier_emploi TEXT,
+    emplois      INTEGER NOT NULL DEFAULT 0,
+    cree_le      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_modeles_ecr_soc ON modeles_ecriture(societe_id, nom);
