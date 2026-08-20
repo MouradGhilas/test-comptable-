@@ -51,6 +51,29 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_date ON audit(horodatage);
 
+-- Journal des reprises : chaque import validé laisse une trace de ce qu'il a
+-- créé, afin de pouvoir l'annuler en bloc — par suppression tant qu'il est le
+-- dernier mouvement de ses journaux, par contre-passation ensuite.
+CREATE TABLE IF NOT EXISTS imports (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    societe_id  INTEGER NOT NULL REFERENCES societes(id) ON DELETE CASCADE,
+    modele      TEXT NOT NULL,          -- ecritures | factures_vente | tiers | ...
+    libelle     TEXT NOT NULL DEFAULT '',
+    fichier     TEXT,                   -- nom du fichier déposé, tel qu'annoncé
+    nb_crees    INTEGER NOT NULL DEFAULT 0,
+    nb_rejetes  INTEGER NOT NULL DEFAULT 0,
+    -- Objets créés hors comptabilité : {"tiers": [12, 13], "biens": [4]}.
+    -- Les écritures, factures et règlements portent eux-mêmes leur import_id.
+    objets      TEXT NOT NULL DEFAULT '{}',
+    cree_le     TEXT NOT NULL,
+    cree_par    TEXT,
+    annule_le   TEXT,
+    annule_par  TEXT,
+    annule_mode TEXT,                   -- suppression | contre_passation | partiel
+    annule_note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_imports_soc ON imports(societe_id, cree_le);
+
 -- ---------------------------------------------------------------------------
 -- 1. Dossiers (sociétés) et exercices
 -- ---------------------------------------------------------------------------
@@ -212,6 +235,9 @@ CREATE TABLE IF NOT EXISTS ecritures (
     -- Deux écritures issues d'une même opération réelle (part déclarée et part
     -- hors déclaration) partagent cette référence. NULL = opération simple.
     operation_ref TEXT,
+    -- Import d'origine, s'il y en a un : c'est ce qui permet d'annuler en bloc
+    -- une reprise entière sans avoir à retrouver ses écritures une par une.
+    import_id    INTEGER REFERENCES imports(id) ON DELETE SET NULL,
     cree_le      TEXT NOT NULL,
     cree_par     TEXT,
     modifie_le   TEXT
@@ -322,6 +348,7 @@ CREATE TABLE IF NOT EXISTS factures (
     ecriture_id     INTEGER REFERENCES ecritures(id) ON DELETE SET NULL,
     notes           TEXT,
     conditions      TEXT,
+    import_id       INTEGER REFERENCES imports(id) ON DELETE SET NULL,
     cree_le         TEXT NOT NULL,
     cree_par        TEXT,
     UNIQUE(societe_id, sens, numero)
@@ -363,6 +390,7 @@ CREATE TABLE IF NOT EXISTS reglements (
     quittance_id  INTEGER,
     perimetre     TEXT NOT NULL DEFAULT 'declare',
     ecriture_id   INTEGER REFERENCES ecritures(id) ON DELETE SET NULL,
+    import_id     INTEGER REFERENCES imports(id) ON DELETE SET NULL,
     cree_le       TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_regl_date ON reglements(societe_id, date);

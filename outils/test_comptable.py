@@ -18,12 +18,15 @@ Quatre familles :
               ne se verrait pas, les chiffres resteraient plausibles ;
   cycles      les cycles metier en mouvement : numerotation, saisies
               simultanees, une avance sur plan qui devient produit a la
-              livraison, un loyer encaisse qui repart chez son proprietaire.
+              livraison, un loyer encaisse qui repart chez son proprietaire ;
+  reprises    annuler un import deja valide sans laisser de trou dans la
+              numerotation ni effacer ce qui sert deja.
 
 Usage :
     python outils/test_comptable.py               les quatre suites
     python outils/test_comptable.py perimetre     une seule
 """
+import base64
 import http.cookiejar
 import json
 import shutil
@@ -77,6 +80,10 @@ def titre(t):
 
 def fm(centimes):
     return f"{centimes / 100:,.2f}".replace(",", " ").replace(".", ",")
+
+
+def b64(texte):
+    return base64.b64encode(texte.encode("utf-8")).decode()
 
 
 def port_libre():
@@ -1399,12 +1406,187 @@ def suite_cycles(dos):
       f"({len(comptes_tr)} compte(s))", not ecarts, ecarts[:4])
 
 
+def suite_reprises(dos):
+    """Annuler un import : suppression tant que rien n'a bougé,
+    contre-passation ensuite.
+
+    Un import se fait en un clic et peut porter des centaines de lignes.
+    Le défaire ne doit ni laisser de trou dans la numérotation d'un
+    journal, ni effacer une écriture que d'autres ont déjà utilisée.
+    """
+    CSV = """N° écriture;Date;Journal;Libellé;Compte;Tiers;Débit;Crédit;Périmètre;N° de pièce
+1;15/03/{a};OD;Achat fournitures;607;;12000;;Déclaré;FA-01
+1;;;;401;;;12000;;
+2;16/03/{a};OD;Vente diverse;411;;25000;;Déclaré;FV-01
+2;;;;701;;;25000;;
+3;17/03/{a};OD;Frais bancaires;627;;3000;;Déclaré;
+3;;;;512;;;3000;;
+"""
+
+    dos.appel("/api/installation", {
+        "identifiant": "c", "mot_de_passe": "motdepasse123", "nom_complet": "X",
+        "raison_sociale": "SARL REPRISE", "nif": "000116001234567",
+        "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    ex = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]
+    exid, du, au = ex["id"], ex["date_debut"], ex["date_fin"]
+    annee = int(du[:4])
+    fichier = CSV.format(a=annee)
+
+    def total_debit():
+        return dos.sql("SELECT COALESCE(SUM(debit),0) d FROM lignes")[0]["d"]
+
+    def compteur_od():
+        r = dos.sql("SELECT valeur FROM compteurs WHERE cle = 'ecriture_OD'")
+        return r[0]["valeur"] if r else 0
+
+    def importe():
+        return dos.appel("/api/import/valider", {
+            "societe_id": sid, "modele": "ecritures", "contenu": b64(fichier),
+            "fichier": "reprise-mars.csv"})
+
+    # ==================================================================
+    titre("1. L'import est consigné")
+    # ==================================================================
+    r = importe()
+    v("l'import répond avec son identifiant", bool(r.get("import_id")), r)
+    v("trois écritures ont été créées", r["crees"] == 3, r)
+    journal = dos.appel(f"/api/imports?societe={sid}")["imports"]
+    v("il apparaît au journal des reprises", len(journal) == 1, journal)
+    v("… avec le nom du fichier déposé",
+      journal[0]["fichier"] == "reprise-mars.csv", journal[0])
+    v("… et le libellé du modèle",
+      "criture" in (journal[0].get("modele_libelle") or ""), journal[0])
+    v("les écritures portent la marque de l'import",
+      dos.sql("SELECT COUNT(*) n FROM ecritures WHERE import_id = ?",
+          (r["import_id"],))[0]["n"] == 3)
+
+    debit_apres_import = total_debit()
+    compteur_apres_import = compteur_od()
+    v("le compteur du journal OD est à 3", compteur_apres_import == 3,
+      compteur_apres_import)
+
+    # ==================================================================
+    titre("2. Aussitôt fait, aussitôt défait : suppression")
+    # ==================================================================
+    plan = dos.appel(f"/api/imports/{r['import_id']}/plan")
+    v("l'annulation est possible", plan["possible"], plan.get("empechement"))
+    v("… par suppression", plan["mode"] == "suppression",
+      f"{plan['mode']} — {plan.get('obstacles')}")
+    v("… et le plan annonce trois écritures",
+      plan["rendu"]["supprimees"] == 3, plan["rendu"])
+    v("la simulation n'a rien écrit", total_debit() == debit_apres_import,
+      f"{fm(total_debit())} au lieu de {fm(debit_apres_import)}")
+
+    rendu = dos.appel(f"/api/imports/{r['import_id']}/annuler",
+                  {"mode": "suppression"})
+    v("l'annulation supprime les trois écritures", rendu["supprimees"] == 3,
+      rendu)
+    v("la comptabilité est revenue à zéro", total_debit() == 0,
+      fm(total_debit()))
+    v("le compteur du journal est remis où il était", compteur_od() == 0,
+      compteur_od())
+    v("l'import reste au journal, marqué annulé",
+      bool(dos.appel(f"/api/imports?societe={sid}")["imports"][0]["annule_le"]))
+    v("annuler deux fois est refusé",
+      dos.refuse(f"/api/imports/{r['import_id']}/annuler", {}))
+
+    # ==================================================================
+    titre("3. Le même fichier réimporté ne bute sur aucun numéro")
+    # ==================================================================
+    r2 = importe()
+    v("le fichier repasse sans conflit", r2["crees"] == 3, r2)
+    nums = [e["numero"] for e in dos.sql(
+        "SELECT e.numero FROM ecritures e JOIN journaux j ON j.id = e.journal_id "
+        "WHERE j.code = 'OD' ORDER BY e.id")]
+    v("la numérotation repart de 1 sans trou",
+      nums == [f"{annee}-00001", f"{annee}-00002", f"{annee}-00003"], nums)
+
+    # ==================================================================
+    titre("4. Une écriture passée depuis : plus question d'effacer")
+    # ==================================================================
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "OD", "date": f"{annee}-04-02",
+        "libelle": "Saisie du comptable",
+        "lignes": [{"compte": "607", "debit": "500", "credit": "0"},
+                   {"compte": "401", "debit": "0", "credit": "500"}]})
+    plan = dos.appel(f"/api/imports/{r2['import_id']}/plan")
+    v("l'annulation reste possible", plan["possible"], plan.get("empechement"))
+    v("… mais par contre-passation", plan["mode"] == "contre_passation",
+      plan["mode"])
+    v("… et l'écran dit pourquoi",
+      any("trou" in o for o in plan["obstacles"]), plan["obstacles"])
+    v("le plan annonce trois extournes",
+      len(plan["rendu"]["extournees"]) == 3, plan["rendu"])
+
+    avant = total_debit()
+    v("le mode annoncé est exigé",
+      dos.refuse(f"/api/imports/{r2['import_id']}/annuler", {"mode": "suppression"}))
+    rendu = dos.appel(f"/api/imports/{r2['import_id']}/annuler",
+                  {"mode": "contre_passation", "date": f"{annee}-04-03"})
+    v("trois extournes sont passées", len(rendu["extournees"]) == 3, rendu)
+    v("les écritures importées sont toujours là",
+      dos.sql("SELECT COUNT(*) n FROM ecritures WHERE import_id = ?",
+          (r2["import_id"],))[0]["n"] == 3)
+    v("le total débit a doublé du montant importé",
+      total_debit() == avant + 40000 * 100,
+      f"{fm(total_debit())} au lieu de {fm(avant + 4000000)}")
+
+    b = dos.appel(f"/api/balance?societe={sid}&exercice={exid}&du={du}&au={au}")
+    soldes = {l["compte"]: l["solde_debit"] - l["solde_credit"]
+              for l in b["lignes"]}
+    v("le compte 411 est soldé", soldes.get("411", 0) == 0,
+      fm(soldes.get("411", 0)))
+    v("le compte 701 est soldé", soldes.get("701", 0) == 0,
+      fm(soldes.get("701", 0)))
+    v("il ne reste que la saisie du comptable au 607",
+      soldes.get("607", 0) == 50000, fm(soldes.get("607", 0)))
+    v("la comptabilité reste équilibrée",
+      b["totaux"]["debit"] == b["totaux"]["credit"])
+
+    # ==================================================================
+    titre("5. Un référentiel : ce qui sert déjà n'est pas retiré")
+    # ==================================================================
+    csv_tiers = ("Raison sociale;Type;NIF\n"
+                 "ETS BOUKHARI;fournisseur;000116009999999\n"
+                 "SARL DELTA;client;000116008888888\n")
+    rt = dos.appel("/api/import/valider",
+               {"societe_id": sid, "modele": "tiers", "contenu": b64(csv_tiers),
+                "fichier": "tiers.csv"})
+    v("deux tiers importés", rt["crees"] == 2, rt)
+    ids = json.loads(dos.sql("SELECT objets FROM imports WHERE id = ?",
+                         (rt["import_id"],))[0]["objets"])["tables"]["tiers"]
+    # On en emploie un dans une écriture : il ne doit plus pouvoir partir.
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "OD", "date": f"{annee}-04-05",
+        "libelle": "Achat chez Boukhari",
+        "lignes": [{"compte": "607", "debit": "700", "credit": "0",
+                    "tiers_id": ids[0]},
+                   {"compte": "401", "debit": "0", "credit": "700"}]})
+    plan = dos.appel(f"/api/imports/{rt['import_id']}/plan")
+    v("le retrait ne peut être que partiel", plan["mode"] == "partiel",
+      f"{plan['mode']} — {plan['rendu']}")
+    v("… un tiers part, l'autre reste",
+      plan["rendu"]["objets_retires"].get("tiers") == 1
+      and plan["rendu"]["objets_gardes"].get("tiers") == 1, plan["rendu"])
+    rendu = dos.appel(f"/api/imports/{rt['import_id']}/annuler", {"mode": "partiel"})
+    restants = dos.sql("SELECT id FROM tiers WHERE id IN (?,?)", tuple(ids))
+    v("le tiers employé est toujours en base",
+      [x["id"] for x in restants] == [ids[0]], restants)
+    v("le compte rendu le dit",
+      "conserv" in (dos.sql("SELECT annule_note FROM imports WHERE id = ?",
+                        (rt["import_id"],))[0]["annule_note"] or ""),
+      dos.sql("SELECT annule_note FROM imports WHERE id = ?",
+          (rt["import_id"],))[0]["annule_note"])
+
+
 SUITES = [
     ("conformite", "Conformite comptable -- une annee tenue", suite_conformite, True),
     ("limites", "Ce que le logiciel doit refuser", suite_limites, False),
     ("cloture", "Cloture, a-nouveaux, extourne", suite_cloture, False),
     ("perimetre", "Etancheite declare / hors declaration", suite_perimetre, False),
     ("cycles", "Cycles metier en mouvement et numerotation", suite_cycles, True),
+    ("reprises", "Annuler un import deja valide", suite_reprises, False),
 ]
 
 

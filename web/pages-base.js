@@ -1124,7 +1124,15 @@ async function ongletImport(zone) {
       `<button class="primaire" id="bouton-controler">Contrôler le fichier</button>`)}
 
     <p class="petit">Les colonnes en gras sont obligatoires. Formats acceptés :
-    Excel (.xlsx) et CSV enregistré depuis Excel.</p>`;
+    Excel (.xlsx) et CSV enregistré depuis Excel.</p>
+
+    ${carte('Reprises déjà faites', `
+      <p class="petit">Chaque import reste inscrit ici. Vous vous êtes trompé de
+      fichier, ou vous avez passé le même deux fois&nbsp;? Il peut être défait :
+      l'application regarde ce qui a été fait depuis et vous dit elle-même
+      comment elle s'y prendra — en retirant les écritures si rien n'a bougé,
+      par contre-passation sinon.</p>
+      <div id="journal-imports"><div class="vide">Chargement…</div></div>`)}`;
 
   _fichierImport = null;
   const choix = $('#import-modele');
@@ -1136,6 +1144,7 @@ async function ongletImport(zone) {
   majDateReprise();
   brancheDepot(zone, () => choix.value);
   $('#bouton-demo', zone).onclick = creeDossierEssai;
+  rafraichitJournalImports(zone);
 }
 
 async function creeDossierEssai() {
@@ -1314,6 +1323,7 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
     try {
       const r = await envoie('/api/import/valider',
         { modele, contenu, ...options,
+          fichier: _fichierImport?.name || '',
           ignorer_anomalies: anomalies.length ? 1 : 0 });
       notifie(`${r.crees} ligne(s) importée(s).`
             + (r.rejetes ? ` ${r.rejetes} ignorée(s).` : ''), 'succes', 7000);
@@ -1325,7 +1335,10 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
       zone.innerHTML = `<div class="message succes">
         <strong>Import terminé</strong>
         ${r.crees} ligne(s) enregistrée(s)${r.rejetes ? `, ${r.rejetes} ignorée(s)` : ''}.
-        ${brouillon}</div>`;
+        ${brouillon}
+        Ce n'était pas le bon fichier&nbsp;? Cette reprise peut être défaite
+        depuis « Reprises déjà faites », plus bas.</div>`;
+      rafraichitJournalImports(document);
       // Import lancé depuis une liste : rafraîchir ce qui est affiché derrière,
       // sans effacer le compte rendu qui, lui, est dans la fenêtre.
       if (!$('#contenu').contains(zone)) afficheRoute();
@@ -1334,6 +1347,153 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
         ${ech(err.message)}</div>`;
     }
   };
+}
+
+/* ------------------------------------------------- Journal des reprises ----
+
+   Un import se fait en un clic et peut porter des centaines de lignes : se
+   tromper de fichier arrive. Chaque reprise reste donc inscrite ici, avec de
+   quoi la défaire — et l'application dit elle-même comment elle s'y prendra,
+   avant d'y toucher. */
+
+async function rafraichitJournalImports(zone) {
+  const cible = $('#journal-imports', zone);
+  if (!cible) return;
+  let d;
+  try {
+    d = await api(requete('/api/imports', { societe: App.etat.societe?.id }));
+  } catch (err) { cible.innerHTML = `<div class="vide">${ech(err.message)}</div>`; return; }
+
+  if (!d.imports.length) {
+    cible.innerHTML = `<div class="vide">Aucune reprise pour l'instant.
+      Les imports que vous ferez s'inscriront ici, avec de quoi les défaire.</div>`;
+    return;
+  }
+  cible.innerHTML = `
+    <table class="tableau"><thead><tr>
+      <th style="width:150px">Date</th><th>Données reprises</th>
+      <th style="width:90px" class="num">Lignes</th>
+      <th style="width:190px">État</th><th style="width:110px"></th>
+    </tr></thead><tbody>
+      ${d.imports.map((i) => `<tr${i.annule_le ? ' class="attenuee"' : ''}>
+        <td class="tres-petit">${ech(fdate(i.cree_le.slice(0, 10)))}
+          ${i.cree_par ? `<br><span class="tres-petit">${ech(i.cree_par)}</span>` : ''}</td>
+        <td><strong>${ech(i.modele_libelle)}</strong>
+          ${i.fichier ? `<br><span class="tres-petit">${ech(i.fichier)}</span>` : ''}</td>
+        <td class="num">${i.nb_crees}</td>
+        <td class="tres-petit">${i.annule_le
+          ? `<span class="etiquette ordinaire">Annulé le
+             ${ech(fdate(i.annule_le.slice(0, 10)))}</span>
+             ${i.annule_note ? `<br>${ech(i.annule_note)}` : ''}`
+          : '<span class="etiquette succes">En place</span>'}</td>
+        <td>${i.annule_le ? '' : `<button class="petit-bouton"
+          onclick="montrePlanAnnulation(${i.id})">Annuler…</button>`}</td>
+      </tr>`).join('')}
+    </tbody></table>`;
+}
+
+/** Ce que l'annulation ferait — établi en la jouant pour de faux côté serveur. */
+async function montrePlanAnnulation(identifiant) {
+  let plan;
+  try {
+    plan = await api(`/api/imports/${identifiant}/plan`);
+  } catch (err) { erreur(err); return; }
+
+  if (!plan.possible) {
+    modale({
+      titre: 'Cet import ne peut pas être annulé',
+      contenu: `<div class="message alerte"><strong>Rien n'a été touché</strong>
+        ${ech(plan.empechement || '')}</div>`,
+      boutons: [{ libelle: 'Fermer' }],
+    });
+    return;
+  }
+
+  const r = plan.rendu;
+  const porte = [
+    plan.porte.ecritures ? `${plan.porte.ecritures} écriture(s)` : '',
+    plan.porte.factures ? `${plan.porte.factures} facture(s)` : '',
+    plan.porte.reglements ? `${plan.porte.reglements} règlement(s)` : '',
+    ...Object.entries(plan.porte.objets || {}).map(([t, n]) => `${n} ${t}`),
+  ].filter(Boolean).join(' · ');
+
+  const explication = {
+    suppression: `<div class="message succes">
+      <strong>Cet import peut être retiré sans laisser de trace</strong>
+      Il est le dernier à avoir numéroté ses journaux : ses écritures peuvent
+      partir et les numéros repartir d'où ils venaient. Aucun trou dans la
+      numérotation, rien à expliquer à un contrôleur.</div>`,
+    contre_passation: `<div class="message alerte">
+      <strong>Cet import ne peut plus être effacé — il sera contre-passé</strong>
+      Des écritures ont été passées depuis. Effacer laisserait un trou dans la
+      numérotation d'un journal, ce qu'un contrôle fiscal cherche justement.
+      Chaque écriture importée sera donc <strong>extournée</strong> : elle
+      reste visible, et une écriture inverse l'annule.</div>`,
+    partiel: `<div class="message alerte">
+      <strong>Une partie seulement peut être retirée</strong>
+      Certains éléments importés servent déjà ailleurs : ils resteront en
+      place. Les autres seront retirés.</div>`,
+  }[plan.mode] || '';
+
+  const detail = [
+    r.supprimees ? `<li>${r.supprimees} écriture(s) supprimée(s)</li>` : '',
+    r.extournees?.length
+      ? `<li>${r.extournees.length} écriture(s) d'extourne passée(s)
+         <span class="tres-petit">(${ech(r.extournees.slice(0, 6).join(', '))}${
+           r.extournees.length > 6 ? '…' : ''})</span></li>` : '',
+    r.factures ? `<li>${r.factures} facture(s) ${plan.mode === 'contre_passation'
+      ? 'marquée(s) annulée(s)' : 'supprimée(s)'}</li>` : '',
+    r.reglements ? `<li>${r.reglements} règlement(s) de reprise retiré(s),
+      et les factures concernées remises dans leur état</li>` : '',
+    ...Object.entries(r.objets_retires || {}).map(([t, n]) =>
+      `<li>${n} ${ech(t)} retiré(s)</li>`),
+    ...Object.entries(r.objets_gardes || {}).map(([t, n]) =>
+      `<li><strong>${n} ${ech(t)} conservé(s)</strong>, déjà utilisé(s)
+       ${(r.objets_pourquoi?.[t] || []).length
+         ? `<span class="tres-petit">dans ${ech((r.objets_pourquoi[t]).join(', '))}</span>`
+         : ''}</li>`),
+  ].filter(Boolean).join('');
+
+  modale({
+    titre: 'Annuler cette reprise',
+    large: true,
+    contenu: `
+      <p><strong>${ech(plan.modele_libelle)}</strong>
+      ${plan.import.fichier ? `— ${ech(plan.import.fichier)}` : ''}
+      <br><span class="petit">importé le
+      ${ech(fdate(plan.import.cree_le.slice(0, 10)))}${
+        plan.import.cree_par ? ` par ${ech(plan.import.cree_par)}` : ''} :
+      ${ech(porte)}.</span></p>
+      ${explication}
+      ${plan.obstacles?.length ? `<p class="petit"><strong>Pourquoi&nbsp;:</strong>
+        ${plan.obstacles.map(ech).join(' ')}</p>` : ''}
+      <p><strong>Ce qui va se passer, exactement&nbsp;:</strong></p>
+      <ul>${detail || '<li>rien à retirer</li>'}</ul>
+      ${plan.mode === 'contre_passation' ? `
+        <label class="champ" style="max-width:220px">
+          <span>Date des extournes</span>
+          <input type="date" id="annul-date" value="${new Date().toISOString().slice(0, 10)}">
+        </label>` : ''}`,
+    boutons: [
+      { libelle: 'Ne rien faire' },
+      {
+        libelle: plan.mode === 'contre_passation'
+          ? 'Contre-passer cette reprise' : 'Retirer cette reprise',
+        classe: 'danger',
+        action: async (corps) => {
+          const date = $('#annul-date', corps)?.value;
+          const rendu = await envoie(`/api/imports/${identifiant}/annuler`,
+            { mode: plan.mode, ...(date ? { date } : {}) });
+          notifie(rendu.extournees?.length
+            ? `${rendu.extournees.length} extourne(s) passée(s).`
+            : `Reprise retirée : ${rendu.supprimees} écriture(s), `
+              + `${Object.values(rendu.objets_retires || {})
+                   .reduce((a, b) => a + b, 0)} élément(s).`, 'succes', 8000);
+          afficheRoute();
+        },
+      },
+    ],
+  });
 }
 
 async function ongletSauvegarde(zone) {

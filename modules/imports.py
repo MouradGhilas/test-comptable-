@@ -23,6 +23,8 @@ portent la comptabilité. Sans cela, tout serait compté deux fois.
 from __future__ import annotations
 
 import base64
+import json
+import sqlite3
 import unicodedata
 
 from noyau import base as db
@@ -1144,7 +1146,8 @@ def _valeur_defaut(defaut, societe_id, enregistrement):
         return defaut()
 
 
-def _importe_generique(societe_id, modele, rangs) -> int:
+def _importe_generique(societe_id, modele, rangs) -> dict:
+    identifiants = []
     for enregistrement in rangs:
         if not modele.get("sans_societe"):
             enregistrement["societe_id"] = societe_id
@@ -1156,9 +1159,10 @@ def _importe_generique(societe_id, modele, rangs) -> int:
             enregistrement["classe"] = int(str(enregistrement["numero"])[0])
         # Les champs restés vides sont omis : la valeur par défaut du schéma
         # s'applique alors, plutôt qu'un NULL sur une colonne NOT NULL.
-        db.insere(modele["table"], {c: v for c, v in enregistrement.items()
-                                    if v is not None})
-    return len(rangs)
+        identifiants.append(
+            db.insere(modele["table"], {c: v for c, v in enregistrement.items()
+                                        if v is not None}))
+    return {"nb": len(rangs), "objets": {modele["table"]: identifiants}}
 
 
 # ---------------------------------------------------------------------------
@@ -1691,42 +1695,96 @@ def api_valide(ctx):
 
     # Un seul bloc : ou tout passe, ou rien n'est écrit.
     with db.transaction():
+        # La ligne d'import est ouverte d'abord : c'est elle qui donnera son
+        # identifiant à tout ce qui va être créé, et qui permettra plus tard
+        # de défaire la reprise sans avoir à la reconstituer.
+        import_id = db.insere("imports", {
+            "societe_id": societe_id,
+            "modele": cle,
+            "libelle": resultat["libelle"],
+            "fichier": util.nettoie(ctx.champ("fichier")) or None,
+            "nb_rejetes": resultat["nb_rejetes"],
+            "cree_le": util.maintenant(),
+            "cree_par": ctx.nom_utilisateur,
+        })
+        compteurs_avant = _photo_compteurs(societe_id)
+
         if cle == "ecritures":
-            crees = _importe_ecritures(ctx, societe_id, prets)
+            bilan = _importe_ecritures(ctx, societe_id, prets)
         elif cle == "balance_ouverture":
-            crees = _importe_balance(ctx, societe_id, prets[0])
+            bilan = _importe_balance(ctx, societe_id, prets[0])
         elif cle == "reglements":
-            crees = _importe_reglements(ctx, societe_id, prets)
+            bilan = _importe_reglements(ctx, societe_id, prets)
         elif cle.startswith("factures_"):
-            crees = _importe_factures(ctx, societe_id, prets)
+            bilan = _importe_factures(ctx, societe_id, prets)
         else:
-            crees = _importe_generique(societe_id, MODELES[cle], prets)
-        db.trace("import", cle, societe_id,
+            bilan = _importe_generique(societe_id, MODELES[cle], prets)
+
+        crees = bilan["nb"]
+        _rattache_a_import(import_id, bilan)
+        db.modifie("imports", import_id, {
+            "nb_crees": crees,
+            "objets": json.dumps({
+                "tables": bilan.get("objets", {}),
+                "compteurs": _compteurs_consommes(
+                    compteurs_avant, _photo_compteurs(societe_id)),
+                "factures_reglees": bilan.get("factures_reglees", []),
+            }, ensure_ascii=False),
+        })
+        db.trace("import", cle, import_id,
                  {"crees": crees, "rejetes": resultat["nb_rejetes"]},
                  ctx.nom_utilisateur)
 
-    return {"crees": crees, "rejetes": resultat["nb_rejetes"],
+    return {"crees": crees, "rejetes": resultat["nb_rejetes"], "import_id": import_id,
             "anomalies": resultat["anomalies"], "libelle": resultat["libelle"]}
 
 
-def _importe_ecritures(ctx, societe_id, groupes) -> int:
-    for groupe in groupes:
-        compta.enregistre_ecriture(
-            societe_id=societe_id,
-            journal_code=groupe["journal"],
-            date=groupe["date"],
-            libelle=groupe["libelle"],
-            lignes=groupe["lignes"],
-            piece=groupe["piece"] or None,
-            module="import",
-            perimetre=groupe["perimetre"],
-            utilisateur=ctx.nom_utilisateur,
-            valider=False,       # importées en brouillon : le comptable relit
-        )
-    return len(groupes)
+def _photo_compteurs(societe_id: int) -> dict:
+    """Où en est chaque compteur de numérotation du dossier, à cet instant."""
+    return {f"{c['cle']}|{c['annee']}": c["valeur"] for c in db.lignes(
+        "SELECT cle, annee, valeur FROM compteurs WHERE societe_id = ?",
+        (societe_id,))}
 
 
-def _importe_balance(ctx, societe_id, balance) -> int:
+def _compteurs_consommes(avant: dict, apres: dict) -> dict:
+    """Les numéros que l'import a tirés : {clé|année: [avant, après]}.
+
+    C'est ce couple qui dira plus tard si l'import est encore le dernier à
+    avoir numéroté : si le compteur vaut toujours « après », personne n'a
+    numéroté depuis, et supprimer ne laissera aucun trou.
+    """
+    return {k: [avant.get(k, 0), v] for k, v in apres.items()
+            if v != avant.get(k, 0)}
+
+
+def _rattache_a_import(import_id: int, bilan: dict) -> None:
+    for table, colonne in (("ecritures", "ecritures"), ("factures", "factures"),
+                           ("reglements", "reglements")):
+        identifiants = bilan.get(colonne) or []
+        for lot in range(0, len(identifiants), 400):
+            tranche = identifiants[lot:lot + 400]
+            marques = ",".join("?" for _ in tranche)
+            db.execute(f"UPDATE {table} SET import_id = ? WHERE id IN ({marques})",
+                       [import_id, *tranche])
+
+
+def _importe_ecritures(ctx, societe_id, groupes) -> dict:
+    identifiants = [compta.enregistre_ecriture(
+        societe_id=societe_id,
+        journal_code=groupe["journal"],
+        date=groupe["date"],
+        libelle=groupe["libelle"],
+        lignes=groupe["lignes"],
+        piece=groupe["piece"] or None,
+        module="import",
+        perimetre=groupe["perimetre"],
+        utilisateur=ctx.nom_utilisateur,
+        valider=False,       # importées en brouillon : le comptable relit
+    ) for groupe in groupes]
+    return {"nb": len(groupes), "ecritures": identifiants}
+
+
+def _importe_balance(ctx, societe_id, balance) -> dict:
     """Une seule écriture d'à-nouveaux, dans le journal AN."""
     date = balance["date"] or db.valeur(
         "SELECT date_debut FROM exercices WHERE societe_id = ? AND cloture = 0 "
@@ -1734,19 +1792,20 @@ def _importe_balance(ctx, societe_id, balance) -> int:
     if not date:
         raise ErreurApplicative("Aucun exercice ouvert : créez-le d'abord dans "
                                 "Paramètres > Exercices.")
-    compta.enregistre_ecriture(
+    identifiant = compta.enregistre_ecriture(
         societe_id=societe_id, journal_code="AN", date=date,
         libelle="Balance de reprise", lignes=balance["lignes"],
         module="import", source_type="balance_ouverture",
         perimetre="declare", utilisateur=ctx.nom_utilisateur, valider=True,
     )
-    return len(balance["lignes"])
+    return {"nb": len(balance["lignes"]), "ecritures": [identifiant]}
 
 
-def _importe_factures(ctx, societe_id, groupes) -> int:
+def _importe_factures(ctx, societe_id, groupes) -> dict:
     from modules import facturation
+    identifiants = []
     for groupe in groupes:
-        facturation.cree_facture(
+        creee = facturation.cree_facture(
             societe_id, groupe["sens"], groupe["date"], groupe["lignes"],
             tiers_id=groupe["tiers_id"],
             numero=groupe["numero"],
@@ -1758,15 +1817,23 @@ def _importe_factures(ctx, societe_id, groupes) -> int:
             utilisateur=ctx.nom_utilisateur,
             valider=False,       # brouillon : l'écriture attend la relecture
         )
-    return len(groupes)
+        identifiants.append(creee["id"])
+    return {"nb": len(groupes), "factures": identifiants}
 
 
-def _importe_reglements(ctx, societe_id, rangs) -> int:
+def _importe_reglements(ctx, societe_id, rangs) -> dict:
     """Marque les factures réglées, sans écriture : la reprise l'a déjà portée."""
+    identifiants = []
+    # Ce que chaque facture portait avant : de quoi la remettre exactement
+    # dans son état si la reprise est annulée.
+    avant = {}
     for r in rangs:
         facture = r["facture"]
+        avant.setdefault(facture["id"], {
+            "id": facture["id"], "montant_regle": facture["montant_regle"],
+            "statut": facture["statut"]})
         exercice = compta.exercice_pour_date(societe_id, r["date"])
-        db.insere("reglements", {
+        identifiants.append(db.insere("reglements", {
             "societe_id": societe_id,
             "exercice_id": exercice["id"],
             "sens": r["sens"],
@@ -1780,7 +1847,7 @@ def _importe_reglements(ctx, societe_id, rangs) -> int:
             "facture_id": facture["id"],
             "perimetre": facture["perimetre"],
             "cree_le": util.maintenant(),
-        })
+        }))
         regle = facture["montant_regle"] + r["montant"]
         db.modifie("factures", facture["id"], {
             "montant_regle": regle,
@@ -1788,4 +1855,429 @@ def _importe_reglements(ctx, societe_id, rangs) -> int:
                       else ("partielle" if facture["statut"] != "brouillon"
                             else facture["statut"]),
         })
-    return len(rangs)
+    return {"nb": len(rangs), "reglements": identifiants,
+            "factures_reglees": list(avant.values())}
+
+
+# ---------------------------------------------------------------------------
+# Journal des reprises — et comment défaire un import
+# ---------------------------------------------------------------------------
+#
+# Un import se fait en un clic et peut porter des centaines de lignes. Se
+# tromper de fichier, ou passer le même deux fois, arrive. Jusqu'ici il ne
+# restait qu'à reprendre les écritures une par une.
+#
+# Deux façons de défaire, et le logiciel choisit lui-même laquelle s'applique :
+#
+#   suppression       tant que l'import est le dernier à avoir numéroté ses
+#                     journaux, ses écritures peuvent partir sans laisser de
+#                     trou dans la numérotation. Les compteurs sont remis
+#                     exactement où ils étaient.
+#   contre_passation  dès qu'une écriture a été passée depuis, plus question
+#                     d'effacer : chaque écriture importée est extournée, à
+#                     une date que le comptable choisit. Tout reste visible.
+#
+# Pour un import de référentiel (tiers, comptes, biens…), qui ne porte aucune
+# comptabilité, la question ne se pose pas : ce qui n'est pas encore utilisé
+# est retiré, ce qui l'est déjà reste, et l'écran dit lequel est lequel.
+
+#: Modèles dont l'import touche la comptabilité. Pour ceux-là, l'annulation
+#: est tout ou rien : une reprise à moitié défaite ne s'explique plus.
+MODELES_COMPTABLES = {"balance_ouverture", "ecritures", "reglements",
+                      "factures_vente", "factures_achat"}
+
+
+#: Rattachements que le schéma ne déclare pas en clé étrangère : ces colonnes
+#: désignent bien un objet, mais SQLite ne le sait pas.
+LIENS_IMPLICITES = {
+    "programmes": [("lignes", "programme_id"), ("factures", "programme_id")],
+    "lots": [("lignes", "lot_id"), ("factures", "lot_id"),
+             ("contrats_vsp", "lot_id")],
+    "biens": [("lignes", "bien_id"), ("factures", "bien_id")],
+    "baux": [("factures", "bail_id"), ("quittances", "bail_id")],
+    "contrats_vsp": [("factures", "contrat_vsp_id"), ("echeances_vsp", "contrat_id")],
+    "quittances": [("reglements", "quittance_id")],
+    "echeances_vsp": [("reglements", "echeance_id")],
+}
+
+#: Cas où le lien ne passe pas par un identifiant : une ligne comptable
+#: désigne son compte par son numéro.
+LIENS_PARTICULIERS = {
+    "comptes": [
+        ("écritures", "SELECT COUNT(*) FROM lignes WHERE compte = "
+                      "(SELECT numero FROM comptes WHERE id = ?)"),
+        ("journaux", "SELECT COUNT(*) FROM journaux WHERE compte_contrepartie = "
+                     "(SELECT numero FROM comptes WHERE id = ?)"),
+    ],
+    "comptes_tresorerie": [
+        ("écritures", "SELECT COUNT(*) FROM lignes WHERE compte = "
+                      "(SELECT compte FROM comptes_tresorerie WHERE id = ?)"),
+    ],
+}
+
+
+def _references(table: str) -> list[tuple[str, str]]:
+    """Colonnes qui désignent cette table, lues dans le schéma lui-même.
+
+    Les clés étrangères du schéma sont en « ON DELETE SET NULL » : supprimer
+    un tiers employé ne déclencherait aucune erreur, la référence serait
+    simplement effacée. Il faut donc regarder avant, pas après.
+    """
+    liens = []
+    for t in db.lignes("SELECT name FROM sqlite_master WHERE type = 'table' "
+                       "AND name NOT LIKE 'sqlite_%%'"):
+        for fk in db.lignes(f"PRAGMA foreign_key_list({t['name']})"):
+            if fk["table"] == table:
+                liens.append((t["name"], fk["from"]))
+    return liens + LIENS_IMPLICITES.get(table, [])
+
+
+def _usages(table: str, identifiant: int, liens) -> list[str]:
+    """Où cet objet sert encore. Vide = il peut partir sans rien casser."""
+    trouves = []
+    for cible, colonne in liens:
+        condition, params = f"{colonne} = ?", [identifiant]
+        if cible == table:
+            condition += " AND id != ?"
+            params.append(identifiant)
+        try:
+            combien = db.valeur(
+                f"SELECT COUNT(*) FROM {cible} WHERE {condition}", params, 0)
+        except sqlite3.OperationalError:
+            continue                 # table absente d'une base ancienne
+        if combien:
+            trouves.append(f"{cible} ({combien})")
+    for libelle, requete in LIENS_PARTICULIERS.get(table, []):
+        if db.valeur(requete, (identifiant,), 0):
+            trouves.append(libelle)
+    return trouves
+
+
+class _Simulation(Exception):
+    """Sert à ressortir d'une transaction en la faisant annuler."""
+
+    def __init__(self, resultat):
+        super().__init__("simulation")
+        self.resultat = resultat
+
+
+def _simule(action):
+    """Exécute `action` puis annule tout : rien n'est écrit, on sait quand même.
+
+    C'est ce qui permet d'annoncer au comptable, avant qu'il ne décide, ce que
+    l'annulation ferait exactement — sans le lui décrire de mémoire.
+    """
+    try:
+        with db.transaction():
+            raise _Simulation(action())
+    except _Simulation as simulation:
+        return simulation.resultat
+
+
+def _import_ou_erreur(identifiant: int) -> dict:
+    imp = db.ligne("SELECT * FROM imports WHERE id = ?", (identifiant,))
+    if not imp:
+        raise ErreurApplicative("Cet import est introuvable.", 404)
+    return imp
+
+
+def _details_import(imp: dict) -> dict:
+    """Tout ce que cet import a laissé derrière lui."""
+    try:
+        objets = json.loads(imp["objets"] or "{}")
+    except ValueError:
+        objets = {}
+    identifiant = imp["id"]
+    ecritures = db.lignes(
+        "SELECT e.*, j.code AS journal FROM ecritures e "
+        "JOIN journaux j ON j.id = e.journal_id "
+        "WHERE e.import_id = ? OR e.id IN ("
+        "    SELECT ecriture_id FROM factures "
+        "    WHERE import_id = ? AND ecriture_id IS NOT NULL) "
+        "ORDER BY e.id", (identifiant, identifiant))
+    return {
+        "ecritures": ecritures,
+        "factures": db.lignes(
+            "SELECT * FROM factures WHERE import_id = ? ORDER BY id",
+            (identifiant,)),
+        "reglements": db.lignes(
+            "SELECT * FROM reglements WHERE import_id = ? ORDER BY id",
+            (identifiant,)),
+        "tables": objets.get("tables") or {},
+        "compteurs": objets.get("compteurs") or {},
+        "factures_reglees": objets.get("factures_reglees") or [],
+    }
+
+
+def _obstacles_suppression(imp: dict, detail: dict) -> list[str]:
+    """Ce qui interdit d'effacer purement et simplement — pas d'annuler."""
+    obstacles = []
+
+    # 1. L'import est-il encore le dernier à avoir numéroté ?
+    for cle_annee, (_avant, apres) in detail["compteurs"].items():
+        cle, annee = cle_annee.rsplit("|", 1)
+        actuel = db.valeur(
+            "SELECT valeur FROM compteurs WHERE societe_id = ? AND cle = ? "
+            "AND annee = ?", (imp["societe_id"], cle, int(annee)), 0)
+        if actuel != apres:
+            quoi = (f"le journal {cle[9:]}" if cle.startswith("ecriture_")
+                    else f"la numérotation « {cle} »")
+            obstacles.append(
+                f"{actuel - apres} numéro(s) ont été attribués depuis dans "
+                f"{quoi} ({annee}) : effacer laisserait un trou.")
+
+    # 2. Un exercice clôturé ne se rouvre pas pour retirer une écriture.
+    for ex in {e["exercice_id"] for e in detail["ecritures"]}:
+        exercice = db.ligne("SELECT * FROM exercices WHERE id = ?", (ex,))
+        if exercice and exercice["cloture"]:
+            obstacles.append(
+                f"l'exercice {exercice['libelle']} est clôturé.")
+
+    # 3. Une écriture lettrée a servi à justifier un solde de tiers.
+    if detail["ecritures"]:
+        marques = ",".join("?" for _ in detail["ecritures"])
+        lettrees = db.valeur(
+            f"SELECT COUNT(*) FROM lignes WHERE ecriture_id IN ({marques}) "
+            f"AND lettrage IS NOT NULL AND lettrage != ''",
+            [e["id"] for e in detail["ecritures"]], 0)
+        if lettrees:
+            obstacles.append(
+                f"{lettrees} ligne(s) ont été lettrées depuis.")
+
+    # 4. Une facture importée a été réglée après coup.
+    for f in detail["factures"]:
+        depuis = db.valeur(
+            "SELECT COUNT(*) FROM reglements WHERE facture_id = ? "
+            "AND (import_id IS NULL OR import_id != ?)",
+            (f["id"], imp["id"]), 0)
+        if depuis:
+            obstacles.append(
+                f"la facture {f['numero']} a reçu {depuis} règlement(s) depuis.")
+    return obstacles
+
+
+def _mode_annulation(imp: dict, detail: dict) -> tuple[str, list[str]]:
+    """Comment cet import peut être défait, et pourquoi pas autrement."""
+    obstacles = _obstacles_suppression(imp, detail)
+    if not obstacles:
+        return "suppression", []
+    if imp["modele"] in MODELES_COMPTABLES:
+        return "contre_passation", obstacles
+    return "partiel", obstacles
+
+
+def _defait(imp: dict, detail: dict, mode: str, date: str,
+            utilisateur: str | None) -> dict:
+    """Applique l'annulation. À appeler dans une transaction.
+
+    Renvoie le compte rendu de ce qui a été fait — le même objet, que l'appel
+    soit réel ou qu'il tourne en simulation.
+    """
+    rendu = {"mode": mode, "supprimees": 0, "extournees": [], "factures": 0,
+             "reglements": 0, "objets_retires": {}, "objets_gardes": {},
+             "objets_pourquoi": {}}
+
+    # -- Les règlements repris ne portent aucune écriture : la reprise l'a
+    # -- déjà comptabilisée. Les retirer n'efface donc rien des comptes.
+    for r in detail["reglements"]:
+        db.supprime("reglements", r["id"])
+        rendu["reglements"] += 1
+    for etat in detail["factures_reglees"]:
+        if db.ligne("SELECT id FROM factures WHERE id = ?", (etat["id"],)):
+            db.modifie("factures", etat["id"], {
+                "montant_regle": etat["montant_regle"],
+                "statut": etat["statut"]})
+
+    if mode == "contre_passation":
+        for e in detail["ecritures"]:
+            nouvelle = compta.extourne_ecriture(e["id"], date, utilisateur)
+            rendu["extournees"].append(
+                db.valeur("SELECT numero FROM ecritures WHERE id = ?",
+                          (nouvelle,), str(nouvelle)))
+        for f in detail["factures"]:
+            db.modifie("factures", f["id"], {"statut": "annulee"})
+            rendu["factures"] += 1
+        return rendu
+
+    # -- Suppression : les factures d'abord (leur écriture, s'il y en a une,
+    # -- figure déjà dans la liste des écritures), les écritures ensuite.
+    for f in detail["factures"]:
+        db.supprime("factures", f["id"])
+        rendu["factures"] += 1
+    for e in detail["ecritures"]:
+        compta.supprime_ecriture(e["id"], utilisateur, forcer=True)
+        rendu["supprimees"] += 1
+
+    # -- Les numéros repartent d'où ils venaient : aucun trou dans le journal.
+    for cle_annee, (avant, apres) in detail["compteurs"].items():
+        cle, annee = cle_annee.rsplit("|", 1)
+        actuel = db.valeur(
+            "SELECT valeur FROM compteurs WHERE societe_id = ? AND cle = ? "
+            "AND annee = ?", (imp["societe_id"], cle, int(annee)), 0)
+        if actuel == apres:
+            db.execute(
+                "UPDATE compteurs SET valeur = ? WHERE societe_id = ? "
+                "AND cle = ? AND annee = ?",
+                (avant, imp["societe_id"], cle, int(annee)))
+
+    # -- Référentiel : ce qui sert encore reste, et l'écran dira lequel.
+    for table, identifiants in detail["tables"].items():
+        liens = _references(table)
+        retires, gardes, pourquoi = 0, 0, []
+        for identifiant in identifiants:
+            if not db.ligne(f"SELECT id FROM {table} WHERE id = ?", (identifiant,)):
+                continue           # déjà supprimé à la main entre-temps
+            usages = _usages(table, identifiant, liens)
+            if usages:
+                gardes += 1
+                pourquoi.extend(usages)
+                continue
+            try:
+                db.supprime(table, identifiant)
+                retires += 1
+            except sqlite3.IntegrityError:
+                gardes += 1
+        if retires:
+            rendu["objets_retires"][table] = retires
+        if gardes:
+            rendu["objets_gardes"][table] = gardes
+            rendu.setdefault("objets_pourquoi", {})[table] = sorted(set(pourquoi))
+    return rendu
+
+
+def _libelle_mode(mode: str) -> str:
+    return {
+        "suppression": "suppression pure et simple",
+        "contre_passation": "contre-passation (extourne)",
+        "partiel": "retrait de ce qui n'est pas encore utilisé",
+    }.get(mode, mode)
+
+
+@route("GET", "/api/imports")
+def api_journal_imports(ctx):
+    """Les reprises faites sur ce dossier, la plus récente en tête."""
+    societe_id = ctx.arg_int("societe")
+    lignes = db.lignes(
+        "SELECT * FROM imports WHERE societe_id = ? "
+        "ORDER BY cree_le DESC, id DESC LIMIT ?",
+        (societe_id, min(ctx.arg_int("limite", 50) or 50, 400)))
+    for imp in lignes:
+        imp["modele_libelle"] = (MODELES.get(imp["modele"], {})
+                                 .get("libelle", imp["modele"]))
+        imp["comptable"] = imp["modele"] in MODELES_COMPTABLES
+        imp.pop("objets", None)          # détail inutile à la liste
+    return {"imports": lignes}
+
+
+@route("GET", "/api/imports/<id>/plan")
+def api_plan_annulation(ctx):
+    """Ce que l'annulation ferait, établi en la jouant pour de faux.
+
+    Le compte rendu n'est pas une description écrite à la main : c'est le
+    résultat de l'annulation réelle, exécutée puis annulée. Ce qui est
+    annoncé est donc exactement ce qui se produira.
+    """
+    imp = _import_ou_erreur(int(ctx.params["id"]))
+    date = ctx.arg("date") or util.aujourdhui()
+    detail = _details_import(imp)
+    mode, obstacles = _mode_annulation(imp, detail)
+    plan = {
+        "import": {k: imp[k] for k in
+                   ("id", "modele", "libelle", "fichier", "nb_crees",
+                    "nb_rejetes", "cree_le", "cree_par", "annule_le",
+                    "annule_par", "annule_mode", "annule_note")},
+        "modele_libelle": (MODELES.get(imp["modele"], {})
+                           .get("libelle", imp["modele"])),
+        "comptable": imp["modele"] in MODELES_COMPTABLES,
+        "mode": mode,
+        "mode_libelle": _libelle_mode(mode),
+        "obstacles": obstacles,
+        "porte": {
+            "ecritures": len(detail["ecritures"]),
+            "factures": len(detail["factures"]),
+            "reglements": len(detail["reglements"]),
+            "objets": {t: len(i) for t, i in detail["tables"].items()},
+        },
+    }
+    if imp["annule_le"]:
+        plan["possible"] = False
+        plan["empechement"] = (
+            f"Cet import a déjà été annulé le {util.date_fr(imp['annule_le'][:10])}.")
+        return plan
+    if not (detail["ecritures"] or detail["factures"] or detail["reglements"]
+            or detail["tables"]):
+        plan["possible"] = False
+        plan["empechement"] = (
+            "Cet import n'a rien laissé qui puisse être retiré : il date "
+            "d'une version antérieure au journal des reprises.")
+        return plan
+    try:
+        plan["rendu"] = _simule(
+            lambda: _defait(imp, detail, mode, date, ctx.nom_utilisateur))
+        plan["possible"] = True
+    except ErreurApplicative as err:
+        plan["possible"] = False
+        plan["empechement"] = str(err)
+        return plan
+    # Un référentiel dont une partie sert déjà ne peut être retiré qu'en
+    # partie : la simulation est seule à pouvoir le dire.
+    if plan["rendu"].get("objets_gardes"):
+        plan["mode"] = plan["rendu"]["mode"] = "partiel"
+        plan["mode_libelle"] = _libelle_mode("partiel")
+    return plan
+
+
+@route("POST", "/api/imports/<id>/annuler")
+def api_annule_import(ctx):
+    ctx.interdit_lecture_seule()
+    ctx.exige_role("admin", "comptable")
+    imp = _import_ou_erreur(int(ctx.params["id"]))
+    if imp["annule_le"]:
+        raise ErreurApplicative(
+            f"Cet import a déjà été annulé le "
+            f"{util.date_fr(imp['annule_le'][:10])}.")
+    date = ctx.date("date", util.aujourdhui())
+    detail = _details_import(imp)
+    mode, obstacles = _mode_annulation(imp, detail)
+
+    # Le mode annoncé à l'écran doit être celui qui s'applique : si la
+    # situation a changé entre-temps, on s'arrête plutôt que de faire autre
+    # chose que ce que le comptable a validé.
+    # « partiel » n'est qu'une suppression dont une part est retenue : c'est
+    # la distinction entre effacer et contre-passer qui doit être confirmée.
+    famille = {"partiel": "suppression"}
+    attendu = famille.get(ctx.champ("mode"), ctx.champ("mode"))
+    if attendu and attendu != famille.get(mode, mode):
+        raise ErreurApplicative(
+            f"La situation a changé depuis l'affichage : cet import ne peut "
+            f"plus être annulé par {_libelle_mode(attendu)}, mais par "
+            f"{_libelle_mode(mode)}. Reprenez l'écran d'annulation.")
+
+    with db.transaction():
+        rendu = _defait(imp, detail, mode, date, ctx.nom_utilisateur)
+        note = []
+        if rendu["supprimees"]:
+            note.append(f"{rendu['supprimees']} écriture(s) supprimée(s)")
+        if rendu["extournees"]:
+            note.append(f"{len(rendu['extournees'])} extourne(s) : "
+                        + ", ".join(rendu["extournees"][:12])
+                        + (" …" if len(rendu["extournees"]) > 12 else ""))
+        if rendu["factures"]:
+            note.append(f"{rendu['factures']} facture(s)")
+        if rendu["reglements"]:
+            note.append(f"{rendu['reglements']} règlement(s) retiré(s)")
+        for table, combien in rendu["objets_retires"].items():
+            note.append(f"{combien} {table} retiré(s)")
+        for table, combien in rendu["objets_gardes"].items():
+            note.append(f"{combien} {table} conservé(s), déjà utilisé(s)")
+        db.modifie("imports", imp["id"], {
+            "annule_le": util.maintenant(),
+            "annule_par": ctx.nom_utilisateur,
+            "annule_mode": mode,
+            "annule_note": " ; ".join(note) or "rien à retirer",
+        })
+        db.trace("annulation_import", "import", imp["id"],
+                 {"mode": mode, "note": note}, ctx.nom_utilisateur)
+    rendu["obstacles"] = obstacles
+    rendu["mode_libelle"] = _libelle_mode(mode)
+    return rendu

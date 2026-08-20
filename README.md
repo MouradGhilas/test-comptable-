@@ -360,7 +360,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
 python3 outils/test_http.py          # 40 contrôles du serveur et de l'interface
-python3 outils/test_comptable.py     # 141 contrôles de conformité comptable
+python3 outils/test_comptable.py     # 176 contrôles de conformité comptable
 python3 app.py --verifier            # intégrité de vos données
 ```
 
@@ -371,7 +371,7 @@ sont constatés au bon moment et que la clôture se déroule correctement.
 Le test de conformité comptable, lui, ne regarde pas l'interface : il attaque
 l'application par ses interfaces de programmation et vérifie les règles qui,
 si elles cèdent, produisent des comptes **faux sans que rien ne le signale**.
-Cinq familles, lançables séparément
+Six familles, lançables séparément
 (`python3 outils/test_comptable.py perimetre`) :
 
 | Suite | Ce qu'elle vérifie |
@@ -381,6 +381,7 @@ Cinq familles, lançables séparément
 | `cloture` | l'exercice clos ne bouge plus, les à-nouveaux reportent les seuls comptes de bilan, l'extourne annule sans effacer |
 | `perimetre` | l'étanchéité entre le déclaré et le hors déclaration |
 | `cycles` | les cycles métier en mouvement : numérotation, saisies simultanées, une avance sur plan qui devient produit à la livraison, un loyer encaissé qui repart chez son propriétaire |
+| `reprises` | annuler un import déjà validé sans laisser de trou dans la numérotation ni effacer ce qui sert déjà |
 
 La suite `perimetre` est la plus importante du lot. Chaque montant hors
 déclaration y est un multiple de 7 777, donc reconnaissable ; on vérifie
@@ -424,7 +425,7 @@ web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
 ├── test_http.py            40 contrôles serveur et interface
-├── test_comptable.py       141 contrôles de conformité comptable
+├── test_comptable.py       176 contrôles de conformité comptable
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur
 ├── installer.py            même installation, sans fichier bloqué par les messageries

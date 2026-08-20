@@ -141,7 +141,7 @@ SCHEMA = Path(__file__).parent / "schema.sql"
 
 #: Version du schéma attendue par cette version du programme.
 #: À incrémenter dès qu'une migration est ajoutée ci-dessous.
-VERSION_SCHEMA = 5
+VERSION_SCHEMA = 6
 
 
 def colonnes(table: str) -> set[str]:
@@ -188,6 +188,9 @@ def _migration_2() -> None:
 INDEX_COMPLEMENTAIRES = [
     ("idx_ecr_perimetre", "ecritures", "societe_id, perimetre", ["perimetre"]),
     ("idx_ecr_operation", "ecritures", "operation_ref", ["operation_ref"]),
+    ("idx_ecr_import", "ecritures", "import_id", ["import_id"]),
+    ("idx_fact_import", "factures", "import_id", ["import_id"]),
+    ("idx_regl_import", "reglements", "import_id", ["import_id"]),
 ]
 
 
@@ -242,12 +245,50 @@ def _migration_5() -> None:
             "ON modeles_ecriture(societe_id, nom)")
 
 
+def _migration_6() -> None:
+    """Journal des reprises : pouvoir défaire un import qu'on vient de faire.
+
+    Jusqu'ici un import était irréversible : le mauvais fichier, ou le même
+    deux fois, laissait au comptable des centaines d'écritures à reprendre
+    une par une. Chaque import consigne désormais ce qu'il a créé.
+
+    Rien n'est effacé de la piste d'audit : la ligne d'import reste, marquée
+    annulée, et une reprise qui n'est plus le dernier mouvement de ses
+    journaux s'annule par contre-passation, pas par suppression.
+    """
+    execute("""
+        CREATE TABLE IF NOT EXISTS imports (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            societe_id  INTEGER NOT NULL REFERENCES societes(id) ON DELETE CASCADE,
+            modele      TEXT NOT NULL,
+            libelle     TEXT NOT NULL DEFAULT '',
+            fichier     TEXT,
+            nb_crees    INTEGER NOT NULL DEFAULT 0,
+            nb_rejetes  INTEGER NOT NULL DEFAULT 0,
+            objets      TEXT NOT NULL DEFAULT '{}',
+            cree_le     TEXT NOT NULL,
+            cree_par    TEXT,
+            annule_le   TEXT,
+            annule_par  TEXT,
+            annule_mode TEXT,
+            annule_note TEXT
+        )""")
+    execute("CREATE INDEX IF NOT EXISTS idx_imports_soc "
+            "ON imports(societe_id, cree_le)")
+    # Les reprises antérieures à cette version ne sont pas rattachables : la
+    # colonne reste vide pour elles, et elles n'apparaissent pas au journal.
+    ajoute_colonne("ecritures", "import_id", "INTEGER")
+    ajoute_colonne("factures", "import_id", "INTEGER")
+    ajoute_colonne("reglements", "import_id", "INTEGER")
+
+
 #: version -> fonction de migration. Exécutées dans l'ordre croissant.
 MIGRATIONS = {
     2: _migration_2,
     3: _migration_3,
     4: _migration_4,
     5: _migration_5,
+    6: _migration_6,
 }
 
 

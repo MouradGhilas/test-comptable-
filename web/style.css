@@ -369,6 +369,9 @@ button.plat { border-color: transparent; background: none; }
              font-size: 10.5px; font-weight: 700; text-transform: uppercase;
              letter-spacing: .3px; background: var(--fond-doux); color: var(--texte-doux);
              border: 1px solid var(--bordure); }
+/* Une ligne dont l'histoire est close : encore lisible, mais en retrait. */
+tr.attenuee td { opacity: .62; }
+
 .etiquette.succes { background: var(--succes-fond); color: var(--succes); border-color: transparent; }
 .etiquette.alerte { background: var(--alerte-fond); color: var(--alerte); border-color: transparent; }
 .etiquette.danger { background: var(--danger-fond); color: var(--danger); border-color: transparent; }
