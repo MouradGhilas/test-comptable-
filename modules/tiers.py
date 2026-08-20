@@ -355,3 +355,159 @@ def api_relances(ctx):
         "ORDER BY retard DESC",
         (aujourdhui, societe_id, aujourdhui, jours),
     )}
+
+
+# ---------------------------------------------------------------------------
+# Relevé de compte d'un tiers
+# ---------------------------------------------------------------------------
+#
+# La balance auxiliaire dit combien un client doit ; elle ne dit pas pourquoi.
+# Pour relancer un client, ou pour justifier un solde à un fournisseur, il faut
+# le détail : chaque mouvement, dans l'ordre, avec le solde qui court. C'est le
+# document qu'on envoie, et celui qu'on oppose quand le tiers conteste.
+
+
+def releve_tiers(societe_id: int, tiers_id: int, du: str, au: str,
+                 perimetre=None, non_lettrees: bool = False) -> dict:
+    """Détail des mouvements d'un tiers, avec solde d'ouverture et progressif."""
+    t = db.ligne("SELECT * FROM tiers WHERE id = ? AND societe_id = ?",
+                 (tiers_id, societe_id))
+    if not t:
+        raise ErreurApplicative("Tiers introuvable.", 404)
+
+    from modules import comptabilite as compta
+    clause, params = compta.clause_perimetre(perimetre)
+
+    # Ce que le tiers devait déjà avant la période : sans lui, le relevé ne
+    # justifie pas son solde final.
+    anterieur = db.valeur(
+        "SELECT COALESCE(SUM(l.debit - l.credit),0) FROM lignes l "
+        "JOIN ecritures e ON e.id = l.ecriture_id "
+        f"WHERE l.tiers_id = ? AND e.societe_id = ? AND e.date < ?{clause}",
+        [tiers_id, societe_id, du, *params], 0)
+
+    conditions = ""
+    if non_lettrees:
+        conditions = " AND (l.lettrage IS NULL OR l.lettrage = '')"
+    mouvements = db.lignes(
+        "SELECT l.id, l.compte, l.libelle, l.debit, l.credit, l.lettrage, "
+        "       l.echeance, e.id AS ecriture_id, e.date, e.numero, e.piece, "
+        "       e.libelle AS libelle_ecriture, e.perimetre, j.code AS journal, "
+        "       c.intitule AS compte_intitule "
+        "FROM lignes l JOIN ecritures e ON e.id = l.ecriture_id "
+        "JOIN journaux j ON j.id = e.journal_id "
+        "LEFT JOIN comptes c ON c.numero = l.compte "
+        "     AND (c.societe_id = e.societe_id OR c.societe_id IS NULL) "
+        f"WHERE l.tiers_id = ? AND e.societe_id = ? AND e.date >= ? AND e.date <= ?"
+        f"{clause}{conditions} "
+        "ORDER BY e.date, e.id, l.ordre",
+        [tiers_id, societe_id, du, au, *params])
+
+    solde = anterieur
+    for m in mouvements:
+        solde += m["debit"] - m["credit"]
+        m["solde"] = solde
+        m["lettree"] = bool(m["lettrage"])
+
+    # Ce qui reste dû, par ancienneté : c'est ce qui décide d'une relance.
+    tranches = db.ligne(
+        "SELECT "
+        "  COALESCE(SUM(CASE WHEN julianday(?) - julianday(COALESCE(l.echeance, e.date)) <= 30 "
+        "      THEN l.debit - l.credit ELSE 0 END),0) AS t0_30, "
+        "  COALESCE(SUM(CASE WHEN julianday(?) - julianday(COALESCE(l.echeance, e.date)) > 30 "
+        "      AND julianday(?) - julianday(COALESCE(l.echeance, e.date)) <= 60 "
+        "      THEN l.debit - l.credit ELSE 0 END),0) AS t31_60, "
+        "  COALESCE(SUM(CASE WHEN julianday(?) - julianday(COALESCE(l.echeance, e.date)) > 60 "
+        "      AND julianday(?) - julianday(COALESCE(l.echeance, e.date)) <= 90 "
+        "      THEN l.debit - l.credit ELSE 0 END),0) AS t61_90, "
+        "  COALESCE(SUM(CASE WHEN julianday(?) - julianday(COALESCE(l.echeance, e.date)) > 90 "
+        "      THEN l.debit - l.credit ELSE 0 END),0) AS t90_plus "
+        "FROM lignes l JOIN ecritures e ON e.id = l.ecriture_id "
+        f"WHERE l.tiers_id = ? AND e.societe_id = ? AND e.date <= ? "
+        f"AND (l.lettrage IS NULL OR l.lettrage = ''){clause}",
+        [au, au, au, au, au, au, tiers_id, societe_id, au, *params]) or {}
+
+    return {
+        "tiers": t,
+        "du": du, "au": au,
+        "perimetre": perimetre or "tous",
+        "libelle_perimetre": LIBELLES_PERIMETRE.get(perimetre or "tous",
+                                                    "Tout — vue réelle"),
+        "non_lettrees": non_lettrees,
+        "solde_anterieur": anterieur,
+        "mouvements": mouvements,
+        "total_debit": sum(m["debit"] for m in mouvements),
+        "total_credit": sum(m["credit"] for m in mouvements),
+        "solde_final": solde,
+        "age": {cle: int(tranches.get(cle) or 0)
+                for cle in ("t0_30", "t31_60", "t61_90", "t90_plus")},
+    }
+
+
+#: Ce qu'un relevé doit annoncer sur lui-même : un document envoyé à un client
+#: doit dire de quel périmètre il rend compte.
+LIBELLES_PERIMETRE = {
+    "tous": "Tout — vue réelle",
+    "declare": "Déclaré uniquement",
+    "hors_declaration": "Hors déclaration uniquement",
+}
+
+
+def _bornes_releve(ctx) -> tuple[str, str]:
+    au = ctx.arg("au") or util.aujourdhui()
+    du = ctx.arg("du") or f"{au[:4]}-01-01"
+    return du, au
+
+
+@route("GET", "/api/tiers/<id>/releve")
+def api_releve_tiers(ctx):
+    du, au = _bornes_releve(ctx)
+    return releve_tiers(ctx.arg_int("societe"), int(ctx.params["id"]), du, au,
+                        perimetre=ctx.perimetre(),
+                        non_lettrees=ctx.arg("non_lettrees") == "1")
+
+
+@route("GET", "/api/export/releve-tiers")
+def api_export_releve_tiers(ctx):
+    from modules import comptabilite as compta
+    societe_id = ctx.arg_int("societe")
+    soc = compta.societe(societe_id)
+    du, au = _bornes_releve(ctx)
+    d = releve_tiers(societe_id, ctx.arg_int("tiers"), du, au,
+                     perimetre=ctx.perimetre(),
+                     non_lettrees=ctx.arg("non_lettrees") == "1")
+
+    classeur = tableur.Classeur()
+    f = classeur.feuille("Relevé de compte")
+    f.titre(f"{soc['raison_sociale']} — Relevé de compte "
+            f"{d['tiers']['raison_sociale']}")
+    f.ajoute(tableur.texte(f"Du {util.date_fr(du)} au {util.date_fr(au)}"
+                           f" — {d['libelle_perimetre']}"))
+    f.vide()
+    f.entetes("Date", "Journal", "N° écriture", "Pièce", "Libellé", "Compte",
+              "Échéance", "Lettrage", "Débit", "Crédit", "Solde")
+    f.largeurs_auto(12, 9, 14, 16, 44, 10, 12, 10, 15, 15, 16)
+    f.ajoute(tableur.texte(""), tableur.texte(""), tableur.texte(""),
+             tableur.texte(""), tableur.texte("Solde antérieur", tableur.GRAS),
+             tableur.texte(""), tableur.texte(""), tableur.texte(""),
+             tableur.texte(""), tableur.texte(""),
+             tableur.monnaie(d["solde_anterieur"]))
+    for m in d["mouvements"]:
+        f.ajoute(
+            tableur.date_cel(m["date"]), tableur.texte(m["journal"]),
+            tableur.texte(m["numero"] or ""), tableur.texte(m["piece"] or ""),
+            tableur.texte(m["libelle"] or m["libelle_ecriture"]),
+            tableur.texte(m["compte"]), tableur.date_cel(m["echeance"] or ""),
+            tableur.texte(m["lettrage"] or ""),
+            tableur.monnaie(m["debit"]), tableur.monnaie(m["credit"]),
+            tableur.monnaie(m["solde"]),
+        )
+    f.ajoute(
+        tableur.texte("TOTAUX", tableur.GRAS), *[tableur.texte("")] * 7,
+        tableur.monnaie(d["total_debit"], total=True),
+        tableur.monnaie(d["total_credit"], total=True),
+        tableur.monnaie(d["solde_final"], total=True),
+    )
+    return Reponse(classeur.octets(),
+                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                   f"releve_{d['tiers']['code'] or d['tiers']['id']}_{au}.xlsx")

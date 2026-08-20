@@ -3,6 +3,36 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.7.0
+
+- **Défaire un import.** Vous vous êtes trompé de fichier, ou vous avez passé
+  le même deux fois ? Chaque reprise reste inscrite dans **Paramètres →
+  Import de données → « Reprises déjà faites »**, avec un bouton pour
+  l'annuler. L'application regarde ce qui a été fait depuis et vous dit
+  elle-même comment elle s'y prendra, **avant** d'y toucher : elle retire les
+  écritures si rien n'a bougé — les numéros repartent d'où ils venaient, sans
+  laisser de trou dans le journal — et les **contre-passe** dès qu'une
+  écriture a été passée depuis. Rien n'est jamais effacé de la piste d'audit.
+- Pour un import de tiers, de comptes ou de biens, ce qui sert déjà reste en
+  place et l'écran dit lequel. Un exercice clôturé, une ligne lettrée ou une
+  facture réglée depuis empêchent la suppression, en le disant.
+- **Rechercher partout, d'un seul champ.** En haut de chaque page, ou par
+  **Ctrl + K** : tapez un nom, un numéro de facture, un compte, et le
+  résultat vous mène directement à sa page. L'écriture cherchée s'ouvre
+  d'elle-même.
+- **Chercher un montant.** Tapez `125 000` : l'application retrouve la ligne
+  d'écriture qui porte cette somme, au débit comme au crédit, avec son compte
+  et son journal. C'est ce qu'il faut pour remonter à l'origine d'un solde qui
+  ne tombe pas juste.
+- **Relevé de compte d'un tiers.** Depuis la liste des tiers ou depuis sa
+  fiche : le détail de tous ses mouvements sur une période, avec le solde
+  d'ouverture, le solde qui court ligne à ligne, le lettrage, et l'ancienneté
+  de ce qui reste dû. Imprimable pour être envoyé à un client, exportable vers
+  Excel. C'est le document qu'on joint à une relance, et celui qu'on oppose
+  quand un tiers conteste son solde.
+- Le relevé annonce son périmètre : un relevé « déclaré » ne montre que le
+  déclaré, et le dit en toutes lettres sur le papier.
+
 ## 1.6.6
 
 - **Dupliquer une écriture.** Ouvrez une écriture, cliquez sur

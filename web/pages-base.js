@@ -174,6 +174,7 @@ const CHAMPS_TIERS = [
 App.pages.tiers = {
   titre: 'Tiers',
   async afficher(zone, route) {
+    if (route.segments[2] === 'releve') return releveTiers(zone, route.segments[1], route);
     if (route.segments[1] && route.segments[1] !== 'nouveau') return ficheTiers(zone, route.segments[1]);
 
     const type = route.parametres.type || '';
@@ -205,7 +206,9 @@ App.pages.tiers = {
         { titre: 'NIF', cle: 'nif' },
         {
           titre: '', classe: 'num',
-          rendu: (t) => `<button class="petit-bouton" onclick="event.stopPropagation();editeTiers(${t.id})">Modifier</button>`,
+          rendu: (t) => `<button class="petit-bouton"
+            onclick="event.stopPropagation();navigue('/tiers/${t.id}/releve')">Relevé</button>
+            <button class="petit-bouton" onclick="event.stopPropagation();editeTiers(${t.id})">Modifier</button>`,
         },
       ], d.tiers, {
         clic: true, icone: '👥', messageVide: 'Aucun tiers. Créez votre premier client ou fournisseur.',
@@ -223,6 +226,7 @@ async function ficheTiers(zone, id) {
   sousTitre(`${t.code} — ${ETIQUETTES[t.type]?.[0] || t.type}`);
   $('#titre-page').textContent = t.raison_sociale;
   actionsPage(`<button onclick="editeTiers(${t.id})">Modifier</button>
+    <button class="primaire" onclick="navigue('/tiers/${t.id}/releve')">Relevé de compte</button>
     ${t.type === 'mandant' ? `<button onclick="window.open('/api/proprietaires/${t.id}/releve','_blank')">Relevé de gestion</button>` : ''}
     <a class="bouton" href="#/tiers">Retour</a>`);
 
@@ -267,6 +271,112 @@ async function ficheTiers(zone, id) {
       { titre: 'Crédit', classe: 'num', rendu: (m) => m.credit ? fm(m.credit) : '' },
       { titre: 'Lettr.', cle: 'lettrage' },
     ], t.mouvements, { messageVide: 'Aucun mouvement comptable.' }), '', true)}`;
+}
+
+/* --------------------------------------------- Relevé de compte tiers ----
+
+   La balance auxiliaire dit combien un client doit ; elle ne dit pas
+   pourquoi. Pour relancer, ou pour justifier un solde à un fournisseur, il
+   faut le détail : chaque mouvement, dans l'ordre, avec le solde qui court.
+   C'est le document qu'on envoie, et celui qu'on oppose quand le tiers
+   conteste. */
+
+async function releveTiers(zone, id, route) {
+  const p = route.parametres;
+  const au = p.au || (App.etat.exercice?.date_fin < aujourdhui()
+    ? App.etat.exercice.date_fin : aujourdhui());
+  const du = p.du || App.etat.exercice?.date_debut || `${au.slice(0, 4)}-01-01`;
+  const nonLettrees = p.non_lettrees === '1';
+  const filtres = { du, au, non_lettrees: nonLettrees ? '1' : '' };
+
+  const d = await charge(`/api/tiers/${id}/releve`, filtres);
+  const t = d.tiers;
+  $('#titre-page').textContent = `Relevé — ${t.raison_sociale}`;
+  sousTitre(`${t.code || ''} · du ${fdate(du)} au ${fdate(au)} · ${d.libelle_perimetre}`);
+  actionsPage(`
+    <button class="primaire" onclick="telecharge('/api/tiers/${id}/releve/impression',
+      ${JSON.stringify(filtres).replace(/"/g, "'")})">Imprimer</button>
+    <button onclick="telecharge('/api/export/releve-tiers',
+      ${JSON.stringify({ tiers: id, ...filtres }).replace(/"/g, "'")})">Exporter</button>
+    <a class="bouton" href="#/tiers/${id}">Fiche du tiers</a>`);
+
+  const solde = d.solde_final;
+  const age = d.age;
+  const retard = age.t31_60 + age.t61_90 + age.t90_plus;
+
+  zone.innerHTML = `
+    <div class="barre-outils">
+      <label class="champ"><span>Du</span>
+        <input type="date" id="rel-du" value="${du}"></label>
+      <label class="champ"><span>Au</span>
+        <input type="date" id="rel-au" value="${au}"></label>
+      <label class="champ"><span><input type="checkbox" id="rel-nl"
+        ${nonLettrees ? 'checked' : ''}> Non lettrés seulement</span></label>
+      <button onclick="filtreReleveTiers(${id})">Afficher</button>
+    </div>
+
+    <div class="grille c4" style="margin-bottom:16px">
+      ${indicateur(`Solde au ${fdate(du)}`, fm(d.solde_anterieur, true))}
+      ${indicateur('Débits de la période', fm(d.total_debit, true))}
+      ${indicateur('Crédits de la période', fm(d.total_credit, true))}
+      ${indicateur(`Solde au ${fdate(au)}`, fm(solde, true),
+        solde > 0 ? 'Débiteur — il vous doit' : (solde < 0
+          ? 'Créditeur — vous lui devez' : 'Soldé'),
+        solde > 0 ? 'danger' : (solde < 0 ? 'succes' : ''))}
+    </div>
+
+    ${retard ? `<div class="message alerte">
+      <strong>${fm(retard, true)} dû depuis plus de trente jours</strong>
+      Dont ${fm(age.t90_plus, true)} depuis plus de quatre-vingt-dix jours.
+      Le relevé imprimable porte ce détail : c'est lui qu'on joint à une
+      relance.</div>` : ''}
+
+    ${carte(`${d.mouvements.length} mouvement(s)`, tableau([
+      { titre: 'Date', rendu: (m) => fdate(m.date), largeur: '92px' },
+      { titre: 'Jal', cle: 'journal', largeur: '48px' },
+      { titre: 'Pièce', rendu: (m) => ech(m.piece || m.numero || ''), largeur: '120px' },
+      { titre: 'Libellé', rendu: (m) => ech(m.libelle || m.libelle_ecriture) },
+      { titre: 'Compte', rendu: (m) => `<span title="${ech(m.compte_intitule || '')}">${ech(m.compte)}</span>`, largeur: '70px' },
+      { titre: 'Échéance', rendu: (m) => m.echeance ? fdate(m.echeance) : '', largeur: '92px' },
+      { titre: 'Lett.', classe: 'centre', largeur: '52px',
+        rendu: (m) => m.lettrage
+          ? `<span class="etiquette succes">${ech(m.lettrage)}</span>`
+          : '<span class="discret">·</span>' },
+      { titre: 'Débit', classe: 'num', largeur: '120px',
+        rendu: (m) => m.debit ? fm(m.debit) : '' },
+      { titre: 'Crédit', classe: 'num', largeur: '120px',
+        rendu: (m) => m.credit ? fm(m.credit) : '' },
+      { titre: 'Solde', classe: 'num', largeur: '130px',
+        rendu: (m) => fmc(m.solde) },
+    ], d.mouvements, {
+      clic: true, icone: '📄',
+      messageVide: 'Aucun mouvement sur cette période.',
+      attributsLigne: (m) => `onclick="detailEcriture(${m.ecriture_id})"`,
+      // Un relevé se lit par mois : sans repère, on relit chaque date.
+      coupure: (m) => fperiode(String(m.date || '').slice(0, 7)),
+    }), '', true)}
+
+    ${(age.t0_30 || retard) ? carte('Ancienneté de ce qui reste dû', `
+      <p class="petit">Calculée sur les mouvements <strong>non lettrés</strong>,
+      à partir de l'échéance quand elle est renseignée, de la date d'écriture
+      sinon.</p>
+      <table class="tableau"><thead><tr>
+        <th class="num">Moins de 30 j</th><th class="num">31 à 60 j</th>
+        <th class="num">61 à 90 j</th><th class="num">Plus de 90 j</th>
+      </tr></thead><tbody><tr>
+        <td class="num">${fmc(age.t0_30)}</td>
+        <td class="num">${fmc(age.t31_60)}</td>
+        <td class="num">${fmc(age.t61_90)}</td>
+        <td class="num">${fmc(age.t90_plus)}</td>
+      </tr></tbody></table>`, '', true) : ''}`;
+}
+
+function filtreReleveTiers(id) {
+  const p = new URLSearchParams();
+  if ($('#rel-du').value) p.set('du', $('#rel-du').value);
+  if ($('#rel-au').value) p.set('au', $('#rel-au').value);
+  if ($('#rel-nl').checked) p.set('non_lettrees', '1');
+  navigue(`/tiers/${id}/releve?${p}`);
 }
 
 async function editeTiers(id) {

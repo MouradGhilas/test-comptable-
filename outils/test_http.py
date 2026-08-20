@@ -242,7 +242,51 @@ def executer():
     verifie("Un joker de recherche ne fait pas tout remonter",
             rech["total"] == 0, str(rech["total"]))
 
-    print("\n\033[1m8. Sauvegarde\033[0m")
+    print("\n\033[1m8. Relevé de compte d'un tiers\033[0m")
+    # La balance auxiliaire dit combien un client doit ; le relevé dit pourquoi.
+    rel, code = appel(f"/api/tiers/{client['id']}/releve"
+                      f"?societe={societe_id}&du=2026-01-01&au=2026-12-31")
+    verifie("Le relevé répond", code == 200 and "mouvements" in rel,
+            json.dumps(rel)[:180])
+    verifie("Il porte les deux mouvements du client (facture, encaissement)",
+            len(rel["mouvements"]) == 2, str(len(rel["mouvements"])))
+
+    courant = rel["solde_anterieur"]
+    exact = True
+    for m in rel["mouvements"]:
+        courant += m["debit"] - m["credit"]
+        exact = exact and m["solde"] == courant
+    verifie("Chaque ligne porte le solde cumulé exact", exact,
+            json.dumps(rel["mouvements"])[:220])
+    verifie("Solde antérieur + débits − crédits = solde final",
+            rel["solde_anterieur"] + rel["total_debit"] - rel["total_credit"]
+            == rel["solde_final"], str(rel["solde_final"]))
+    # 142 800 facturés, 142 800 encaissés : le compte est soldé.
+    verifie("Le solde final est nul, facture et règlement se compensant",
+            rel["solde_final"] == 0, str(rel["solde_final"]))
+    verifie("Le relevé annonce son périmètre",
+            bool(rel.get("libelle_perimetre")), json.dumps(rel)[:150])
+
+    impression, code = appel(f"/api/tiers/{client['id']}/releve/impression"
+                             f"?societe={societe_id}&du=2026-01-01&au=2026-12-31",
+                             brut=True)
+    texte = impression.decode()
+    verifie("Le relevé imprimable est produit",
+            code == 200 and "RELEVÉ DE COMPTE" in texte, texte[:150])
+    verifie("… il nomme le tiers et porte la mention d'usage",
+            "ENTREPRISE CLIENTE" in texte and "Sauf erreur ou omission" in texte,
+            texte[:150])
+
+    classeur, code = appel(f"/api/export/releve-tiers?societe={societe_id}"
+                           f"&tiers={client['id']}&du=2026-01-01&au=2026-12-31",
+                           brut=True)
+    verifie("L'export du relevé est un classeur",
+            code == 200 and classeur[:2] == b"PK", str(classeur[:8]))
+
+    inconnu, code = appel(f"/api/tiers/999999/releve?societe={societe_id}")
+    verifie("Un tiers inconnu est refusé", code == 404, str(code))
+
+    print("\n\033[1m9. Sauvegarde\033[0m")
     sauvegarde, code = appel("/api/sauvegardes", {"motif": "test"})
     verifie("Sauvegarde créée par l'API", code == 200 and sauvegarde.get("nom"),
             json.dumps(sauvegarde)[:160])

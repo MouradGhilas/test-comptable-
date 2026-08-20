@@ -88,6 +88,7 @@ python3 app.py --sauvegarder                       # sauvegarde sans ouvrir l'ap
 | Grand livre | Par compte, par tiers, avec solde progressif et filtre « non lettrées » |
 | Balance | Générale ou agrégée par classe, avec reports à nouveau |
 | Lettrage | Manuel et automatique (rapprochement facture ↔ règlement d'un même tiers) |
+| Relevé de compte tiers | Détail des mouvements sur une période, solde d'ouverture, solde progressif, ancienneté de ce qui reste dû ; imprimable et exportable |
 | Rapprochement bancaire | Pointage des mouvements face au relevé, calcul de l'écart |
 | États financiers | Bilan, compte de résultat par nature (TCR), tableau des flux de trésorerie |
 | Clôture | Contrôles préalables, virement du résultat en 120/129, génération des à-nouveaux, verrouillage |
@@ -96,6 +97,20 @@ python3 app.py --sauvegarder                       # sauvegarde sans ouvrir l'ap
 Toute opération métier génère son écriture comptable automatiquement, avec
 traçabilité de son origine. Une écriture validée n'est plus modifiable :
 on la corrige par extourne, ce qui préserve la piste d'audit.
+
+### Retrouver quelque chose
+
+Un comptable ne se souvient pas de l'écran où se trouve ce qu'il cherche : il se
+souvient d'un nom, d'un numéro de facture — ou d'un montant. Le champ de
+recherche de la barre haute (`Ctrl + K`) interroge d'un coup les écritures, les
+tiers, les factures, le plan comptable, les biens, les baux, les programmes, les
+contrats de vente sur plan et les salariés. Chaque résultat mène directement à sa
+page, et l'écriture visée s'ouvre d'elle-même.
+
+**Chercher un montant** est le cas le plus utile et le moins évident : taper
+`125 000` retrouve la ligne d'écriture qui porte cette somme, au débit comme au
+crédit, avec son compte et son journal. C'est ainsi qu'on remonte à l'origine
+d'un solde qui ne tombe pas juste.
 
 ### Agence immobilière
 
@@ -219,6 +234,22 @@ filtres affichés, périmètre compris.
   dans un seul fichier.
 * Lecture `.xlsx` en Python pur (`noyau/tableur.py`), CSV francophone accepté,
   en-têtes reconnus malgré accents, casse et synonymes usuels.
+
+**Défaire un import.** Se tromper de fichier, ou passer le même deux fois,
+arrive. Chaque reprise reste inscrite au journal des imports, avec de quoi
+l'annuler — et l'application choisit elle-même comment, en le disant avant
+d'agir :
+
+| Cas | Ce qu'elle fait |
+|---|---|
+| L'import est le dernier à avoir numéroté ses journaux | **Suppression** : les écritures partent, les compteurs repartent d'où ils venaient, aucun trou dans la numérotation |
+| Des écritures ont été passées depuis | **Contre-passation** : chaque écriture importée est extournée à une date choisie ; tout reste visible |
+| Import de référentiel (tiers, comptes, biens…) | Ce qui sert déjà reste en place, le reste est retiré, et l'écran dit lequel est lequel |
+
+Un exercice clôturé, une ligne lettrée ou une facture réglée depuis interdisent
+la suppression. Ce que l'écran annonce n'est pas une description écrite à la
+main : c'est le résultat de l'annulation réelle, jouée puis annulée — ce qui est
+annoncé est donc exactement ce qui se produira.
 
 ### Fiscalité algérienne
 
@@ -359,7 +390,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
-python3 outils/test_http.py          # 50 contrôles du serveur et de l'interface
+python3 outils/test_http.py          # 60 contrôles du serveur et de l'interface
 python3 outils/test_comptable.py     # 176 contrôles de conformité comptable
 python3 app.py --verifier            # intégrité de vos données
 ```
@@ -424,7 +455,7 @@ reference/
 web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
-├── test_http.py            50 contrôles serveur et interface
+├── test_http.py            60 contrôles serveur et interface
 ├── test_comptable.py       176 contrôles de conformité comptable
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur
@@ -457,6 +488,7 @@ ce qui rend les mises à jour sûres sur une base contenant déjà des écriture
 | `Ctrl + E` | Nouvelle écriture |
 | `Ctrl + F` | Nouvelle facture |
 | `Ctrl + T` | Liste des tiers |
+| `Ctrl + K` | Rechercher partout (nom, n° de facture, montant) |
 | `Échap` | Fermer la fenêtre en cours |
 
 ---

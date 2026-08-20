@@ -31,6 +31,14 @@ th { background: #1f4e5f; color: #fff; padding: 6px 7px; text-align: left;
 td { padding: 5px 7px; border-bottom: 1px solid #dde3e8; vertical-align: top; }
 tr:nth-child(even) td { background: #fafbfc; }
 .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.centre { text-align: center; }
+table.releve { table-layout: fixed; }
+table.releve td { font-size: 10px; }
+/* Un relevé de compte tient parfois sur trois pages : les en-têtes de
+   colonnes doivent revenir en haut de chacune, et un mouvement ne doit
+   pas se couper en deux. */
+@media print { thead { display: table-header-group; }
+               tr { break-inside: avoid; } }
 .entete { display: flex; justify-content: space-between; gap: 16px;
           border-bottom: 2.5px solid #1f4e5f; padding-bottom: 10px; }
 .entete .societe { max-width: 62%; }
@@ -636,3 +644,116 @@ def api_releve_proprietaire(ctx):
       <div><div class="ligne">L'agence</div></div>
     </div>"""
     return reponse_html(page(f"Relevé {proprietaire['raison_sociale']}", corps))
+
+
+# ---------------------------------------------------------------------------
+# Relevé de compte d'un tiers
+# ---------------------------------------------------------------------------
+
+#: Un client qui doit depuis plus de trois mois n'appelle pas la même phrase
+#: qu'un client à jour : le relevé le dit lui-même, sans qu'on ait à l'écrire.
+TITRES_TYPE_TIERS = {
+    "client": "Client", "fournisseur": "Fournisseur",
+    "mandant": "Propriétaire mandant", "salarie": "Salarié",
+    "notaire": "Notaire", "administration": "Administration",
+}
+
+
+@route("GET", "/api/tiers/<id>/releve/impression")
+def api_releve_tiers_impression(ctx):
+    """Le relevé tel qu'on l'envoie : chaque mouvement, et le solde qui court.
+
+    La balance auxiliaire dit combien un client doit ; elle ne dit pas
+    pourquoi. C'est ce document-là qu'on oppose quand le tiers conteste.
+    """
+    from modules import tiers as mod_tiers
+    identifiant = int(ctx.params["id"])
+    societe_id = ctx.arg_int("societe") or db.valeur(
+        "SELECT societe_id FROM tiers WHERE id = ?", (identifiant,))
+    soc = db.ligne("SELECT * FROM societes WHERE id = ?", (societe_id,))
+    au = ctx.arg("au") or util.aujourdhui()
+    du = ctx.arg("du") or f"{au[:4]}-01-01"
+    d = mod_tiers.releve_tiers(societe_id, identifiant, du, au,
+                               perimetre=ctx.perimetre(),
+                               non_lettrees=ctx.arg("non_lettrees") == "1")
+    t = d["tiers"]
+
+    rangs = "".join(f"""<tr>
+        <td>{e(util.date_fr(m['date']))}</td><td>{e(m['journal'])}</td>
+        <td>{e(m['piece'] or m['numero'] or '')}</td>
+        <td>{e(m['libelle'] or m['libelle_ecriture'])}</td>
+        <td>{e(m['compte'])}</td>
+        <td>{e(util.date_fr(m['echeance'])) if m['echeance'] else ''}</td>
+        <td class="centre">{e(m['lettrage'] or '')}</td>
+        <td class="num">{montant(m['debit']) if m['debit'] else ''}</td>
+        <td class="num">{montant(m['credit']) if m['credit'] else ''}</td>
+        <td class="num">{montant(m['solde'])}</td></tr>""" for m in d["mouvements"])
+
+    solde = d["solde_final"]
+    sens = ("doit encore" if solde > 0 else
+            ("est créditeur de" if solde < 0 else "est soldé"))
+    age = d["age"]
+    retard = age["t31_60"] + age["t61_90"] + age["t90_plus"]
+
+    corps = f"""
+    <div class="entete">{bloc_societe(soc)}
+      <div class="doc"><div class="badge">RELEVÉ DE COMPTE</div>
+        <div style="margin-top:8px">Du {e(util.date_fr(du))} au {e(util.date_fr(au))}</div>
+        <div class="mentions">{e(d['libelle_perimetre'])}
+        {' · mouvements non lettrés seulement' if d['non_lettrees'] else ''}</div>
+      </div></div>
+
+    <div class="parties">{bloc_tiers(
+        TITRES_TYPE_TIERS.get(t.get('type'), 'Tiers'), t)}</div>
+
+    <table class="releve"><colgroup>
+      <col style="width:8%"><col style="width:4%"><col style="width:11%">
+      <col style="width:29%"><col style="width:6%"><col style="width:8%">
+      <col style="width:5%"><col style="width:10%"><col style="width:10%">
+      <col style="width:9%"></colgroup><thead><tr>
+      <th>Date</th><th>Jal</th><th>Pièce</th><th>Libellé</th><th>Compte</th>
+      <th>Échéance</th><th class="centre">Lett.</th>
+      <th class="num">Débit</th><th class="num">Crédit</th>
+      <th class="num">Solde</th></tr></thead>
+      <tbody>
+        <tr><td colspan="7"><em>Solde au {e(util.date_fr(du))}</em></td>
+          <td class="num"></td><td class="num"></td>
+          <td class="num">{montant(d['solde_anterieur'])}</td></tr>
+        {rangs or '<tr><td colspan="10"><em>Aucun mouvement sur la période.</em></td></tr>'}
+        <tr class="total-ligne"><td colspan="7">TOTAUX DE LA PÉRIODE</td>
+          <td class="num">{montant(d['total_debit'])}</td>
+          <td class="num">{montant(d['total_credit'])}</td>
+          <td class="num">{montant(solde)}</td></tr>
+      </tbody></table>
+
+    <table class="totaux">
+      <tr class="final"><td>SOLDE AU {e(util.date_fr(au))}</td>
+        <td class="num">{montant(abs(solde))} DA
+          {'(débiteur)' if solde > 0 else ('(créditeur)' if solde < 0 else '')}</td></tr>
+    </table>
+
+    {'' if not (age['t0_30'] or retard) else f'''
+    <table><thead><tr><th colspan="4">Ancienneté de ce qui reste dû
+      (mouvements non lettrés)</th></tr>
+      <tr><th class="num">Moins de 30 j</th><th class="num">31 à 60 j</th>
+      <th class="num">61 à 90 j</th><th class="num">Plus de 90 j</th></tr></thead>
+      <tbody><tr>
+        <td class="num">{montant(age['t0_30'])}</td>
+        <td class="num">{montant(age['t31_60'])}</td>
+        <td class="num">{montant(age['t61_90'])}</td>
+        <td class="num">{montant(age['t90_plus'])}</td>
+      </tr></tbody></table>'''}
+
+    <div class="mentions">Ce relevé récapitule les mouvements enregistrés dans
+      nos livres pour votre compte. Au {e(util.date_fr(au))}, votre compte
+      {sens}{' ' + montant(abs(solde)) + ' DA' if solde else ''}.
+      {'Nous vous remercions de bien vouloir régulariser cette situation.'
+       if solde > 0 else ''}
+      Sauf erreur ou omission de notre part ; toute observation est à nous
+      adresser dans les quinze jours.</div>
+
+    <div class="signature">
+      <div><div class="ligne">Le tiers</div></div>
+      <div><div class="ligne">{e(soc.get('raison_sociale'))}</div></div>
+    </div>"""
+    return reponse_html(page(f"Relevé {t['raison_sociale']}", corps))
