@@ -360,12 +360,33 @@ Pour un usage à plusieurs postes sur le réseau local :
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
 python3 outils/test_http.py          # 40 contrôles du serveur et de l'interface
+python3 outils/test_comptable.py     # 141 contrôles de conformité comptable
 python3 app.py --verifier            # intégrité de vos données
 ```
 
 Le test fonctionnel simule une année complète d'activité sur les deux métiers et
 vérifie à chaque étape que la comptabilité reste équilibrée, que les produits
 sont constatés au bon moment et que la clôture se déroule correctement.
+
+Le test de conformité comptable, lui, ne regarde pas l'interface : il attaque
+l'application par ses interfaces de programmation et vérifie les règles qui,
+si elles cèdent, produisent des comptes **faux sans que rien ne le signale**.
+Cinq familles, lançables séparément
+(`python3 outils/test_comptable.py perimetre`) :
+
+| Suite | Ce qu'elle vérifie |
+|---|---|
+| `conformite` | partie double, cohérence des états entre eux, TVA, IRG, VSP, gestion locative |
+| `limites` | ce que le logiciel doit **refuser** : déséquilibre, date impossible, compte inexistant, écriture d'un exercice clos |
+| `cloture` | l'exercice clos ne bouge plus, les à-nouveaux reportent les seuls comptes de bilan, l'extourne annule sans effacer |
+| `perimetre` | l'étanchéité entre le déclaré et le hors déclaration |
+| `cycles` | les cycles métier en mouvement : numérotation, saisies simultanées, une avance sur plan qui devient produit à la livraison, un loyer encaissé qui repart chez son propriétaire |
+
+La suite `perimetre` est la plus importante du lot. Chaque montant hors
+déclaration y est un multiple de 7 777, donc reconnaissable ; on vérifie
+ensuite qu'aucun de ces montants n'apparaît dans une G50, un bilan fiscal, un
+calcul d'IBS ou un livre de TVA — et, réciproquement, que ces états **annoncent
+ce qu'ils ont écarté** plutôt que de l'omettre en silence.
 
 ---
 
@@ -403,6 +424,7 @@ web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
 ├── test_http.py            40 contrôles serveur et interface
+├── test_comptable.py       141 contrôles de conformité comptable
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur
 ├── installer.py            même installation, sans fichier bloqué par les messageries
