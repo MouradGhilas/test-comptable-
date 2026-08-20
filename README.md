@@ -359,7 +359,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
-python3 outils/test_http.py          # 40 contrôles du serveur et de l'interface
+python3 outils/test_http.py          # 50 contrôles du serveur et de l'interface
 python3 outils/test_comptable.py     # 176 contrôles de conformité comptable
 python3 app.py --verifier            # intégrité de vos données
 ```
@@ -424,7 +424,7 @@ reference/
 web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
-├── test_http.py            40 contrôles serveur et interface
+├── test_http.py            50 contrôles serveur et interface
 ├── test_comptable.py       176 contrôles de conformité comptable
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur

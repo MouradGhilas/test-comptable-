@@ -622,3 +622,52 @@ button.choix-apparence.actif:hover { background: var(--primaire-clair);
                                     print-color-adjust: exact; }
   .dec, td.num .zero { color: #555; }
 }
+
+/* ---------- Recherche globale ----------
+   Un comptable ne se souvient pas de l'écran où se trouve ce qu'il cherche,
+   mais d'un nom, d'un numéro — ou d'un montant. Le champ vit dans la barre
+   haute, à portée de main depuis n'importe quelle page. */
+.recherche-globale { position: relative; flex: 1; max-width: 460px; }
+.recherche-globale input {
+  width: 100%; padding: 7px 11px; font-size: 13px; border-radius: var(--rayon);
+  border: 1px solid var(--bordure); background: var(--fond); color: var(--texte);
+}
+.recherche-globale input:focus {
+  outline: none; border-color: var(--primaire);
+  box-shadow: 0 0 0 3px var(--primaire-fond);
+}
+.resultats-recherche {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 60;
+  max-height: min(70vh, 620px); overflow-y: auto; background: var(--fond-carte);
+  border: 1px solid var(--bordure); border-radius: var(--rayon);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .17);
+}
+.resultats-recherche .titre-groupe {
+  position: sticky; top: 0; background: var(--fond-doux); z-index: 1;
+  padding: 6px 12px; font-size: 11px; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--texte-doux);
+  border-bottom: 1px solid var(--bordure);
+}
+.resultats-recherche .titre-groupe .compte { float: right; text-transform: none; }
+.resultats-recherche a.resultat {
+  display: flex; gap: 12px; align-items: baseline; padding: 8px 12px;
+  text-decoration: none; color: var(--texte); border-bottom: 1px solid var(--bordure);
+}
+.resultats-recherche a.resultat:last-child { border-bottom: 0; }
+.resultats-recherche a.resultat:hover,
+.resultats-recherche a.resultat.survol { background: var(--survol); }
+.resultats-recherche .principal { flex: 1; font-size: 13px; }
+.resultats-recherche .secondaire {
+  display: block; font-size: 11.5px; color: var(--texte-doux); margin-top: 2px;
+}
+.resultats-recherche .montant-resultat {
+  font-variant-numeric: tabular-nums; font-size: 12.5px; white-space: nowrap;
+}
+.resultats-recherche .rien, .resultats-recherche .attente {
+  padding: 14px 12px; font-size: 12.5px; color: var(--texte-doux);
+}
+.resultats-recherche .astuce {
+  padding: 8px 12px; font-size: 11.5px; color: var(--texte-doux);
+  border-top: 1px solid var(--bordure); background: var(--fond-doux);
+}
+@media (max-width: 900px) { .recherche-globale { display: none; } }

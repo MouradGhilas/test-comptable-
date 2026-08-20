@@ -13,6 +13,9 @@ App.pages['comptabilite/ecritures'] = {
       q: route.parametres.q || '',
       sans_piece: route.parametres.sans_piece || '',
     };
+    // Venu de la recherche globale : on ouvre directement l'écriture visée,
+    // plutôt que de laisser le comptable la chercher dans la liste.
+    const ecritureVisee = route.parametres.ecriture;
     actionsPage(`<button class="primaire" onclick="saisieEcriture()">+ Écriture</button>
       <button onclick="choisitModeleEcriture()">Depuis un modèle</button>
       <button onclick="telecharge('/api/export/journal', ${JSON.stringify(filtres).replace(/"/g, "'")})">Exporter le journal</button>`);
@@ -60,6 +63,8 @@ App.pages['comptabilite/ecritures'] = {
         // obligent à relire chaque date pour savoir où l'on en est.
         coupure: (e) => fperiode(String(e.date || '').slice(0, 7)),
       }), '', true)}`;
+
+    if (ecritureVisee) detailEcriture(ecritureVisee);
   },
 };
 

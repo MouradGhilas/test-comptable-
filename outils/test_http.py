@@ -196,7 +196,53 @@ def executer():
     verifie("Traversée de répertoire bloquée", code in (403, 404) or b"import argparse" not in traverse,
             f"code {code}")
 
-    print("\n\033[1m7. Sauvegarde\033[0m")
+    print("\n\033[1m7. Recherche globale\033[0m")
+    # Un comptable ne se souvient pas de l'écran, mais d'un nom, d'un numéro
+    # — ou d'un montant. Le champ unique doit rendre les trois.
+    trop_court, code = appel(f"/api/recherche?societe={societe_id}&q=a")
+    verifie("Une seule lettre est refusée", code == 400,
+            trop_court.get("erreur", ""))
+
+    rech, code = appel(f"/api/recherche?societe={societe_id}&q=ENTREPRISE")
+    groupes = {g["cle"]: g for g in rech.get("groupes", [])}
+    verifie("Le nom d'un tiers le retrouve", code == 200 and "tiers" in groupes,
+            list(groupes))
+    verifie("… avec le chemin qui y mène",
+            groupes.get("tiers", {}).get("resultats", [{}])[0]
+            .get("route", "").startswith("/tiers?q="),
+            json.dumps(groupes.get("tiers", {}))[:200])
+
+    rech, _ = appel(f"/api/recherche?societe={societe_id}&q={facture['numero']}")
+    groupes = {g["cle"]: g for g in rech["groupes"]}
+    verifie("Un numéro de facture retrouve la facture", "factures" in groupes,
+            list(groupes))
+
+    rech, _ = appel(f"/api/recherche?societe={societe_id}&q=7063")
+    groupes = {g["cle"]: g for g in rech["groupes"]}
+    verifie("Un numéro de compte retrouve le compte", "comptes" in groupes,
+            list(groupes))
+    verifie("… en menant à son grand livre",
+            groupes["comptes"]["resultats"][0]["route"].startswith(
+                "/comptabilite/grand-livre?compte_debut=7063"),
+            groupes.get("comptes", {}).get("resultats", [{}])[0].get("route", ""))
+
+    # 120 000 HT + 19 % = 142 800 TTC : le montant que porte l'écriture.
+    rech, _ = appel(f"/api/recherche?societe={societe_id}&q=142%20800")
+    groupes = {g["cle"]: g for g in rech["groupes"]}
+    verifie("Un montant écrit avec des espaces est compris",
+            rech["montant"] == 14280000, str(rech.get("montant")))
+    verifie("… et retrouve la ligne d'écriture qui le porte",
+            "montant" in groupes, list(groupes))
+    verifie("… en menant à l'écriture elle-même",
+            groupes.get("montant", {}).get("resultats", [{}])[0]
+            .get("route", "").startswith("/comptabilite/ecritures?ecriture="),
+            json.dumps(groupes.get("montant", {}))[:200])
+
+    rech, _ = appel(f"/api/recherche?societe={societe_id}&q=%%")
+    verifie("Un joker de recherche ne fait pas tout remonter",
+            rech["total"] == 0, str(rech["total"]))
+
+    print("\n\033[1m8. Sauvegarde\033[0m")
     sauvegarde, code = appel("/api/sauvegardes", {"motif": "test"})
     verifie("Sauvegarde créée par l'API", code == 200 and sauvegarde.get("nom"),
             json.dumps(sauvegarde)[:160])

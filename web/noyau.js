@@ -792,3 +792,112 @@ async function retireJustificatif(id, entite, entiteId, bouton) {
   notifie('Justificatif retiré.', 'succes');
   await rafraichitJustificatifs(entite, entiteId);
 }
+
+/* ------------------------------------------------- Recherche globale ----
+
+   Un comptable ne se souvient pas de l'écran où se trouve ce qu'il cherche :
+   il se souvient d'un nom, d'un numéro de facture — ou d'un montant. Le cas
+   du montant est le plus utile et le moins évident : taper « 125 000 »
+   retrouve la ligne d'écriture qui le porte, au débit comme au crédit. C'est
+   ainsi qu'on remonte à l'origine d'un solde qui ne tombe pas juste. */
+
+let _minuteurRecherche = null;
+let _dernierTexteRecherche = '';
+
+function _boiteRecherche() { return $('#resultats-recherche'); }
+
+function fermeRecherche() {
+  const boite = _boiteRecherche();
+  if (boite) { boite.hidden = true; boite.innerHTML = ''; }
+}
+
+function _rendResultatsRecherche(d) {
+  const boite = _boiteRecherche();
+  if (!boite) return;
+  if (!d.groupes.length) {
+    boite.innerHTML = `<div class="rien">Rien trouvé pour «&nbsp;${ech(d.q)}&nbsp;».
+      ${d.montant ? '' : 'Un montant se cherche tel qu\'il est écrit : 125000 ou 125 000,00.'}
+      </div>`;
+    boite.hidden = false;
+    return;
+  }
+  boite.innerHTML = d.groupes.map((g) => `
+    <div class="titre-groupe">${g.icone} ${ech(g.libelle)}
+      <span class="compte">${g.total > g.resultats.length
+        ? `${g.resultats.length} sur ${g.total}` : g.total}</span></div>
+    ${g.resultats.map((r) => `
+      <a class="resultat" href="#${r.route}">
+        <span class="principal">${ech(r.titre || '(sans libellé)')}
+          <span class="secondaire">${ech(r.detail || '')}${
+            r.perimetre === 'hors_declaration'
+              ? ' · <em>hors déclaration</em>' : ''}</span></span>
+        ${r.montant != null
+          ? `<span class="montant-resultat">${centimesDiscrets(fm(r.montant))}</span>`
+          : ''}
+      </a>`).join('')}`).join('')
+    + `<div class="astuce">${d.total} résultat(s) · ↑ ↓ pour parcourir,
+       Entrée pour ouvrir, Échap pour fermer</div>`;
+  boite.hidden = false;
+}
+
+async function lanceRecherche(texte) {
+  const boite = _boiteRecherche();
+  if (!boite) return;
+  if (texte.trim().length < 2) { fermeRecherche(); return; }
+  boite.innerHTML = '<div class="attente">Recherche…</div>';
+  boite.hidden = false;
+  try {
+    const d = await api(requete('/api/recherche',
+      { societe: App.etat.societe?.id, q: texte.trim() }));
+    // Une réponse arrivée en retard ne doit pas écraser une frappe plus récente.
+    if (texte !== _dernierTexteRecherche) return;
+    _rendResultatsRecherche(d);
+  } catch (err) {
+    boite.innerHTML = `<div class="rien">${ech(err.message)}</div>`;
+  }
+}
+
+function _deplaceDansRecherche(pas) {
+  const items = $$('#resultats-recherche a.resultat');
+  if (!items.length) return;
+  const courant = items.findIndex((a) => a.classList.contains('survol'));
+  const suivant = Math.max(0, Math.min(items.length - 1,
+    courant < 0 ? (pas > 0 ? 0 : items.length - 1) : courant + pas));
+  items.forEach((a) => a.classList.remove('survol'));
+  items[suivant].classList.add('survol');
+  items[suivant].scrollIntoView({ block: 'nearest' });
+}
+
+function brancheRechercheGlobale() {
+  const champ = $('#champ-recherche');
+  if (!champ) return;
+  champ.oninput = () => {
+    _dernierTexteRecherche = champ.value;
+    clearTimeout(_minuteurRecherche);
+    _minuteurRecherche = setTimeout(() => lanceRecherche(champ.value), 220);
+  };
+  champ.onfocus = () => { if (champ.value.trim().length >= 2) lanceRecherche(champ.value); };
+  champ.onkeydown = (ev) => {
+    if (ev.key === 'Escape') { fermeRecherche(); champ.blur(); return; }
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); _deplaceDansRecherche(1); return; }
+    if (ev.key === 'ArrowUp') { ev.preventDefault(); _deplaceDansRecherche(-1); return; }
+    if (ev.key === 'Enter') {
+      const cible = $('#resultats-recherche a.survol') || $('#resultats-recherche a.resultat');
+      if (cible) { ev.preventDefault(); cible.click(); }
+    }
+  };
+  // Un clic sur un résultat mène à la page : le panneau n'a plus lieu d'être.
+  _boiteRecherche().onclick = (ev) => {
+    if (ev.target.closest('a.resultat')) { fermeRecherche(); champ.blur(); }
+  };
+  document.addEventListener('click', (ev) => {
+    if (!ev.target.closest('.recherche-globale')) fermeRecherche();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'k') {
+      ev.preventDefault();
+      champ.focus();
+      champ.select();
+    }
+  });
+}

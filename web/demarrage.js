@@ -192,6 +192,7 @@ async function demarre() {
   // de mot de passe dans le document une fois la session ouverte.
   $('#zone-auth').innerHTML = '';
   $('#application').hidden = false;
+  brancheRechercheGlobale();
 
   if (!App.etat.societes.length) {
     $('#contenu').innerHTML = '<div class="message alerte">Aucun dossier comptable. '
