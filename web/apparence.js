@@ -17,6 +17,7 @@ const APPARENCE_DEFAUTS = {
   coupures: 'oui',
   etiquettes: 'discret',
   listes: 'cadre',
+  reperage: 'plein',
 };
 
 /* Chaque réglage : ce qu'il fait, ce qu'il vaut, et comment le dire en
@@ -68,6 +69,13 @@ const APPARENCE_REGLAGES = [
     aide: '« Validée » et « Déclaré » figurent sur presque chaque ligne. '
         + 'En gris, la couleur reste disponible pour ce qui demande une action.',
     valeurs: [['discret', 'En gris'], ['couleur', 'En couleur']],
+  },
+  {
+    cle: 'reperage', libelle: 'Où je suis', attribut: 'reperage',
+    aide: 'Trente écrans se ressemblent : des tableaux de chiffres. '
+        + 'En plein, l\'entrée du menu où vous êtes se trouve sans la '
+        + 'chercher ; en discret, elle est seulement teintée.',
+    valeurs: [['plein', 'Bien marqué'], ['discret', 'Discret']],
   },
   {
     cle: 'listes', libelle: 'Longues listes', attribut: 'listes',

@@ -58,7 +58,7 @@ function construitMenu() {
   const activite = App.etat.societe?.activite || 'mixte';
   $('#menu').innerHTML = MENU
     .filter((g) => !g.activite || g.activite.includes(activite))
-    .map((g) => `<div class="groupe-menu">
+    .map((g) => `<div class="groupe-menu" data-groupe="${ech(g.groupe || '')}">
       ${g.groupe ? `<div class="titre-groupe">${ech(g.groupe)}</div>` : ''}
       ${g.entrees.map((e) => `<a href="#${e.route}">
         <span class="ico">${e.ico}</span>${ech(e.libelle)}</a>`).join('')}

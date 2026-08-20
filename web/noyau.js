@@ -649,6 +649,96 @@ function routeCourante() {
   return { chemin, parametres, segments: chemin.split('/').filter(Boolean) };
 }
 
+/* ------------------------------------------------- Où suis-je ? --------
+
+   Une application de comptabilité a une trentaine d'écrans qui se
+   ressemblent : des tableaux de chiffres. Sans repère, on ne sait plus si
+   l'on regarde le journal ou le grand livre. Trois marques répondent à la
+   question, toujours au même endroit : l'entrée de menu en surbrillance
+   pleine, le titre de sa rubrique éclairé, et le nom de la rubrique rappelé
+   au-dessus du titre de la page. */
+
+//: Écrans qui n'ont pas d'entrée de menu à eux : ils vivent sous une autre.
+//: Sans cette table, ouvrir le rapprochement bancaire ou la fiche d'un lot
+//: éteindrait tout le menu — l'utilisateur ne saurait plus d'où il vient.
+const RATTACHEMENTS = {
+  '/rapprochement': '/tresorerie',
+  '/agence/mandats': '/agence/biens',
+  '/promotion/lots': '/promotion/programmes',
+  '/fiscalite/tva': '/fiscalite/g50',
+  '/fiscalite/ibs': '/fiscalite/g50',
+  '/fiscalite/parametres': '/fiscalite/g50',
+  '/paie/salaries': '/paie/bulletins',
+  '/paie/simulateur': '/paie/bulletins',
+};
+
+function _segments(chemin) { return chemin.split('/').filter(Boolean); }
+
+/** À quel point cette entrée de menu correspond à la page affichée. */
+function _pertinence(cible, chemin, seulEntree) {
+  if (cible === chemin) return 100;
+  const a = _segments(cible);
+  const b = _segments(chemin);
+  if (!a.length) return chemin === '/' ? 100 : 0;
+  if (a[0] !== b[0]) return 0;
+  // « /tiers » couvre « /tiers/12/releve »
+  if (chemin.startsWith(cible + '/')) return 50 + a.length;
+  // Une seule entrée porte cette rubrique : c'est forcément elle.
+  if (seulEntree) return 20;
+  // La fiche « promotion/programme/3 » rejoint la liste « promotion/programmes »
+  if (a[1] && b[1] && (a[1].startsWith(b[1]) || b[1].startsWith(a[1]))) return 10;
+  // Même rubrique, mais pas la même entrée : on éclaire le groupe seulement.
+  return 1;
+}
+
+function marqueMenuActif(route) {
+  const liens = $$('#menu a');
+  // « /rapprochement/12 » comme « /rapprochement » doivent éclairer la
+  // trésorerie : on essaie du plus précis au plus général.
+  const chemin = RATTACHEMENTS[route.chemin]
+    || RATTACHEMENTS['/' + route.segments.slice(0, 2).join('/')]
+    || RATTACHEMENTS['/' + (route.segments[0] || '')]
+    || route.chemin;
+
+  const parRubrique = {};
+  liens.forEach((a) => {
+    const r = _segments(a.getAttribute('href').slice(1).split('?')[0])[0] || '/';
+    parRubrique[r] = (parRubrique[r] || 0) + 1;
+  });
+
+  let gagnant = null;
+  let meilleure = 0;
+  liens.forEach((a) => {
+    const cible = a.getAttribute('href').slice(1).split('?')[0];
+    const rubrique = _segments(cible)[0] || '/';
+    const score = _pertinence(cible, chemin, parRubrique[rubrique] === 1);
+    a.dataset.pertinence = score;
+    if (score > meilleure) { meilleure = score; gagnant = a; }
+  });
+
+  liens.forEach((a) => {
+    const actif = a === gagnant && meilleure > 1;
+    a.classList.toggle('actif', actif);
+    if (actif) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  });
+
+  // La rubrique s'éclaire même quand aucune entrée ne convient exactement :
+  // savoir qu'on est « dans la promotion » vaut mieux que rien du tout.
+  $$('#menu .groupe-menu').forEach((g) => {
+    g.classList.toggle('actif', gagnant ? g.contains(gagnant) : false);
+  });
+
+  const rubrique = gagnant?.closest('.groupe-menu')?.dataset.groupe || '';
+  const chapeau = $('#section-courante');
+  if (chapeau) {
+    chapeau.textContent = rubrique;
+    chapeau.hidden = !rubrique;
+  }
+  // Le menu est plus long que l'écran : l'entrée courante doit rester visible.
+  if (gagnant) gagnant.scrollIntoView({ block: 'nearest' });
+}
+
 async function afficheRoute() {
   const route = routeCourante();
   const cle = route.segments.length
@@ -657,11 +747,7 @@ async function afficheRoute() {
     : 'accueil';
   const page = App.pages[cle] || App.pages.accueil;
 
-  $$('#menu a').forEach((a) => {
-    const cible = a.getAttribute('href').slice(1).split('?')[0];
-    a.classList.toggle('actif', cible === route.chemin
-      || (cible !== '/' && route.chemin.startsWith(cible)));
-  });
+  marqueMenuActif(route);
 
   const contenu = $('#contenu');
   contenu.innerHTML = '<div class="vide">Chargement…</div>';
@@ -670,6 +756,8 @@ async function afficheRoute() {
 
   try {
     $('#titre-page').textContent = page.titre || '';
+    const chapeau = $('#section-courante');
+    if (chapeau && chapeau.textContent === (page.titre || '')) chapeau.hidden = true;
     await page.afficher(contenu, route);
   } catch (err) {
     erreur(err);

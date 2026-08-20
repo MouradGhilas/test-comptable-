@@ -3,6 +3,27 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.7.1
+
+- **On voit enfin où l'on est.** L'entrée du menu correspondant à l'écran
+  affiché est maintenant peinte en plein, et non plus simplement teintée :
+  elle se trouve sans la chercher. Le titre de sa rubrique s'éclaire aussi,
+  et la rubrique est rappelée en petit au-dessus du titre de la page
+  (« COMPTABILITÉ » puis « Journal des écritures »).
+- Le repère suit partout, y compris là où il manquait : la fiche d'un
+  programme éclaire « Programmes », un contrat éclaire « Contrats VSP »,
+  l'onglet TVA éclaire « Déclaration G50 », et **tous** les onglets des
+  paramètres éclairent « Paramètres » — jusqu'ici, aucune entrée n'était
+  marquée sur ces écrans-là.
+- Si le menu est plus long que l'écran, il défile de lui-même pour garder
+  l'entrée courante en vue.
+- L'onglet ouvert à l'intérieur d'une page se distingue lui aussi mieux.
+- **Personnalisation → « Où je suis »** permet de revenir au repère discret
+  d'avant, pour qui préfère un menu qui ne saute pas aux yeux.
+- Correction : ouvrir un rapprochement bancaire sans numéro — un signet, une
+  adresse tapée à la main — affichait « Erreur interne ». L'écran montre
+  maintenant la liste des rapprochements existants.
+
 ## 1.7.0
 
 - **Défaire un import.** Vous vous êtes trompé de fichier, ou vous avez passé

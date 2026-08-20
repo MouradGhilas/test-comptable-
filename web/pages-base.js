@@ -564,10 +564,30 @@ async function nouveauRapprochement(tresorerieId) {
   });
 }
 
+async function listeRapprochements(zone) {
+  const d = await charge('/api/rapprochements');
+  actionsPage('<a class="bouton" href="#/tresorerie">Trésorerie</a>');
+  zone.innerHTML = carte('Rapprochements bancaires', tableau([
+    { titre: 'Date d\'arrêté', rendu: (r) => fdate(r.date_arrete), largeur: '120px' },
+    { titre: 'Compte', cle: 'compte' },
+    { titre: 'Solde du relevé', classe: 'num', rendu: (r) => fm(r.solde_releve) },
+    { titre: 'État', rendu: (r) => etiquette(r.cloture ? 'validee' : 'brouillon') },
+  ], d.rapprochements, {
+    clic: true, icone: '🏦',
+    messageVide: 'Aucun rapprochement. Ouvrez un compte de trésorerie pour en '
+      + 'lancer un.',
+    attributsLigne: (r) => `onclick="navigue('/rapprochement/${r.id}')"`,
+  }), '', true);
+}
+
 App.pages.rapprochement = {
   titre: 'Rapprochement bancaire',
   async afficher(zone, route) {
     const id = route.segments[1];
+    // Sans numéro — un signet, une adresse tapée à la main — l'écran demandait
+    // le rapprochement « undefined » et rendait une erreur interne. On montre
+    // plutôt ceux qui existent.
+    if (!id) return listeRapprochements(zone);
     const d = await api(`/api/rapprochements/${id}`);
     sousTitre(`${d.compte_libelle} — arrêté au ${fdate(d.date_arrete)}`);
     actionsPage('<a class="bouton" href="#/tresorerie">Retour</a>');

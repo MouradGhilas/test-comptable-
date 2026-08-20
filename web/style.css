@@ -109,6 +109,12 @@ html[data-etiquettes="couleur"] .etiquette.ordinaire {
   background: var(--info-fond); color: var(--info); padding: 2px 8px; }
 html[data-listes="page"] .enveloppe-table.defilante {
   max-height: none; min-height: 0; overflow-y: visible; }
+/* Repère de navigation en retrait : la teinte d'avant, pour qui préfère un
+   menu qui ne saute pas aux yeux. */
+html[data-reperage="discret"] nav a.actif {
+  background: var(--primaire-fond); color: var(--primaire-clair);
+  border-left-color: var(--primaire); }
+html[data-reperage="discret"] nav a.actif:hover { background: var(--primaire-fond); }
 
 html[data-theme="sombre"] {
   --fond: #12181d;
@@ -221,8 +227,18 @@ nav { flex: 1; padding: 8px 0; }
 nav a { display: flex; align-items: center; gap: 9px; padding: 7px 16px;
         color: var(--texte); font-size: 13px; border-left: 3px solid transparent; }
 nav a:hover { background: var(--fond-doux); text-decoration: none; }
-nav a.actif { background: var(--primaire-fond); border-left-color: var(--primaire);
-              color: var(--primaire-clair); font-weight: 600; }
+/* Où suis-je ? Trente écrans qui se ressemblent — des tableaux de chiffres —
+   et rien ne dit lequel on regarde. L'entrée courante est donc peinte en
+   plein, et non simplement teintée : elle se trouve sans la chercher.
+   Le texte prend la couleur du fond des cartes, qui est toujours l'inverse
+   de la couleur d'accent — blanc sur fond clair, sombre sur fond sombre. */
+nav a.actif { background: var(--primaire); border-left-color: var(--primaire-clair);
+              color: var(--fond-carte); font-weight: 600; }
+nav a.actif:hover { background: var(--primaire); text-decoration: none; }
+/* La rubrique s'éclaire aussi : le menu est plus long que l'écran, et savoir
+   qu'on est « dans la promotion » vaut mieux que rien quand l'entrée exacte
+   est sortie du champ. */
+.groupe-menu.actif .titre-groupe { color: var(--primaire-clair); }
 nav a .ico { width: 17px; text-align: center; font-size: 14px; }
 nav a .pastille { margin-left: auto; background: var(--danger); color: #fff;
                   border-radius: 9px; padding: 0 6px; font-size: 10px; font-weight: 700; }
@@ -238,6 +254,11 @@ nav a .pastille { margin-left: auto; background: var(--danger); color: #fff;
                gap: 14px; padding: 13px 22px; background: var(--fond-carte);
                border-bottom: 1px solid var(--bordure); position: sticky; top: 0; z-index: 20; }
 .actions-haut { display: flex; gap: 7px; flex-wrap: wrap; }
+/* Rappel de la rubrique au-dessus du titre : « COMPTABILITÉ » puis
+   « Journal des écritures ». Masqué quand il répéterait le titre. */
+.section-courante { font-size: 10px; font-weight: 700; letter-spacing: .8px;
+                    text-transform: uppercase; color: var(--primaire-clair);
+                    margin-bottom: 1px; }
 .contenu { padding: 18px 22px 60px; flex: 1; }
 
 /* ---------- Cartes ---------- */
@@ -470,7 +491,9 @@ pre.journal { max-height: 320px; overflow: auto; background: var(--fond);
            margin-bottom: 15px; overflow-x: auto; }
 .onglets button { border: 0; background: none; border-bottom: 2px solid transparent;
                   border-radius: 0; padding: 8px 14px; color: var(--texte-doux); }
-.onglets button.actif { border-bottom-color: var(--primaire); color: var(--primaire-clair); }
+.onglets button.actif { border-bottom-color: var(--primaire); color: var(--primaire-clair);
+                        background: var(--primaire-fond); font-weight: 600;
+                        border-radius: 4px 4px 0 0; }
 
 /* ---------- Barre de progression ---------- */
 .jauge { height: 7px; background: var(--fond-doux); border-radius: 4px; overflow: hidden;
