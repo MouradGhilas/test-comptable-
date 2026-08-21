@@ -627,6 +627,73 @@ async function enregistrePointage(id) {
   } catch (err) { erreur(err); }
 }
 
+/* --------------------------------------------------- Santé du dossier ----
+
+   La clôture a ses contrôles, et ils bloquent : c'est leur rôle. Mais une
+   erreur découverte à la clôture a onze mois d'ancienneté et onze mois
+   d'écritures posées par-dessus. Ceux-ci tournent au fil de l'eau. */
+
+const NIVEAUX_SANTE = {
+  critique: ['danger', '⛔', 'À corriger sans attendre'],
+  alerte: ['alerte', '⚠️', 'À regarder'],
+  info: ['info', 'ℹ️', 'Pour information'],
+};
+
+App.pages.sante = {
+  titre: 'Santé du dossier',
+  async afficher(zone) {
+    const d = await charge('/api/sante');
+    sousTitre(`${d.controles} contrôles sur l'exercice ${d.exercice.libelle}`);
+    actionsPage(`<button onclick="afficheRoute()">Recontrôler</button>
+      <a class="bouton" href="#/comptabilite/cloture">Contrôles de clôture</a>`);
+
+    if (!d.anomalies.length) {
+      zone.innerHTML = `<div class="message succes">
+        <strong>Rien à signaler</strong>
+        Les ${d.controles} contrôles passent : la comptabilité est équilibrée,
+        la numérotation est continue, aucun compte de tiers n'est inversé et
+        vos déclarations correspondent aux comptes.</div>`;
+      return;
+    }
+
+    zone.innerHTML = `
+      <div class="grille c3" style="margin-bottom:16px">
+        ${indicateur('À corriger sans attendre', String(d.critiques), '',
+          d.critiques ? 'danger' : 'succes')}
+        ${indicateur('À regarder', String(d.alertes), '',
+          d.alertes ? 'alerte' : '')}
+        ${indicateur('Contrôles passés',
+          String(d.controles - d.anomalies.length) + ' / ' + d.controles)}
+      </div>
+      <p class="petit">Ces contrôles surveillent le dossier au fil de l'eau.
+      Ceux qui <strong>empêchent</strong> une clôture sont ailleurs, sur
+      l'écran de clôture, à leur place.</p>
+      ${d.anomalies.map(carteAnomalie).join('')}`;
+  },
+};
+
+function carteAnomalie(a) {
+  const [genre, icone, mention] = NIVEAUX_SANTE[a.niveau] || NIVEAUX_SANTE.info;
+  const chiffres = [
+    a.nombre ? `${a.nombre} élément(s)` : '',
+    a.montant ? `${fm(a.montant, true)}` : '',
+  ].filter(Boolean).join(' · ');
+  return carte('', `
+    <div class="anomalie ${genre}">
+      <div class="tete">
+        <span class="marque">${icone}</span>
+        <div>
+          <strong>${ech(a.titre)}</strong>
+          <div class="tres-petit">${ech(mention)}${chiffres ? ' · ' + chiffres : ''}</div>
+        </div>
+        ${a.route ? `<a class="bouton" href="#${a.route}">Y aller</a>` : ''}
+      </div>
+      <p>${ech(a.explication)}</p>
+      ${(a.detail || []).length ? `<ul class="detail-anomalie">
+        ${a.detail.map((x) => `<li>${ech(x)}</li>`).join('')}</ul>` : ''}
+    </div>`, '', true);
+}
+
 /* ---------------------------------------------------------- Paramètres -- */
 
 App.pages.parametres = {

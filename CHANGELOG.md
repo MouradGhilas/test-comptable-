@@ -3,6 +3,28 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.7.3
+
+- **Santé du dossier**, nouvel écran dans la rubrique Clôture. Dix contrôles
+  tournent au fil de l'eau, sans attendre la clôture : une erreur trouvée en
+  mars se corrige en une minute, la même trouvée en décembre a onze mois
+  d'écritures posées par-dessus. Chaque anomalie dit **ce qui ne va pas,
+  pourquoi ça compte, et où aller pour le corriger**.
+- Sont surveillés : l'équilibre de la comptabilité, les trous dans la
+  numérotation d'un journal, une caisse passée en négatif, les factures
+  validées sans écriture, les clients créditeurs ou fournisseurs débiteurs,
+  les G50 déposées qui ne collent plus aux comptes, les brouillons, les
+  écritures sans justificatif, le lettrage qui traîne, et la dernière copie
+  de sauvegarde hors du poste.
+- Ces contrôles **n'empêchent rien** : ceux qui bloquent une clôture restent
+  sur l'écran de clôture, à leur place.
+- **Un « ? » dans la barre du haut**, sur chaque écran. Il explique en
+  français simple le point comptable qui compte là où vous êtes : pourquoi un
+  loyer encaissé pour un propriétaire n'est pas un produit de l'agence,
+  pourquoi une avance sur vente sur plan n'est pas du chiffre d'affaires,
+  pourquoi une écriture validée se corrige par extourne. Aucun taux n'y est
+  cité : ils vivent dans Paramètres → Fiscalité, où ils se vérifient.
+
 ## 1.7.2
 
 - **Le compte se cherche au nom autant qu'au numéro.** Dans la saisie, la

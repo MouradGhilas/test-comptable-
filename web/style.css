@@ -703,3 +703,29 @@ button.choix-apparence.actif:hover { background: var(--primaire-clair);
   border-top: 1px solid var(--bordure); background: var(--fond-doux);
 }
 @media (max-width: 900px) { .recherche-globale { display: none; } }
+
+/* ---------- Santé du dossier ----------
+   Une anomalie se lit en trois temps : ce qui ne va pas, pourquoi ça compte,
+   où aller pour le corriger. La carte suit cet ordre. */
+.anomalie .tete { display: flex; gap: 12px; align-items: flex-start; }
+.anomalie .tete > div { flex: 1; }
+.anomalie .marque { font-size: 19px; line-height: 1.2; }
+.anomalie p { margin: 9px 0 0; font-size: 12.8px; color: var(--texte-doux);
+              line-height: 1.55; }
+.anomalie.danger { border-left: 3px solid var(--danger); padding-left: 12px; }
+.anomalie.alerte { border-left: 3px solid var(--alerte); padding-left: 12px; }
+.anomalie.info   { border-left: 3px solid var(--info); padding-left: 12px; }
+.detail-anomalie { margin: 9px 0 0; padding-left: 20px; font-size: 12px;
+                   color: var(--texte-doux); }
+.detail-anomalie li { margin-bottom: 3px; }
+
+/* ---------- Aide contextuelle ----------
+   Toujours au même endroit, jamais recouvert par les actions de la page. */
+.bouton-aide { width: 27px; height: 27px; flex: 0 0 27px; padding: 0;
+               border-radius: 50%; font-weight: 700; font-size: 14px;
+               border: 1px solid var(--bordure-forte); background: var(--fond-doux);
+               color: var(--texte-doux); cursor: pointer; }
+.bouton-aide:hover { background: var(--primaire); color: var(--fond-carte);
+                     border-color: var(--primaire); }
+.points-aide { margin: 10px 0; padding-left: 20px; }
+.points-aide li { margin-bottom: 9px; line-height: 1.6; }

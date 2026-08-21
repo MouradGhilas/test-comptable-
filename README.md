@@ -98,6 +98,27 @@ Toute opération métier génère son écriture comptable automatiquement, avec
 traçabilité de son origine. Une écriture validée n'est plus modifiable :
 on la corrige par extourne, ce qui préserve la piste d'audit.
 
+### Santé du dossier
+
+Dix contrôles tournent au fil de l'eau, dans la rubrique **Clôture** : équilibre
+de la comptabilité, trous dans la numérotation d'un journal, caisse passée en
+négatif, factures validées sans écriture, clients créditeurs ou fournisseurs
+débiteurs, G50 déposées qui ne correspondent plus aux comptes, brouillons,
+écritures sans justificatif, lettrage ancien, dernière copie de sauvegarde hors
+du poste. Chaque anomalie dit ce qui ne va pas, **pourquoi ça compte**, et mène
+à l'écran où la corriger.
+
+Ils n'empêchent rien : les contrôles qui *bloquent* une clôture restent sur
+l'écran de clôture.
+
+### Une aide par écran
+
+Un **?** dans la barre du haut, sur chaque écran, explique en français simple la
+règle comptable qui s'y applique — pourquoi les loyers transitent par 4671,
+pourquoi une avance VSP n'est pas du chiffre d'affaires, pourquoi une écriture
+validée se corrige par extourne. Aucun taux n'y figure : ils vivent dans
+Paramètres → Fiscalité, où ils se vérifient.
+
 ### Retrouver quelque chose
 
 Un comptable ne se souvient pas de l'écran où se trouve ce qu'il cherche : il se
@@ -489,6 +510,7 @@ ce qui rend les mises à jour sûres sur une base contenant déjà des écriture
 | `Ctrl + F` | Nouvelle facture |
 | `Ctrl + T` | Liste des tiers |
 | `Ctrl + K` | Rechercher partout (nom, n° de facture, montant) |
+| `Échap` | Fermer l'aide ou la fenêtre en cours |
 | `Échap` | Fermer la fenêtre en cours |
 
 ---

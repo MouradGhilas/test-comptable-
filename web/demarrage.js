@@ -48,6 +48,7 @@ const MENU = [
   },
   {
     groupe: 'Clôture', entrees: [
+      { route: '/sante', libelle: 'Santé du dossier', ico: '🩺' },
       { route: '/comptabilite/cloture', libelle: 'Contrôles & clôture', ico: '🔒' },
       { route: '/parametres/dossier', libelle: 'Paramètres', ico: '⚙️' },
     ],
@@ -193,6 +194,7 @@ async function demarre() {
   $('#zone-auth').innerHTML = '';
   $('#application').hidden = false;
   brancheRechercheGlobale();
+  $('#bouton-aide').onclick = montreAide;
 
   if (!App.etat.societes.length) {
     $('#contenu').innerHTML = '<div class="message alerte">Aucun dossier comptable. '
