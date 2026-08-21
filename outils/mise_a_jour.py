@@ -138,7 +138,27 @@ def processus_vivant(pid: int) -> bool:
     return True
 
 
-def attend_fermeture(pid: int, limite: float = 180.0) -> bool:
+def port_repond(port: int) -> bool:
+    """L'application écoute-t-elle encore ?
+
+    Contrôle bien plus sûr que l'existence du processus : un identifiant peut
+    être réattribué, et sous Windows l'interrogation peut échouer pour
+    d'autres raisons qu'une fermeture. Tant que le port répond, quelqu'un
+    sert l'application — et remplacer ses fichiers sous ses pieds la laisse
+    dans un état mixte : interface neuve, moteur ancien.
+    """
+    if not port:
+        return False
+    import socket
+    with socket.socket() as s:
+        s.settimeout(0.6)
+        try:
+            return s.connect_ex(("127.0.0.1", int(port))) == 0
+        except OSError:
+            return False
+
+
+def attend_fermeture(pid: int, limite: float = 180.0, port: int = 0) -> bool:
     """Patiente jusqu'à ce que l'application ait vraiment rendu ses fichiers.
 
     Un simple délai fixe ne suffit pas : à la fermeture, l'application écrit
@@ -153,7 +173,7 @@ def attend_fermeture(pid: int, limite: float = 180.0) -> bool:
         return True
     debut = time.monotonic()
     while time.monotonic() - debut < limite:
-        if not processus_vivant(pid):
+        if not processus_vivant(pid) and not port_repond(port):
             time.sleep(0.7)     # laisser le système libérer les descripteurs
             return True
         note_etat("fermeture",
@@ -373,6 +393,8 @@ def principal() -> int:
     analyseur.add_argument("--attendre", type=float, default=0, metavar="SECONDES",
                            help="patienter avant de commencer (le temps que "
                                 "l'application se ferme)")
+    analyseur.add_argument("--attendre-port", type=int, default=0, metavar="PORT",
+                           help="attendre aussi que ce port ne réponde plus")
     analyseur.add_argument("--attendre-pid", type=int, default=0, metavar="PID",
                            help="attendre la fermeture réelle de ce processus "
                                 "plutôt qu'un délai fixe")
@@ -386,7 +408,8 @@ def principal() -> int:
     if arguments.attendre_pid:
         note_etat("fermeture", "L'application se ferme.", ok=None,
                   demarre_a=__import__("time").time())
-        if not attend_fermeture(arguments.attendre_pid):
+        if not attend_fermeture(arguments.attendre_pid,
+                                port=arguments.attendre_port):
             note_etat("fermeture", ok=False, message=(
                 "L'application ne s'est pas fermée. Rien n'a été touché : "
                 "fermez-la puis relancez la mise à jour."))

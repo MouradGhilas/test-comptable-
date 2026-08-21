@@ -182,6 +182,7 @@ async function demarre() {
   App.etat.perimetre = localStorage.getItem('perimetre') || 'tous';
   $('#choix-perimetre').value = App.etat.perimetre;
   $('#version-app').textContent = `v${etat.version}`;
+  signaleRedemarrageRequis(etat);
   $('#info-utilisateur').innerHTML =
     `${ech(etat.utilisateur.nom_complet)}<br><span class="tres-petit">${ech(etat.utilisateur.role)}</span>`;
 

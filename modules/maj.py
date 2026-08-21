@@ -350,6 +350,11 @@ def api_applique(ctx):
              # Attendre la fermeture réelle plutôt qu'un délai fixe : la
              # sauvegarde d'arrêt dure ce que dure le dossier de pièces.
              "--attendre-pid", str(os.getpid()),
+             # Le processus peut avoir disparu des listes sans que le port
+             # soit rendu — et un identifiant se réattribue. Tant que le port
+             # répond, l'application sert encore : remplacer ses fichiers la
+             # laisserait avec une interface neuve sur un moteur ancien.
+             "--attendre-port", str(mod_serveur.port_courant or 0),
              "--vers", str(RACINE)],
             cwd=str(RACINE), **options_detachement(), env=environnement,
             stdin=subprocess.DEVNULL,

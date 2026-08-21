@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import platform
 import sys
+from pathlib import Path
 
 from noyau import base as db
 from noyau import util
@@ -19,6 +20,24 @@ from noyau.serveur import (
 # ---------------------------------------------------------------------------
 # État de l'installation
 # ---------------------------------------------------------------------------
+
+
+def version_sur_disque() -> str | None:
+    """La version écrite dans `noyau/config.py`, relue à chaque appel.
+
+    Le code Python n'est chargé qu'une fois, au démarrage ; les fichiers de
+    l'interface, eux, sont relus à chaque requête. Comparer les deux est le
+    seul moyen de voir qu'une mise à jour a remplacé les fichiers sans que
+    l'application se soit relancée.
+    """
+    fichier = Path(__file__).resolve().parent.parent / "noyau" / "config.py"
+    try:
+        for ligne in fichier.read_text(encoding="utf-8").splitlines():
+            if ligne.startswith("VERSION"):
+                return ligne.split("=", 1)[1].strip().strip("\"'")
+    except OSError:
+        return None
+    return None
 
 
 @route("GET", "/api/etat", public=True)
@@ -35,6 +54,18 @@ def api_etat(ctx):
         "connecte": bool(utilisateur),
         "dossier_donnees": str(config.dossier_donnees),
     }
+    # Une mise à jour dont l'application ne s'est pas relancée donne une
+    # interface neuve sur un moteur ancien : les écrans existent, les routes
+    # répondent « ressource introuvable ». Le cas est arrivé ; il ne doit
+    # plus jamais rester silencieux.
+    sur_disque = version_sur_disque()
+    if sur_disque and sur_disque != VERSION:
+        reponse["redemarrage_requis"] = True
+        reponse["version_disque"] = sur_disque
+    return _termine_etat(reponse, utilisateur, nb_utilisateurs, ctx)
+
+
+def _termine_etat(reponse, utilisateur, nb_utilisateurs, ctx):
     if utilisateur:
         reponse["utilisateur"] = {
             "id": utilisateur["id"],
@@ -47,6 +78,27 @@ def api_etat(ctx):
             "WHERE actif = 1 ORDER BY raison_sociale"
         )
     return reponse
+
+
+@route("POST", "/api/systeme/arreter")
+def api_arrete(ctx):
+    """Ferme l'application depuis l'écran.
+
+    Sert au bandeau qui signale une mise à jour restée à mi-chemin : demander
+    à quelqu'un de « fermer complètement l'application » suppose qu'il sache
+    où est la fenêtre noire, et qu'elle n'ait pas été réduite. Un bouton est
+    plus sûr. La sauvegarde d'arrêt se fait normalement.
+    """
+    ctx.interdit_lecture_seule()
+    ctx.exige_role("admin", "comptable")
+    from noyau import serveur as mod_serveur
+    if not mod_serveur.demande_arret:
+        raise ErreurApplicative(
+            "Cette version ne sait pas se fermer depuis l'écran : fermez la "
+            "fenêtre noire de l'application.")
+    db.trace("arret", "systeme", None, {"origine": "ecran"}, ctx.nom_utilisateur)
+    mod_serveur.demande_arret()
+    return {"ok": True}
 
 
 @route("GET", "/api/diagnostic")

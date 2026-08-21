@@ -881,6 +881,44 @@ async function retireJustificatif(id, entite, entiteId, bouton) {
   await rafraichitJustificatifs(entite, entiteId);
 }
 
+/* ------------------------------------------- Version restée en mémoire ----
+
+   Les fichiers de l'interface sont relus sur le disque à chaque requête ;
+   le code Python, lui, n'est chargé qu'au démarrage. Une mise à jour dont
+   l'application ne s'est pas relancée donne donc une interface neuve sur un
+   moteur ancien : des écrans qui existent, des routes qui répondent
+   « ressource introuvable ». C'est arrivé une fois, en silence. Plus
+   jamais. */
+
+function signaleRedemarrageRequis(etat) {
+  if (!etat || !etat.redemarrage_requis) return;
+  if ($('#bandeau-redemarrage')) return;
+  const barre = document.createElement('div');
+  barre.id = 'bandeau-redemarrage';
+  barre.className = 'bandeau-redemarrage';
+  barre.innerHTML = `
+    <span style="font-size:20px">⚠️</span>
+    <div>
+      <strong>La mise à jour n'est pas terminée</strong>
+      La version ${ech(etat.version_disque)} est installée sur le disque, mais
+      l'application tourne encore sur la ${ech(etat.version)} : elle ne s'est
+      pas relancée. Les écrans nouveaux s'affichent, mais répondent
+      « ressource introuvable ». <strong>Fermez complètement l'application et
+      rouvrez-la</strong> — vos données ne risquent rien.
+    </div>
+    <button id="quitter-pour-redemarrer">Fermer l'application</button>`;
+  document.body.appendChild(barre);
+  $('#quitter-pour-redemarrer').onclick = async () => {
+    try { await api('/api/systeme/arreter', { method: 'POST', corps: {} }); }
+    catch (err) { /* la fermeture coupe la réponse : c'est normal */ }
+    document.body.innerHTML = `<div class="ecran-chargement">
+      <div class="logo-grand">🏢</div>
+      <div>L'application est fermée.</div>
+      <div class="petit">Rouvrez-la par son raccourci habituel : elle
+      redémarrera sur la version ${ech(etat.version_disque)}.</div></div>`;
+  };
+}
+
 /* ------------------------------------------------- Recherche globale ----
 
    Un comptable ne se souvient pas de l'écran où se trouve ce qu'il cherche :

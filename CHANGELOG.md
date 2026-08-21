@@ -3,6 +3,25 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.7.5
+
+- **Correction : une mise à jour restée à mi-chemin ne passe plus inaperçue.**
+  Les fichiers de l'interface sont relus sur le disque à chaque affichage, le
+  moteur Python une seule fois au démarrage. Si l'application ne s'est pas
+  relancée après une mise à jour, on se retrouve avec les écrans neufs sur
+  l'ancien moteur : les nouvelles rubriques apparaissent, mais répondent
+  « Ressource introuvable », et la version affichée reste l'ancienne.
+  L'application s'en aperçoit désormais toute seule et affiche un bandeau,
+  avec un bouton pour la fermer proprement — il n'y a plus qu'à la rouvrir.
+- Le message d'erreur lui-même le dit maintenant, au lieu de « Ressource
+  introuvable » : *« cet écran appartient à la version X, déjà installée,
+  mais l'application tourne encore sur la version Y »*.
+- **La mise à jour ne peut plus provoquer cet état** : avant de remplacer
+  quoi que ce soit, elle vérifie non seulement que le processus a disparu,
+  mais que le port de l'application ne répond plus. Un identifiant de
+  processus peut être réattribué ; un port qui répond, lui, ne ment pas.
+- Le « ? » de l'aide est correctement centré dans son cercle.
+
 ## 1.7.4
 
 - **Les deux déclarations de janvier**, dans Fiscalité → « Déclarations

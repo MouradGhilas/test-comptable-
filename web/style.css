@@ -723,6 +723,8 @@ button.choix-apparence.actif:hover { background: var(--primaire-clair);
    Toujours au même endroit, jamais recouvert par les actions de la page. */
 .bouton-aide { width: 27px; height: 27px; flex: 0 0 27px; padding: 0;
                border-radius: 50%; font-weight: 700; font-size: 14px;
+               line-height: 1; display: inline-flex; align-items: center;
+               justify-content: center;
                border: 1px solid var(--bordure-forte); background: var(--fond-doux);
                color: var(--texte-doux); cursor: pointer; }
 .bouton-aide:hover { background: var(--primaire); color: var(--fond-carte);
@@ -733,3 +735,20 @@ button.choix-apparence.actif:hover { background: var(--primaire-clair);
 /* Une ligne de recoupement qui ne tombe pas juste doit sauter aux yeux :
    c'est tout l'intérêt du recoupement. */
 tr.ecart-recoupement td { background: var(--danger-fond); }
+
+/* ---------- Version en mémoire différente de celle sur le disque ----------
+   Les fichiers sont lus sur le disque à chaque requête, le code Python une
+   seule fois au démarrage. Une mise à jour dont l'application ne s'est pas
+   relancée donne donc une interface neuve sur un moteur ancien : des écrans
+   qui existent, des routes qui répondent « ressource introuvable ». Le
+   bandeau le dit, plutôt que de laisser chercher. */
+.bandeau-redemarrage {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 200;
+  background: var(--danger); color: #fff; padding: 12px 20px;
+  display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  box-shadow: 0 -2px 14px rgba(0, 0, 0, .22); font-size: 13px;
+}
+.bandeau-redemarrage strong { display: block; font-size: 14px; }
+.bandeau-redemarrage > div { flex: 1; min-width: 260px; }
+.bandeau-redemarrage button { background: #fff; color: var(--danger);
+                              border: 0; font-weight: 600; }

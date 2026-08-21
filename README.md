@@ -377,6 +377,13 @@ python3 app.py --donnees /chemin/vers/le/dossier
 
 ### Mises à jour
 
+Le chemin complet — installation ancienne, dépôt du paquet, retour de
+l'application sur la nouvelle version avec ses données intactes — est rejoué à
+chaque fois par `outils/test_mise_a_jour.py` sur une copie jetable. Il vérifie
+aussi que **l'état mixte se voit** : si les fichiers sont remplacés sans que
+l'application se relance, elle affiche un bandeau et ses messages d'erreur en
+donnent la raison, au lieu du « Ressource introuvable » qui n'apprend rien.
+
 Le code et les données vivent séparément : une mise à jour remplace le
 programme, jamais le dossier `donnees/`.
 
@@ -431,6 +438,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
 python3 outils/test_http.py          # 63 contrôles du serveur et de l'interface
 python3 outils/test_comptable.py     # 228 contrôles de conformité comptable
+python3 outils/test_mise_a_jour.py   # 17 contrôles du chemin de mise à jour
 python3 app.py --verifier            # intégrité de vos données
 ```
 
@@ -498,6 +506,7 @@ outils/
 ├── test_fonctionnel.py     96 contrôles métier
 ├── test_http.py            63 contrôles serveur et interface
 ├── test_comptable.py       228 contrôles de conformité comptable
+├── test_mise_a_jour.py     17 contrôles du chemin de mise à jour
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur
 ├── installer.py            même installation, sans fichier bloqué par les messageries

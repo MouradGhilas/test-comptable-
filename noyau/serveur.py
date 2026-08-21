@@ -35,6 +35,9 @@ ERREURS_CONNEXION = (BrokenPipeError, ConnectionAbortedError,
 #: propre de l'application — la mise à jour en a besoin pour libérer les
 #: fichiers de programme avant qu'ils ne soient remplacés.
 demande_arret = None
+#: Port réellement servi. L'outil de mise à jour s'en sert pour savoir
+#: que l'application a bel et bien rendu la main.
+port_courant = 0
 
 #: Vrai quand l'arrêt en cours prépare une mise à jour. L'application saute
 #: alors sa sauvegarde de fermeture : l'outil de mise à jour en fait une
@@ -244,6 +247,29 @@ def detruit_session(jeton: str | None):
 TAILLE_MAX_CORPS = 32 * 1024 * 1024   # 32 Mio (pièces jointes scannées)
 
 
+def _message_route_absente(chemin: str) -> str:
+    """« Ressource introuvable » n'apprend rien. Quand la cause est connue,
+    on la dit.
+
+    Le cas de loin le plus fréquent : une mise à jour a remplacé les fichiers
+    sans que l'application se relance. L'interface, relue sur le disque à
+    chaque requête, propose alors des écrans que le moteur en mémoire ne
+    connaît pas encore."""
+    try:
+        from modules.systeme import version_sur_disque
+        from noyau.config import VERSION
+        disque = version_sur_disque()
+        if disque and disque != VERSION:
+            return (f"Cet écran appartient à la version {disque}, déjà "
+                    f"installée sur le disque, mais l'application tourne "
+                    f"encore sur la version {VERSION} : elle ne s'est pas "
+                    f"relancée après la mise à jour. Fermez-la complètement "
+                    f"et rouvrez-la.")
+    except Exception:                                        # noqa: BLE001
+        pass
+    return "Ressource introuvable."
+
+
 class Gestionnaire(BaseHTTPRequestHandler):
     server_version = f"{APPLICATION}/{VERSION}"
     protocol_version = "HTTP/1.1"
@@ -306,7 +332,7 @@ class Gestionnaire(BaseHTTPRequestHandler):
                     return resultat.envoie(self)
                 return self._json(resultat if resultat is not None else {"ok": True})
 
-            raise ErreurApplicative("Ressource introuvable.", 404)
+            raise ErreurApplicative(_message_route_absente(chemin), 404)
 
         except ErreurApplicative as err:
             self._repond_erreur({"erreur": err.message, "details": err.details},
@@ -477,6 +503,8 @@ def reponse_deconnexion(donnees: dict) -> Reponse:
 
 
 def demarre(hote: str, port: int) -> ThreadingHTTPServer:
+    global port_courant
     serveur = ThreadingHTTPServer((hote, port), Gestionnaire)
+    port_courant = serveur.server_address[1]
     serveur.daemon_threads = True
     return serveur
