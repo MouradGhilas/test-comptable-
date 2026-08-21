@@ -590,7 +590,10 @@ App.pages.rapprochement = {
     if (!id) return listeRapprochements(zone);
     const d = await api(`/api/rapprochements/${id}`);
     sousTitre(`${d.compte_libelle} — arrêté au ${fdate(d.date_arrete)}`);
-    actionsPage('<a class="bouton" href="#/tresorerie">Retour</a>');
+    actionsPage(`<button class="primaire" onclick="$('#releve-fichier').click()">
+        Importer le relevé de la banque</button>
+      <input type="file" id="releve-fichier" accept=".xlsx,.csv" hidden>
+      <a class="bouton" href="#/tresorerie">Retour</a>`);
 
     zone.innerHTML = `
       <div class="grille c4" style="margin-bottom:16px">
@@ -613,8 +616,104 @@ App.pages.rapprochement = {
           { titre: 'Crédit', classe: 'num', rendu: (m) => m.credit ? fm(m.credit) : '' },
         ], d.mouvements, { messageVide: 'Aucun mouvement sur la période.' })}`,
         `<button class="primaire" onclick="enregistrePointage(${id})">Enregistrer le pointage</button>`)}`;
+
+    $('#releve-fichier').onchange = (ev) => {
+      if (ev.target.files[0]) analyseReleve(id, ev.target.files[0]);
+    };
   },
 };
+
+/* ------------------------------------------ Relevé fourni par la banque ---
+
+   Pointer trois cents lignes une par une contre un relevé papier, c'est une
+   soirée. La banque fournit le même relevé en fichier : l'application le
+   lit, rapproche ce qui se correspond, et ne laisse que les cas douteux —
+   qui sont précisément ceux qui méritent un regard. Rien n'est pointé sans
+   que le compte rendu ait été montré : un rapprochement automatique qu'on
+   ne relit pas ne vaut pas mieux qu'un pointage au hasard. */
+
+async function analyseReleve(id, fichier) {
+  let d;
+  try {
+    const contenu = await litFichierBase64(fichier);
+    d = await envoie(`/api/rapprochements/${id}/releve`, { contenu });
+  } catch (err) { erreur(err); return; }
+
+  const couples = d.correspondances;
+  const sansSuite = d.sans_correspondance;
+  const restantes = d.non_pointees;
+
+  modale({
+    titre: `Relevé de ${ech(fichier.name)}`,
+    large: true,
+    contenu: `
+      <div class="grille c3" style="margin-bottom:12px">
+        ${indicateur('Lignes du relevé', String(d['lignes_relevé']))}
+        ${indicateur('Rapprochées', String(couples.length), '',
+          couples.length ? 'succes' : '')}
+        ${indicateur('À regarder', String(sansSuite.length + restantes.length), '',
+          (sansSuite.length + restantes.length) ? 'alerte' : 'succes')}
+      </div>
+
+      <div class="message info"><strong>Sens des colonnes</strong>
+        ${ech(d.explication_sens)} Les dates peuvent différer de
+        ${d.tolerance_jours} jours au plus : une opération est rarement passée
+        le même jour de part et d'autre.</div>
+
+      ${couples.length ? carte(`${couples.length} correspondance(s) proposée(s)`,
+        tableau([
+          { titre: 'Relevé', rendu: (c) => `${fdate(c.releve.date)} —
+            ${ech(c.releve.libelle || '')}` },
+          { titre: 'Écriture', rendu: (c) => `${fdate(c.ligne.date)} —
+            ${ech(c.ligne.num_ecriture || '')} ${ech(c.ligne.libelle || '')}` },
+          { titre: 'Écart', classe: 'num', largeur: '70px',
+            rendu: (c) => c.ecart_jours ? `${c.ecart_jours} j` : 'même jour' },
+          { titre: 'Montant', classe: 'num', largeur: '130px',
+            rendu: (c) => fm(c.ligne.debit || c.ligne.credit) },
+        ], couples, { icone: '🔗' }), '', true) : ''}
+
+      ${sansSuite.length ? carte(
+        `${sansSuite.length} ligne(s) du relevé sans écriture`,
+        `<p class="petit">Ces opérations figurent à la banque et nulle part
+          dans vos livres : agios, virements reçus non saisis, prélèvements.
+          Il faut les <strong>saisir</strong>, elles ne se pointeront pas.</p>
+        ${tableau([
+          { titre: 'Date', rendu: (l) => fdate(l.date), largeur: '100px' },
+          { titre: 'Libellé', rendu: (l) => ech(l.libelle || '') },
+          { titre: 'Référence', rendu: (l) => ech(l.reference || '') },
+          { titre: 'Débit', classe: 'num', rendu: (l) => l.debit_releve ? fm(l.debit_releve) : '' },
+          { titre: 'Crédit', classe: 'num', rendu: (l) => l.credit_releve ? fm(l.credit_releve) : '' },
+        ], sansSuite, { icone: '🏦' })}`, '', true) : ''}
+
+      ${restantes.length ? carte(
+        `${restantes.length} écriture(s) absente(s) du relevé`,
+        `<p class="petit">Ces mouvements sont dans vos livres mais pas encore
+          à la banque : un chèque émis non débité, par exemple. C'est
+          normal — ce sont eux qui expliquent l'écart de solde.</p>
+        ${tableau([
+          { titre: 'Date', rendu: (m) => fdate(m.date), largeur: '100px' },
+          { titre: 'N°', cle: 'num_ecriture', largeur: '120px' },
+          { titre: 'Libellé', rendu: (m) => ech(m.libelle || '') },
+          { titre: 'Débit', classe: 'num', rendu: (m) => m.debit ? fm(m.debit) : '' },
+          { titre: 'Crédit', classe: 'num', rendu: (m) => m.credit ? fm(m.credit) : '' },
+        ], restantes, { icone: '📒' })}`, '', true) : ''}`,
+    boutons: [
+      { libelle: 'Ne rien pointer' },
+      ...(couples.length ? [{
+        libelle: `Pointer les ${couples.length} correspondance(s)`,
+        classe: 'primaire',
+        action: async () => {
+          await api(`/api/rapprochements/${id}/pointer`, {
+            method: 'POST',
+            corps: { lignes: couples.map((c) => c.ligne.id), pointer: true },
+          });
+          notifie(`${couples.length} mouvement(s) pointé(s).`, 'succes');
+          afficheRoute();
+        },
+      }] : []),
+    ],
+  });
+}
 
 async function enregistrePointage(id) {
   const cochees = $$('[data-ligne]').filter((c) => c.checked).map((c) => +c.dataset.ligne);

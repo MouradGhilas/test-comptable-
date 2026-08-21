@@ -24,7 +24,9 @@ Quatre familles :
   sante       les controles de sante du dossier, chacun mis a l'epreuve sur
               une anomalie provoquee pour lui ;
   annuelles   la DAS et l'etat des clients, et surtout leurs recoupements ;
-  relances    ce qui est du et depuis quand, et la lettre a ses trois niveaux.
+  relances    ce qui est du et depuis quand, et la lettre a ses trois niveaux ;
+  banque      le releve de la banque, lu et rapproche -- sens des colonnes et
+              ecart de date compris.
 
 Usage :
     python outils/test_comptable.py               les quatre suites
@@ -1993,6 +1995,131 @@ def suite_relances(dos):
         v("un client inconnu est refusé", err.code == 404, err.code)
 
 
+def suite_banque(dos):
+    """Le releve de la banque, lu et rapproche.
+
+    Deux pieges y sont verifies : le sens des colonnes, qu'une banque
+    ecrit de son point de vue ou de celui du client, et l'ecart de date
+    entre une operation passee ici et la meme passee la-bas.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "c", "mot_de_passe": "motdepasse123", "nom_complet": "X",
+        "raison_sociale": "SARL BANQUE", "nif": "000116001234567",
+        "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    ex = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]
+    annee = int(ex["date_debut"][:4])
+    comptes = dos.appel(f"/api/tresorerie?societe={sid}")["comptes"]
+    banque = next((c for c in comptes if c["type"] == "banque"), None)
+    if not banque:
+        banque = dos.appel("/api/tresorerie", {
+            "societe_id": sid, "code": "BQ1", "libelle": "Banque principale",
+            "type": "banque", "compte": "512"})
+        banque = next(c for c in dos.appel(f"/api/tresorerie?societe={sid}")["comptes"]
+                      if c["type"] == "banque")
+
+    def ecriture(date, libelle, compte_tr, sens, montant):
+        lignes = ([{"compte": banque["compte"], "debit": montant, "credit": "0"},
+                   {"compte": "701", "debit": "0", "credit": montant}]
+                  if sens == "entree" else
+                  [{"compte": "607", "debit": montant, "credit": "0"},
+                   {"compte": banque["compte"], "debit": "0", "credit": montant}])
+        return dos.appel("/api/ecritures", {
+            "societe_id": sid, "journal": "BQ", "date": date,
+            "libelle": libelle, "lignes": lignes})
+
+    # Trois mouvements en banque, plus un chèque émis que la banque n'a pas
+    # encore débité.
+    ecriture(f"{annee}-03-04", "Encaissement client BENALI", None, "entree", "150000")
+    ecriture(f"{annee}-03-11", "Loyer du local", None, "sortie", "45000")
+    ecriture(f"{annee}-03-18", "Encaissement SARL DELTA", None, "entree", "80000")
+    ecriture(f"{annee}-03-29", "Chèque n° 4412 fournisseur", None, "sortie", "23000")
+
+    rap = dos.appel("/api/rapprochements", {
+        "societe_id": sid, "tresorerie_id": banque["id"],
+        "date_arrete": f"{annee}-03-31", "solde_releve": "185000"})
+
+    titre("1. Le relevé de la banque, à sa façon")
+    # Colonnes du point de vue de la banque : « crédit » = entrée chez nous.
+    # Une date décalée de deux jours, et une ligne d'agios absente des livres.
+    releve = (
+        "Date;Libellé;Débit;Crédit\n"
+        f"04/03/{annee};VIREMENT RECU BENALI;;150000\n"
+        f"13/03/{annee};PRLV LOYER LOCAL;45000;\n"
+        f"18/03/{annee};VIREMENT RECU DELTA;;80000\n"
+        f"31/03/{annee};FRAIS DE TENUE DE COMPTE;1200;\n")
+    d = dos.appel(f"/api/rapprochements/{rap['id']}/releve", {"contenu": b64(releve)})
+    v("les quatre lignes du relevé sont lues", d["lignes_relevé"] == 4,
+      d["lignes_relevé"])
+    v("le sens des colonnes est reconnu", d["sens"] == "direct", d["sens"])
+    v("… et expliqué en clair", "banque" in d["explication_sens"],
+      d["explication_sens"])
+
+    titre("2. Ce qui se correspond est rapproché")
+    v("trois correspondances sont proposées", len(d["correspondances"]) == 3,
+      [(c["releve"]["libelle"], c["ligne"]["libelle"])
+       for c in d["correspondances"]])
+    par_libelle = {c["releve"]["libelle"]: c for c in d["correspondances"]}
+    v("l'encaissement BENALI tombe le même jour",
+      par_libelle["VIREMENT RECU BENALI"]["ecart_jours"] == 0,
+      par_libelle["VIREMENT RECU BENALI"]["ecart_jours"])
+    v("le loyer est rapproché malgré deux jours d'écart",
+      par_libelle["PRLV LOYER LOCAL"]["ecart_jours"] == 2,
+      par_libelle["PRLV LOYER LOCAL"]["ecart_jours"])
+    v("… et du bon côté",
+      par_libelle["PRLV LOYER LOCAL"]["ligne"]["credit"] == 4500000,
+      par_libelle["PRLV LOYER LOCAL"]["ligne"])
+
+    titre("3. Ce qui ne se correspond pas est montré, pas caché")
+    v("les agios n'ont pas d'écriture",
+      len(d["sans_correspondance"]) == 1
+      and "FRAIS" in d["sans_correspondance"][0]["libelle"],
+      d["sans_correspondance"])
+    v("le chèque émis reste non pointé",
+      len(d["non_pointees"]) == 1
+      and "4412" in d["non_pointees"][0]["libelle"], d["non_pointees"])
+
+    titre("4. Rien n'est pointé avant confirmation")
+    avant = dos.appel(f"/api/rapprochements/{rap['id']}")
+    v("aucun mouvement n'est pointé pour l'instant",
+      all(not m["pointee"] for m in avant["mouvements"]),
+      [m["pointee"] for m in avant["mouvements"]])
+    dos.appel(f"/api/rapprochements/{rap['id']}/pointer",
+          {"lignes": [c["ligne"]["id"] for c in d["correspondances"]],
+           "pointer": True})
+    apres = dos.appel(f"/api/rapprochements/{rap['id']}")
+    v("les trois correspondances sont pointées",
+      sum(1 for m in apres["mouvements"] if m["pointee"]) == 3,
+      [(m["libelle"], m["pointee"]) for m in apres["mouvements"]])
+    v("le chèque émis explique l'écart restant",
+      apres["montant_non_pointe"] == -2300000,
+      apres["montant_non_pointe"])
+
+    titre("5. Une banque qui parle au client, colonnes inversées")
+    rap2 = dos.appel("/api/rapprochements", {
+        "societe_id": sid, "tresorerie_id": banque["id"],
+        "date_arrete": f"{annee}-03-31", "solde_releve": "185000"})
+    inverse = (
+        "Date;Operation;Debit;Credit\n"
+        f"29/03/{annee};CHEQUE 4412;;23000\n")
+    d2 = dos.appel(f"/api/rapprochements/{rap2['id']}/releve", {"contenu": b64(inverse)})
+    v("le sens inversé est détecté", d2["sens"] == "inverse", d2["sens"])
+    v("… et le chèque est rapproché", len(d2["correspondances"]) == 1,
+      d2["correspondances"])
+
+    titre("6. Un fichier qui n'est pas un relevé")
+    msg = dos.refuse(f"/api/rapprochements/{rap['id']}/releve",
+                 {"contenu": b64("Nom;Prénom\nX;Y\n")})
+    v("il est refusé", bool(msg), msg)
+    v("… en disant ce qui manque", "date" in (msg or "").lower(), msg)
+    msg = dos.refuse(f"/api/rapprochements/{rap['id']}/releve",
+                 {"contenu": b64("Date;Libellé\n01/01/2026;X\n")})
+    v("un relevé sans montant est refusé aussi",
+      "montant" in (msg or "").lower(), msg)
+    v("un rapprochement inconnu est refusé",
+      dos.refuse("/api/rapprochements/99999/releve", {"contenu": b64(releve)}))
+
+
 SUITES = [
     ("conformite", "Conformite comptable -- une annee tenue", suite_conformite, True),
     ("limites", "Ce que le logiciel doit refuser", suite_limites, False),
@@ -2003,6 +2130,7 @@ SUITES = [
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),
+    ("banque", "Releve bancaire et rapprochement", suite_banque, False),
 ]
 
 

@@ -367,3 +367,211 @@ class _ContexteFactice:
 
     def __getattr__(self, nom):
         return getattr(self._ctx, nom)
+
+
+# ---------------------------------------------------------------------------
+# Rapprochement à partir du relevé de la banque
+# ---------------------------------------------------------------------------
+#
+# Pointer trois cents lignes à la main, une par une, contre un relevé papier,
+# c'est une soirée. La banque fournit pourtant le même relevé en fichier.
+# L'application le lit, rapproche ce qui se correspond, et ne laisse que les
+# cas douteux — qui sont précisément ceux qui méritent un regard.
+#
+# Deux pièges, tous deux traités ici :
+#
+#   * un relevé bancaire est écrit du point de vue de la banque. Ce qu'elle
+#     appelle « crédit » est une entrée d'argent, donc un DÉBIT du compte de
+#     trésorerie dans vos livres. Certaines banques inversent pourtant les
+#     colonnes pour parler au client. On essaie les deux sens et l'on garde
+#     celui qui rapproche le plus — puis on dit lequel ;
+#   * une opération est rarement passée le même jour de part et d'autre. La
+#     correspondance tolère quelques jours d'écart, en préférant toujours la
+#     date la plus proche.
+
+#: Écart de date toléré entre le relevé et l'écriture, en jours.
+TOLERANCE_JOURS = 6
+
+_ENTETES_DATE = ("date", "date operation", "date valeur", "date comptable",
+                 "date de l operation", "jour")
+_ENTETES_LIBELLE = ("libelle", "libelle operation", "operation", "designation",
+                    "intitule", "nature", "motif", "description")
+_ENTETES_DEBIT = ("debit", "debits", "retrait", "retraits", "sortie", "sorties")
+_ENTETES_CREDIT = ("credit", "credits", "versement", "versements", "entree",
+                   "entrees", "depot", "depots")
+_ENTETES_MONTANT = ("montant", "somme", "valeur", "mouvement")
+_ENTETES_REFERENCE = ("reference", "ref", "n operation", "numero", "piece",
+                      "n piece", "n cheque")
+
+
+def _colonne(entetes_propres, candidats):
+    for index, entete in enumerate(entetes_propres):
+        if entete in candidats:
+            return index
+    for index, entete in enumerate(entetes_propres):
+        if any(entete.startswith(c) for c in candidats):
+            return index
+    return None
+
+
+def lit_releve(octets: bytes) -> list[dict]:
+    """Transforme le fichier de la banque en lignes exploitables.
+
+    Chaque banque a sa présentation ; seuls comptent une date, un libellé et
+    un montant. Le montant peut venir de deux colonnes (débit / crédit) ou
+    d'une seule, signée.
+    """
+    from modules.imports import _normalise_entete
+    entetes, rangs = tableur.lit_tableau(octets)
+    if not entetes:
+        raise ErreurApplicative("Fichier vide ou illisible.")
+    propres = [_normalise_entete(str(e)).lower() for e in entetes]
+
+    i_date = _colonne(propres, _ENTETES_DATE)
+    i_libelle = _colonne(propres, _ENTETES_LIBELLE)
+    i_debit = _colonne(propres, _ENTETES_DEBIT)
+    i_credit = _colonne(propres, _ENTETES_CREDIT)
+    i_montant = _colonne(propres, _ENTETES_MONTANT)
+    i_reference = _colonne(propres, _ENTETES_REFERENCE)
+
+    if i_date is None:
+        raise ErreurApplicative(
+            "Aucune colonne de date reconnue dans ce relevé. Colonnes "
+            f"trouvées : {', '.join(str(e) for e in entetes if str(e).strip())}.")
+    if i_debit is None and i_credit is None and i_montant is None:
+        raise ErreurApplicative(
+            "Aucune colonne de montant reconnue (débit / crédit, ou montant). "
+            f"Colonnes trouvées : {', '.join(str(e) for e in entetes if str(e).strip())}.")
+
+    lignes = []
+    for numero, rang in enumerate(rangs, start=2):
+        def case(i):
+            return str(rang[i]).strip() if i is not None and i < len(rang) else ""
+
+        date = util.date_iso(case(i_date))
+        if not date:
+            continue                     # ligne de total, de solde ou vide
+        if i_debit is not None or i_credit is not None:
+            debit = util.centimes(case(i_debit)) if i_debit is not None else 0
+            credit = util.centimes(case(i_credit)) if i_credit is not None else 0
+        else:
+            brut = util.centimes(case(i_montant))
+            debit, credit = (0, brut) if brut > 0 else (abs(brut), 0)
+        if not debit and not credit:
+            continue
+        lignes.append({
+            "ligne_fichier": numero,
+            "date": date,
+            "libelle": case(i_libelle),
+            "reference": case(i_reference),
+            # Tels que le relevé les nomme : le sens comptable est décidé plus loin.
+            "debit_releve": debit,
+            "credit_releve": credit,
+        })
+    if not lignes:
+        raise ErreurApplicative(
+            "Aucune opération lisible dans ce relevé : vérifiez que les dates "
+            "et les montants sont bien dans des colonnes séparées.")
+    return lignes
+
+
+def _rapproche(releve, mouvements, inverse: bool):
+    """Associe chaque ligne du relevé à une écriture, au plus une fois.
+
+    `inverse` dit comment lire les colonnes du relevé : en direct, le crédit
+    de la banque est une entrée d'argent, donc un débit dans nos livres.
+    """
+    libres = {m["id"]: m for m in mouvements}
+    couples, orphelines = [], []
+    for r in releve:
+        entree = r["credit_releve"] if not inverse else r["debit_releve"]
+        sortie = r["debit_releve"] if not inverse else r["credit_releve"]
+        montant = entree or sortie
+        sens_debit = bool(entree)
+        candidats = [
+            m for m in libres.values()
+            if ((m["debit"] if sens_debit else m["credit"]) == montant
+                and (m["credit"] if sens_debit else m["debit"]) == 0
+                and abs(util.jours_ecart(m["date"], r["date"])) <= TOLERANCE_JOURS)
+        ]
+        if not candidats:
+            orphelines.append(r)
+            continue
+        # La date la plus proche d'abord ; à égalité, la plus ancienne écriture.
+        candidats.sort(key=lambda m: (abs(util.jours_ecart(m["date"], r["date"])),
+                                      m["id"]))
+        choisi = candidats[0]
+        del libres[choisi["id"]]
+        couples.append({
+            "releve": r, "ligne": choisi,
+            "ecart_jours": abs(util.jours_ecart(choisi["date"], r["date"])),
+        })
+    return couples, orphelines, list(libres.values())
+
+
+@route("POST", "/api/rapprochements/<id>/releve")
+def api_analyse_releve(ctx):
+    """Lit le relevé de la banque et propose les correspondances.
+
+    Rien n'est pointé à ce stade : le comptable voit d'abord ce qui serait
+    fait. Un rapprochement automatique qu'on ne relit pas ne vaut pas mieux
+    qu'un pointage au hasard.
+    """
+    ctx.interdit_lecture_seule()
+    identifiant = int(ctx.params["id"])
+    r = db.ligne(
+        "SELECT r.*, ct.libelle AS compte_libelle, ct.compte, ct.societe_id "
+        "FROM rapprochements r JOIN comptes_tresorerie ct ON ct.id = r.tresorerie_id "
+        "WHERE r.id = ?", (identifiant,))
+    if not r:
+        raise ErreurApplicative("Rapprochement introuvable.", 404)
+
+    import base64
+    contenu = ctx.champ_requis("contenu")
+    if contenu.startswith("data:") and "," in contenu[:120]:
+        contenu = contenu.split(",", 1)[1]
+    try:
+        octets = base64.b64decode(contenu, validate=True)
+    except Exception as err:                                    # noqa: BLE001
+        raise ErreurApplicative(f"Fichier illisible : {err}") from err
+
+    releve = lit_releve(octets)
+    mouvements = db.lignes(
+        "SELECT l.id, l.libelle, l.debit, l.credit, e.date, "
+        "  e.numero AS num_ecriture, e.piece "
+        "FROM lignes l JOIN ecritures e ON e.id = l.ecriture_id "
+        "WHERE e.societe_id = ? AND l.compte = ? AND e.date <= ? "
+        "AND NOT EXISTS (SELECT 1 FROM rapprochement_lignes rl "
+        "                WHERE rl.ligne_id = l.id) "
+        "ORDER BY e.date, l.id",
+        (r["societe_id"], r["compte"], r["date_arrete"]))
+
+    # Les deux conventions sont essayées : on garde celle qui rapproche le
+    # plus, plutôt que de demander à l'utilisateur comment sa banque écrit.
+    direct = _rapproche(releve, mouvements, inverse=False)
+    inverse = _rapproche(releve, mouvements, inverse=True)
+    prendre_inverse = len(inverse[0]) > len(direct[0])
+    couples, orphelines, non_pointees = inverse if prendre_inverse else direct
+
+    return {
+        "rapprochement_id": identifiant,
+        "compte": r["compte_libelle"],
+        "date_arrete": r["date_arrete"],
+        "lignes_relevé": len(releve),
+        "sens": "inverse" if prendre_inverse else "direct",
+        "explication_sens": (
+            "Ce relevé nomme ses colonnes du point de vue du client : ce qu'il "
+            "appelle « débit » est une entrée d'argent."
+            if prendre_inverse else
+            "Ce relevé nomme ses colonnes du point de vue de la banque : ce "
+            "qu'elle appelle « crédit » est une entrée d'argent chez vous."),
+        "tolerance_jours": TOLERANCE_JOURS,
+        "correspondances": couples,
+        "sans_correspondance": orphelines,
+        "non_pointees": non_pointees,
+        "totaux": {
+            "releve": sum(l["debit_releve"] + l["credit_releve"] for l in releve),
+            "rapproche": sum(c["ligne"]["debit"] + c["ligne"]["credit"]
+                             for c in couples),
+        },
+    }

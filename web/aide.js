@@ -140,6 +140,14 @@ const AIDES = {
       + 'il reste non pointé jusqu\'à ce que la banque le passe.',
       'Un écart qui ne s\'explique pas est une erreur : un montant saisi de '
       + 'travers, un mouvement oublié, ou un double.',
+      '<strong>Importez le relevé fourni par la banque</strong> plutôt que de '
+      + 'pointer à la main : l\'application rapproche ce qui se correspond, à '
+      + 'quelques jours d\'écart près, et ne laisse que les cas douteux. Rien '
+      + 'n\'est pointé avant que vous ayez vu le compte rendu.',
+      'Attention au sens des colonnes : ce que la banque appelle '
+      + '« crédit » est une entrée d\'argent, donc un <strong>débit</strong> '
+      + 'dans vos livres. L\'application essaie les deux conventions et vous '
+      + 'dit laquelle elle a retenue.',
     ],
   },
   '/tiers': {

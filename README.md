@@ -90,7 +90,7 @@ python3 app.py --sauvegarder                       # sauvegarde sans ouvrir l'ap
 | Lettrage | Manuel et automatique (rapprochement facture ↔ règlement d'un même tiers) |
 | Relances clients | Qui doit quoi et depuis quand, avec la dernière relance envoyée ; lettre imprimable à trois niveaux, du rappel à la mise en demeure |
 | Relevé de compte tiers | Détail des mouvements sur une période, solde d'ouverture, solde progressif, ancienneté de ce qui reste dû ; imprimable et exportable |
-| Rapprochement bancaire | Pointage des mouvements face au relevé, calcul de l'écart |
+| Rapprochement bancaire | Import du relevé fourni par la banque et rapprochement automatique (sens des colonnes et écart de date reconnus), pointage manuel, calcul de l'écart |
 | États financiers | Bilan, compte de résultat par nature (TCR), tableau des flux de trésorerie |
 | Clôture | Contrôles préalables, virement du résultat en 120/129, génération des à-nouveaux, verrouillage |
 | Exports | Excel natif : balance, grand livre, livre-journal, liasse, livres de TVA |
@@ -438,7 +438,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
 python3 outils/test_http.py          # 63 contrôles du serveur et de l'interface
-python3 outils/test_comptable.py     # 255 contrôles de conformité comptable
+python3 outils/test_comptable.py     # 273 contrôles de conformité comptable
 python3 outils/test_mise_a_jour.py   # 17 contrôles du chemin de mise à jour
 python3 app.py --verifier            # intégrité de vos données
 ```
@@ -450,7 +450,7 @@ sont constatés au bon moment et que la clôture se déroule correctement.
 Le test de conformité comptable, lui, ne regarde pas l'interface : il attaque
 l'application par ses interfaces de programmation et vérifie les règles qui,
 si elles cèdent, produisent des comptes **faux sans que rien ne le signale**.
-Neuf familles, lançables séparément
+Dix familles, lançables séparément
 (`python3 outils/test_comptable.py perimetre`) :
 
 | Suite | Ce qu'elle vérifie |
@@ -464,6 +464,7 @@ Neuf familles, lançables séparément
 | `sante` | les contrôles de santé du dossier, chacun mis à l'épreuve sur une anomalie provoquée pour lui |
 | `annuelles` | la DAS et l'état des clients, et surtout leurs recoupements |
 | `relances` | ce qui est dû et depuis quand, et la lettre à ses trois niveaux |
+| `banque` | le relevé de la banque, lu et rapproché — sens des colonnes et écart de date compris |
 
 La suite `perimetre` est la plus importante du lot. Chaque montant hors
 déclaration y est un multiple de 7 777, donc reconnaissable ; on vérifie
@@ -507,7 +508,7 @@ web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
 ├── test_http.py            63 contrôles serveur et interface
-├── test_comptable.py       255 contrôles de conformité comptable
+├── test_comptable.py       273 contrôles de conformité comptable
 ├── test_mise_a_jour.py     17 contrôles du chemin de mise à jour
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur

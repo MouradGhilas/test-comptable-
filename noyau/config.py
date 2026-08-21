@@ -19,7 +19,7 @@ from pathlib import Path
 RACINE = Path(__file__).resolve().parent.parent
 
 APPLICATION = "Cabinet Immo"
-VERSION = "1.7.6"
+VERSION = "1.7.7"
 
 DEFAUTS = {
     "dossier_donnees": "donnees",

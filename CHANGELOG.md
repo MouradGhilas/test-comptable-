@@ -3,6 +3,30 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.7.7
+
+- **Le rapprochement bancaire se fait à partir du fichier de la banque.**
+  Sur l'écran de rapprochement, un bouton **« Importer le relevé de la
+  banque »** : déposez le fichier téléchargé depuis le site de votre banque
+  (.csv ou .xlsx), et l'application rapproche d'elle-même ce qui se
+  correspond. Pointer trois cents lignes une par une, c'était une soirée.
+- **Rien n'est pointé sans que vous l'ayez vu.** Le compte rendu montre
+  d'abord les correspondances proposées, puis les deux listes qui comptent :
+  les lignes du relevé **sans écriture** (agios, prélèvements, virements
+  reçus non saisis — à saisir), et les écritures **absentes du relevé** (un
+  chèque émis non encore débité — c'est normal, ce sont elles qui expliquent
+  l'écart de solde).
+- Deux pièges sont traités tout seuls : le **sens des colonnes** — ce que la
+  banque appelle « crédit » est une entrée d'argent, donc un débit dans vos
+  livres, mais certaines banques inversent pour parler au client : les deux
+  conventions sont essayées et l'écran dit laquelle a été retenue — et
+  l'**écart de date**, une opération étant rarement passée le même jour de
+  part et d'autre (six jours de tolérance, la date la plus proche gagne).
+- Les colonnes sont reconnues sous leurs noms usuels (Date / Date valeur,
+  Libellé / Opération / Nature, Débit / Retrait, Crédit / Versement, ou une
+  simple colonne Montant signée). Un fichier qui n'est pas un relevé est
+  refusé en disant quelle colonne manque.
+
 ## 1.7.6
 
 - **Relances clients**, nouvel écran dans la rubrique Comptabilité. Il répond
