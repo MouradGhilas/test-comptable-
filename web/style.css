@@ -512,6 +512,15 @@ table.saisie input, table.saisie select { border: 1px solid transparent; backgro
                                           padding: 5px 7px; border-radius: 4px; }
 table.saisie input:focus, table.saisie select:focus { background: var(--fond-carte);
                                                       border-color: var(--primaire-clair); }
+/* Un compte absent du plan se signale à la saisie, pas au moment
+   d'enregistrer : la correction coûte moins cher tant que la ligne est
+   encore sous les yeux. */
+table.saisie input.invalide { border-color: var(--danger); background: var(--danger-fond); }
+/* Une contrepartie proposée d'après l'historique : présente, mais visiblement
+   à confirmer. */
+table.saisie input.propose { color: var(--texte-doux); font-style: italic; }
+table.saisie input.propose:focus { color: var(--texte); font-style: normal; }
+.bandeau-equilibre button { padding: 3px 10px; font-size: 12px; }
 .bandeau-equilibre { display: flex; gap: 18px; align-items: center; padding: 9px 13px;
                      background: var(--fond-doux); border-radius: 6px; margin-top: 11px;
                      font-size: 12.5px; }

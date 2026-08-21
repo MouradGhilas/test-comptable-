@@ -84,7 +84,7 @@ python3 app.py --sauvegarder                       # sauvegarde sans ouvrir l'ap
 |---|---|
 | Plan comptable | Nomenclature SCF complète (244 comptes), enrichie de sous-comptes immobiliers, modifiable |
 | Journaux | Ventes, achats, banque, caisse, paie, opérations diverses, à-nouveaux |
-| Saisie | Partie double avec contrôle d'équilibre en direct ; une écriture déséquilibrée est refusée |
+| Saisie | Partie double avec contrôle d'équilibre en direct ; une écriture déséquilibrée est refusée. Compte et tiers cherchés au nom comme au numéro, montant qui solde proposé par la touche Entrée, contrepartie habituelle apprise de l'historique du journal |
 | Grand livre | Par compte, par tiers, avec solde progressif et filtre « non lettrées » |
 | Balance | Générale ou agrégée par classe, avec reports à nouveau |
 | Lettrage | Manuel et automatique (rapprochement facture ↔ règlement d'un même tiers) |
@@ -390,7 +390,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
-python3 outils/test_http.py          # 60 contrôles du serveur et de l'interface
+python3 outils/test_http.py          # 63 contrôles du serveur et de l'interface
 python3 outils/test_comptable.py     # 176 contrôles de conformité comptable
 python3 app.py --verifier            # intégrité de vos données
 ```
@@ -455,7 +455,7 @@ reference/
 web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
-├── test_http.py            60 contrôles serveur et interface
+├── test_http.py            63 contrôles serveur et interface
 ├── test_comptable.py       176 contrôles de conformité comptable
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur

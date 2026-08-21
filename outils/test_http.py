@@ -242,6 +242,20 @@ def executer():
     verifie("Un joker de recherche ne fait pas tout remonter",
             rech["total"] == 0, str(rech["total"]))
 
+    # La contrepartie habituelle : apprise de l'historique, jamais devinée.
+    cp, code = appel(f"/api/comptes/contrepartie?societe={societe_id}"
+                     f"&journal=VE&compte=411")
+    verifie("La contrepartie habituelle est apprise de l'historique",
+            code == 200 and cp.get("compte") == "7063", json.dumps(cp)[:160])
+    verifie("… en disant combien de fois elle a servi",
+            cp.get("emplois", 0) >= 1, json.dumps(cp)[:160])
+    # Le client a bien été encaissé en caisse : c'est au journal de paie,
+    # où il n'a rien à faire, qu'il ne doit rien être proposé.
+    vide, _ = appel(f"/api/comptes/contrepartie?societe={societe_id}"
+                    f"&journal=PA&compte=411")
+    verifie("Sans historique dans ce journal, rien n'est proposé",
+            vide.get("compte") is None, json.dumps(vide)[:160])
+
     print("\n\033[1m8. Relevé de compte d'un tiers\033[0m")
     # La balance auxiliaire dit combien un client doit ; le relevé dit pourquoi.
     rel, code = appel(f"/api/tiers/{client['id']}/releve"

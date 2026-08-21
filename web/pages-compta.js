@@ -179,39 +179,78 @@ async function saisieEcriture(prefill = {}) {
     </tr></thead><tbody id="lignes-saisie"></tbody></table>
     <div class="rangee" style="margin-top:8px">
       <button class="petit-bouton" id="ajout-ligne">+ Ligne</button>
-      <span class="petit">Astuce : Tab passe au champ suivant, la dernière ligne s'ajoute automatiquement.</span>
+      <span class="petit">Le compte se cherche au numéro comme au nom
+        (« 401 » ou « fourniss »). Tab passe au champ suivant, la dernière
+        ligne s'ajoute d'elle-même, et <strong>Entrée dans une case de montant
+        vide y met ce qui manque</strong> pour équilibrer.</span>
     </div>
     <div class="bandeau-equilibre">
       <span>Total débit <strong id="tot-debit">0,00</strong></span>
       <span>Total crédit <strong id="tot-credit">0,00</strong></span>
       <span class="ecart" id="ecart"></span>
+      <button type="button" class="petit-bouton" id="solder" hidden>Solder</button>
     </div>
     <div class="bandeau-equilibre" id="bandeau-totalite" hidden>
       <span>Opération <strong id="tot-operation">0,00</strong></span>
       <span>dont déclaré <strong id="tot-declare">0,00</strong></span>
       <span>dont non déclaré <strong id="tot-hors">0,00</strong></span>
       <span class="ecart" id="ecart-hors"></span>
+      <button type="button" class="petit-bouton" id="solder-hors" hidden>Solder</button>
     </div>`;
 
   const corps = $('#lignes-saisie', conteneur);
-  const optionsComptesHtml = '<option value=""></option>' + comptes.map(([v, l]) =>
-    `<option value="${ech(v)}">${ech(l)}</option>`).join('');
-  const optionsTiersHtml = '<option value=""></option>' + tiers.map(([v, l]) =>
-    `<option value="${v}">${ech(l)}</option>`).join('');
+  // Deux cent cinquante comptes dans une liste déroulante, c'est un compte
+  // qu'on cherche à la molette. Un champ à liste native se cherche au
+  // clavier, par le numéro comme par l'intitulé : « 401 » ou « fourniss ».
+  conteneur.insertAdjacentHTML('beforeend', `
+    <datalist id="liste-comptes">${comptes.map(([, l]) =>
+      `<option value="${ech(l)}"></option>`).join('')}</datalist>
+    <datalist id="liste-tiers">${tiers.map(([, l]) =>
+      `<option value="${ech(l)}"></option>`).join('')}</datalist>`);
+
+  /** Le numéro derrière ce qui a été tapé — ou le texte tel quel, pour que
+      le serveur puisse dire précisément ce qui ne va pas. */
+  const numeroCompte = (texte) => {
+    const t = String(texte || '').trim();
+    if (!t) return '';
+    const exact = comptes.find(([, l]) => l === t);
+    if (exact) return exact[0];
+    const chiffres = t.match(/^(\d+)/);
+    if (chiffres) return chiffres[1];
+    const bas = t.toLowerCase();
+    const proches = comptes.filter(([, l]) => l.toLowerCase().includes(bas));
+    return proches.length === 1 ? proches[0][0] : t;
+  };
+  const libelleCompte = (numero) =>
+    (comptes.find(([v]) => v === String(numero)) || [null, String(numero || '')])[1];
+
+  const idTiers = (texte) => {
+    const t = String(texte || '').trim();
+    if (!t) return null;
+    const exact = tiers.find(([, l]) => l === t);
+    if (exact) return exact[0];
+    const bas = t.toLowerCase();
+    const proches = tiers.filter(([, l]) => l.toLowerCase().includes(bas));
+    return proches.length === 1 ? proches[0][0] : null;
+  };
+  const libelleTiers = (id) =>
+    (tiers.find(([v]) => String(v) === String(id)) || [null, ''])[1];
 
   function ajouteLigne(donnees = {}) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><select class="l-compte">${optionsComptesHtml}</select></td>
-      <td><select class="l-tiers">${optionsTiersHtml}</select></td>
+      <td><input class="l-compte" list="liste-comptes" autocomplete="off"
+                 spellcheck="false" placeholder="N° ou nom"></td>
+      <td><input class="l-tiers" list="liste-tiers" autocomplete="off"
+                 spellcheck="false"></td>
       <td><input class="l-libelle" value="${ech(donnees.libelle || '')}"></td>
       <td><input class="l-debit num" inputmode="decimal" value="${donnees.debit ? pourChamp(donnees.debit) : ''}"></td>
       <td class="col-hors"><input class="l-debit-hors num" inputmode="decimal" value="${donnees.debit_hors ? pourChamp(donnees.debit_hors) : ''}"></td>
       <td><input class="l-credit num" inputmode="decimal" value="${donnees.credit ? pourChamp(donnees.credit) : ''}"></td>
       <td class="col-hors"><input class="l-credit-hors num" inputmode="decimal" value="${donnees.credit_hors ? pourChamp(donnees.credit_hors) : ''}"></td>
       <td><button class="plat petit-bouton" title="Supprimer">✕</button></td>`;
-    if (donnees.compte) $('.l-compte', tr).value = donnees.compte;
-    if (donnees.tiers_id) $('.l-tiers', tr).value = donnees.tiers_id;
+    if (donnees.compte) $('.l-compte', tr).value = libelleCompte(donnees.compte);
+    if (donnees.tiers_id) $('.l-tiers', tr).value = libelleTiers(donnees.tiers_id);
     $('button', tr).onclick = () => { tr.remove(); recalcule(); };
     $$('input, select', tr).forEach((el) => {
       el.oninput = recalcule;
@@ -228,18 +267,67 @@ async function saisieEcriture(prefill = {}) {
     $('.l-credit', tr).onchange = exclut('.l-credit', '.l-debit');
     $('.l-debit-hors', tr).onchange = exclut('.l-debit-hors', '.l-credit-hors');
     $('.l-credit-hors', tr).onchange = exclut('.l-credit-hors', '.l-debit-hors');
+
+    // Entrée dans une case de montant vide : y mettre ce qui manque.
+    $$('.l-debit, .l-credit, .l-debit-hors, .l-credit-hors', tr).forEach((el) => {
+      el.onkeydown = (ev) => {
+        if (ev.key !== 'Enter' || cts(el.value)) return;
+        if (soldeRangee(tr, el.className.includes('hors'))) ev.preventDefault();
+      };
+    });
+
+    // Le compte saisi appelle sa contrepartie habituelle sur la ligne d'en
+    // face, quand elle est encore vide.
+    $('.l-compte', tr).onchange = () => {
+      marqueCompteInconnu($('.l-compte', tr));
+      proposeContrepartie(tr);
+      recalcule();
+    };
     corps.appendChild(tr);
     return tr;
   }
 
   const enTotalite = () => $('#e-perimetre', conteneur).value === 'totalite';
 
+  /** Un compte que le plan ne connaît pas se signale tout de suite, plutôt
+      qu'au moment d'enregistrer. */
+  function marqueCompteInconnu(champ) {
+    const numero = numeroCompte(champ.value);
+    const connu = !numero || comptes.some(([v]) => v === numero);
+    champ.classList.toggle('invalide', !connu);
+    champ.title = connu ? '' : `Le compte ${numero} n'est pas au plan comptable.`;
+  }
+
+  /** Propose le compte qui fait habituellement face, dans ce journal.
+
+      Rien n'est deviné : la proposition vient de ce que le comptable a
+      lui-même passé. Sans historique, le champ reste vide. */
+  async function proposeContrepartie(tr) {
+    const numero = numeroCompte($('.l-compte', tr).value);
+    if (!numero) return;
+    const remplies = $$('tr', corps).filter((l) => $('.l-compte', l).value.trim());
+    if (remplies.length !== 1) return;            // seulement au premier compte
+    const vides = $$('tr', corps).filter((l) => !$('.l-compte', l).value.trim());
+    if (vides.length !== 1) return;               // et sur une seule ligne libre
+    let d;
+    try {
+      d = await charge('/api/comptes/contrepartie',
+                       { compte: numero, journal: $('#e-journal', conteneur).value });
+    } catch (err) { return; }
+    if (!d.compte || $('.l-compte', vides[0]).value.trim()) return;
+    $('.l-compte', vides[0]).value = libelleCompte(d.compte);
+    $('.l-compte', vides[0]).title =
+      `Contrepartie habituelle de ${numero} dans ce journal (${d.emplois} fois). `
+      + 'Modifiable.';
+    $('.l-compte', vides[0]).classList.add('propose');
+  }
+
   function litLignes() {
     const totalite = enTotalite();
     return $$('tr', corps).map((tr) => {
       const base = {
-        compte: $('.l-compte', tr).value,
-        tiers_id: $('.l-tiers', tr).value || null,
+        compte: numeroCompte($('.l-compte', tr).value),
+        tiers_id: idTiers($('.l-tiers', tr).value),
         libelle: $('.l-libelle', tr).value,
       };
       if (!totalite) {
@@ -256,22 +344,106 @@ async function saisieEcriture(prefill = {}) {
       || cts(l.debit_hors) || cts(l.credit_hors)));
   }
 
-  /** Affiche un écart, ou la coche verte si la part s'équilibre. */
-  function afficheEcart(element, debit, credit, libelle) {
+  /** Ce qui est tapé à l'écran, ligne à ligne — y compris les lignes
+      incomplètes, que `litLignes` écarte pour l'enregistrement. Le bandeau
+      d'équilibre doit dire ce qu'on voit, pas ce qui partira. */
+  function lignesBrutes() {
+    return $$('tr', corps).map((tr) => ({
+      tr,
+      compte: numeroCompte($('.l-compte', tr).value),
+      debit: $('.l-debit', tr).value,
+      credit: $('.l-credit', tr).value,
+      debit_hors: $('.l-debit-hors', tr).value,
+      credit_hors: $('.l-credit-hors', tr).value,
+    }));
+  }
+
+  /** Ce qui manque pour équilibrer : positif = il manque au crédit. */
+  function montantQuiSolde(hors) {
+    const brutes = lignesBrutes();
+    const somme = (champ) => brutes.reduce((s, l) => s + cts(l[champ]), 0);
+    return hors ? somme('debit_hors') - somme('credit_hors')
+                : somme('debit') - somme('credit');
+  }
+
+  /** Met dans cette ligne, du bon côté, ce qui manque pour équilibrer.
+
+      C'est le geste le plus répété d'une saisie : le dernier montant est
+      toujours celui qui solde. Le proposer évite une soustraction de tête
+      à chaque écriture — et les erreurs qui vont avec. */
+  function soldeRangee(tr, hors) {
+    const ecart = montantQuiSolde(hors);
+    if (!ecart || !tr) return false;
+    const suffixe = hors ? '-hors' : '';
+    const cible = `.l-${ecart > 0 ? 'credit' : 'debit'}${suffixe}`;
+    const autre = `.l-${ecart > 0 ? 'debit' : 'credit'}${suffixe}`;
+    $(autre, tr).value = '';
+    $(cible, tr).value = pourChamp(Math.abs(ecart));
+    recalcule();
+    // Un montant sur une ligne sans compte ne s'enregistrerait pas : c'est
+    // le compte qu'il faut aller chercher, pas le montant qu'il faut relire.
+    const champ = $('.l-compte', tr).value.trim() ? $(cible, tr) : $('.l-compte', tr);
+    champ.focus();
+    if (champ.select) champ.select();
+    return true;
+  }
+
+  /** La ligne où poser le montant qui solde : la dernière qui porte un
+      compte sans montant, à défaut la dernière tout court. */
+  function rangeeASolder(hors) {
+    const suffixe = hors ? '-hors' : '';
+    const libres = $$('tr', corps).filter((tr) =>
+      !cts($(`.l-debit${suffixe}`, tr).value)
+      && !cts($(`.l-credit${suffixe}`, tr).value));
+    // D'abord une ligne qui porte déjà son compte : le montant y est utile
+    // tout de suite. À défaut, la dernière — et on ira chercher son compte.
+    return libres.filter((tr) => $('.l-compte', tr).value.trim()).pop()
+      || libres.pop() || corps.lastElementChild;
+  }
+
+  /** Affiche un écart, ou la coche verte si la part s'équilibre.
+
+      Le bouton « Solder » est un élément fixe du bandeau, seulement montré
+      ou caché : recréé à chaque frappe, il disparaîtrait sous le clic —
+      appuyer dessus déclenche d'abord la sortie du champ, donc un recalcul. */
+  function afficheEcart(element, debit, credit, libelle, hors = false) {
+    const bouton = $(hors ? '#solder-hors' : '#solder', conteneur);
     if (debit === credit && debit > 0) {
       element.innerHTML = `<span class="vert">✓ ${libelle} équilibré${libelle.endsWith('e') ? 'e' : ''}</span>`;
-    } else if (debit || credit) {
-      element.innerHTML = `<span class="rouge">${libelle} : écart de ${fm(Math.abs(debit - credit))}</span>`;
-    } else element.textContent = '';
+      bouton.hidden = true;
+      return;
+    }
+    if (!debit && !credit) { element.textContent = ''; bouton.hidden = true; return; }
+    const ecart = debit - credit;
+    element.innerHTML = `<span class="rouge">${libelle} : il manque
+      ${fm(Math.abs(ecart))} au ${ecart > 0 ? 'crédit' : 'débit'}</span>`;
+    bouton.hidden = false;
+    bouton.title = `Mettre ${fm(Math.abs(ecart))} au `
+      + `${ecart > 0 ? 'crédit' : 'débit'} de la ligne libre.`;
   }
 
   function recalcule() {
-    const lignes = litLignes();
+    const brutes = lignesBrutes();
     const totalite = enTotalite();
-    const somme = (champ) => lignes.reduce((s, l) => s + cts(l[champ]), 0);
+    const somme = (champ) => brutes.reduce((s, l) => s + cts(l[champ]), 0);
 
-    const d = totalite ? somme('debit_declare') : somme('debit');
-    const c = totalite ? somme('credit_declare') : somme('credit');
+    // Un montant sans compte ne partira pas : autant le dire pendant qu'on
+    // regarde encore la ligne.
+    brutes.forEach((l) => {
+      const montant = cts(l.debit) || cts(l.credit)
+        || cts(l.debit_hors) || cts(l.credit_hors);
+      const champ = $('.l-compte', l.tr);
+      if (montant && !l.compte) {
+        champ.classList.add('invalide');
+        champ.title = 'Un montant sans compte ne sera pas enregistré.';
+      } else if (champ.title === 'Un montant sans compte ne sera pas enregistré.') {
+        champ.classList.remove('invalide');
+        champ.title = '';
+      }
+    });
+
+    const d = somme('debit');
+    const c = somme('credit');
     $('#tot-debit', conteneur).textContent = fm(d);
     $('#tot-credit', conteneur).textContent = fm(c);
     afficheEcart($('#ecart', conteneur), d, c,
@@ -283,7 +455,7 @@ async function saisieEcriture(prefill = {}) {
     $('#tot-declare', conteneur).textContent = fm(d);
     $('#tot-hors', conteneur).textContent = fm(dh);
     $('#tot-operation', conteneur).textContent = fm(d + dh);
-    afficheEcart($('#ecart-hors', conteneur), dh, ch, 'Part non déclarée');
+    afficheEcart($('#ecart-hors', conteneur), dh, ch, 'Part non déclarée', true);
   }
 
   /** Bascule entre saisie simple et saisie en totalité. */
@@ -303,6 +475,8 @@ async function saisieEcriture(prefill = {}) {
   $('#e-journal', conteneur).value = prefill.journal
     || (journaux.journaux.some((j) => j.code === 'OD') ? 'OD' : journaux.journaux[0]?.code);
   $('#ajout-ligne', conteneur).onclick = () => ajouteLigne();
+  $('#solder', conteneur).onclick = () => soldeRangee(rangeeASolder(false), false);
+  $('#solder-hors', conteneur).onclick = () => soldeRangee(rangeeASolder(true), true);
   if (prefill.perimetre) {
     // Reprise d'une écriture ou d'un modèle : son périmètre fait foi, sinon
     // dupliquer une opération hors déclaration la rendrait déclarée.

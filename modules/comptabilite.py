@@ -764,6 +764,45 @@ def _ligne_commune(l: dict) -> dict:
     }
 
 
+@route("GET", "/api/comptes/contrepartie")
+def api_contrepartie(ctx):
+    """Le compte qui fait habituellement face à celui-ci, dans ce journal.
+
+    Appris de l'historique du dossier, jamais deviné : si le comptable a passé
+    trente fois 607 contre 401 au journal des achats, la trente et unième
+    saisie n'a pas besoin qu'il le retape. Sans historique, rien n'est
+    proposé — mieux vaut un champ vide qu'un compte inventé.
+    """
+    societe_id = ctx.arg_int("societe")
+    compte = util.nettoie(ctx.arg("compte"))
+    journal = util.nettoie(ctx.arg("journal"))
+    if not (societe_id and compte and journal):
+        return {"compte": None}
+    trouve = db.ligne(
+        "SELECT face.compte, COUNT(*) AS emplois, "
+        "       SUM(face.debit + face.credit) AS volume FROM lignes l "
+        "JOIN ecritures e ON e.id = l.ecriture_id "
+        "JOIN journaux j ON j.id = e.journal_id "
+        "JOIN lignes face ON face.ecriture_id = l.ecriture_id AND face.id != l.id "
+        "WHERE e.societe_id = ? AND j.code = ? AND l.compte = ? "
+        "AND ((l.debit > 0 AND face.credit > 0) OR (l.credit > 0 AND face.debit > 0)) "
+        # À nombre d'emplois égal, la vraie contrepartie est la plus grosse :
+        # sur une facture, le compte de produit pèse plus que celui de TVA.
+        "GROUP BY face.compte ORDER BY emplois DESC, volume DESC, face.compte "
+        "LIMIT 1",
+        (societe_id, journal, compte))
+    if not trouve:
+        return {"compte": None}
+    return {
+        "compte": trouve["compte"],
+        "intitule": db.valeur(
+            "SELECT intitule FROM comptes WHERE numero = ? "
+            "AND (societe_id = ? OR societe_id IS NULL) LIMIT 1",
+            (trouve["compte"], societe_id), ""),
+        "emplois": trouve["emplois"],
+    }
+
+
 @route("POST", "/api/ecritures")
 def api_cree_ecriture(ctx):
     ctx.interdit_lecture_seule()

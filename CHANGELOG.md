@@ -3,6 +3,26 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.7.2
+
+- **Le compte se cherche au nom autant qu'au numéro.** Dans la saisie, la
+  liste déroulante de 250 comptes est remplacée par un champ où l'on tape
+  « 401 » ou « fourniss » : la liste se réduit d'elle-même. Même chose pour
+  le tiers, qu'on trouve désormais par son nom et plus seulement par son code.
+- **Entrée met ce qui manque.** Dans une case de montant vide, la touche
+  Entrée y inscrit le montant qui équilibre l'écriture, du bon côté. Un
+  bouton **Solder** fait la même chose à la souris. C'est le geste le plus
+  répété d'une saisie : le dernier montant est toujours celui qui solde.
+- **La contrepartie habituelle est proposée.** Si vous avez passé trente fois
+  un achat 6051 contre 4011 au journal des achats, la trente et unième saisie
+  vous propose 4011 sur la ligne d'en face — en italique, modifiable, et en
+  disant combien de fois elle a servi. Sans historique, rien n'est proposé :
+  mieux vaut un champ vide qu'un compte inventé.
+- Le bandeau d'équilibre dit maintenant **de quel côté** il manque
+  (« il manque 12 500,00 au crédit ») au lieu d'un écart sans direction.
+- Un compte absent du plan, ou un montant tapé sur une ligne sans compte,
+  se signalent pendant la saisie et non au moment d'enregistrer.
+
 ## 1.7.1
 
 - **On voit enfin où l'on est.** L'entrée du menu correspondant à l'écran
