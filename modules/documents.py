@@ -918,3 +918,108 @@ def api_etat_clients_impression(ctx):
     </div>"""
     return reponse_html(page(f"État des clients {annee} — {soc['raison_sociale']}",
                              corps))
+
+
+# ---------------------------------------------------------------------------
+# Lettre de relance
+# ---------------------------------------------------------------------------
+
+#: Le corps de chaque niveau. Sobre à dessein : une lettre de recouvrement
+#: qui s'emporte se retourne contre celui qui l'envoie, et la mise en demeure
+#: a des effets juridiques — elle n'est pas une formule de style.
+CORPS_RELANCE = {
+    1: (
+        "Sauf erreur de notre part, les factures ci-dessous restent impayées "
+        "à ce jour. Un simple oubli étant l'explication la plus fréquente, "
+        "nous vous serions reconnaissants de bien vouloir procéder à leur "
+        "règlement.",
+        "Si le règlement a été effectué depuis l'établissement de ce courrier, "
+        "nous vous prions de ne pas en tenir compte."),
+    2: (
+        "Malgré notre précédent rappel, les factures ci-dessous demeurent "
+        "impayées. Nous vous demandons de bien vouloir régulariser cette "
+        "situation dans les meilleurs délais.",
+        "Si un différend fait obstacle à ce règlement, nous vous invitons à "
+        "nous en faire part sans délai afin que nous puissions l'examiner "
+        "ensemble."),
+    3: (
+        "Nos précédents courriers étant restés sans effet, nous vous mettons "
+        "en demeure de régler les factures ci-dessous.",
+        "À défaut de règlement sous huitaine à compter de la réception de la "
+        "présente, nous nous verrons contraints de confier ce dossier au "
+        "recouvrement, et de faire valoir nos droits par toutes voies de "
+        "droit. La présente mise en demeure fait courir les intérêts de "
+        "retard."),
+}
+
+
+@route("GET", "/api/relances/lettre")
+def api_lettre_relance(ctx):
+    """La lettre à joindre au relevé. Trois niveaux, du rappel à la mise en
+    demeure : ce n'est pas le même courrier, et ce ne sont pas les mêmes
+    effets."""
+    from modules import tiers as mod_tiers
+    societe_id = ctx.arg_int("societe")
+    tiers_id = ctx.arg_int("tiers")
+    niveau = max(1, min(3, ctx.arg_int("niveau", 1) or 1))
+    t = db.ligne("SELECT * FROM tiers WHERE id = ? AND societe_id = ?",
+                 (tiers_id, societe_id))
+    if not t:
+        raise ErreurApplicative("Client introuvable.", 404)
+    soc = db.ligne("SELECT * FROM societes WHERE id = ?", (societe_id,))
+    pieces = mod_tiers.creances_echues(societe_id, 0, ctx.perimetre(), tiers_id)
+    total = sum(p["montant"] for p in pieces)
+    titre_niveau = mod_tiers.NIVEAUX_RELANCE[niveau][0]
+    ouverture, fermeture = CORPS_RELANCE[niveau]
+
+    rangs = "".join(f"""<tr>
+        <td>{e(p['piece'] or p['num_ecriture'] or '')}</td>
+        <td>{e(util.date_fr(p['date']))}</td>
+        <td>{e(util.date_fr(p['echeance'])) if p['echeance'] else ''}</td>
+        <td>{e(p['libelle'])}</td>
+        <td class="num">{p['retard']} j</td>
+        <td class="num">{montant(p['montant'])}</td></tr>""" for p in pieces)
+
+    corps = f"""
+    <div class="entete">{bloc_societe(soc)}
+      <div class="doc"><div class="badge">{e(titre_niveau.upper())}</div>
+        <div style="margin-top:8px">{e(util.date_fr(util.aujourdhui()))}</div>
+      </div></div>
+
+    <div class="parties">{bloc_tiers('Destinataire', t)}</div>
+
+    <p><strong>Objet : {e(titre_niveau.lower())} — factures impayées</strong></p>
+    <p>Madame, Monsieur,</p>
+    <p>{e(ouverture)}</p>
+
+    <table><thead><tr>
+      <th>Pièce</th><th>Date</th><th>Échéance</th><th>Libellé</th>
+      <th class="num">Retard</th><th class="num">Montant</th>
+    </tr></thead><tbody>
+      {rangs or '<tr><td colspan="6"><em>Aucune pièce échue.</em></td></tr>'}
+      <tr class="total-ligne"><td colspan="5">TOTAL DÛ</td>
+        <td class="num">{montant(total)}</td></tr>
+    </tbody></table>
+
+    <table class="totaux">
+      <tr class="final"><td>SOMME À RÉGLER</td>
+        <td class="num">{montant(total)} DA</td></tr>
+    </table>
+
+    <p>{e(fermeture)}</p>
+    <p>Nous vous prions d'agréer, Madame, Monsieur, l'expression de nos
+      salutations distinguées.</p>
+
+    {'' if not soc.get('banque_rib') else f'''
+    <div class="lettres">Règlement par virement :
+      {e(soc.get('banque_nom') or '')} — RIB {e(soc['banque_rib'])}</div>'''}
+
+    <div class="signature">
+      <div></div>
+      <div><div class="ligne">{e(soc.get('raison_sociale'))}</div></div>
+    </div>
+
+    <div class="pied">Document établi à partir de nos livres comptables au
+      {e(util.date_fr(util.aujourdhui()))}. Le détail de votre compte peut
+      vous être adressé sur simple demande.</div>"""
+    return reponse_html(page(f"{titre_niveau} — {t['raison_sociale']}", corps))

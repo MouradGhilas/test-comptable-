@@ -156,6 +156,25 @@ const AIDES = {
       'Un tiers employé dans une écriture ne se supprime pas : désactivez-le.',
     ],
   },
+  '/relances': {
+    titre: 'Relances clients',
+    quoi: 'Ce que chaque client doit, depuis quand, et quand il a été relancé '
+        + 'pour la dernière fois.',
+    points: [
+      'Seules les pièces <strong>non lettrées</strong> figurent ici. Une '
+      + 'facture réglée mais non lettrée avec son règlement y apparaîtrait à '
+      + 'tort : c\'est alors le lettrage qu\'il faut faire, pas la relance.',
+      'Trois niveaux : le <strong>rappel</strong> suppose un oubli, la '
+      + '<strong>relance</strong> constate qu\'il n\'en était pas un, la '
+      + '<strong>mise en demeure</strong> a des effets juridiques — elle fait '
+      + 'courir les intérêts de retard et sert de preuve. Le niveau proposé '
+      + 'tient compte du retard et de ce qui a déjà été envoyé.',
+      'Consigner une relance n\'écrit aucune écriture : une relance ne crée '
+      + 'pas de dette, elle constate celle qui existe.',
+      'Le <strong>relevé de compte</strong> du client se joint utilement à '
+      + 'la lettre : il justifie le solde pièce par pièce.',
+    ],
+  },
   '/perimetres': {
     titre: 'Déclaré et hors déclaration',
     quoi: 'Le rapprochement entre ce que voient les déclarations et ce que '

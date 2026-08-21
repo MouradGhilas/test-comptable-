@@ -14,6 +14,7 @@ const MENU = [
       { route: '/factures', libelle: 'Factures', ico: '🧾' },
       { route: '/tresorerie', libelle: 'Trésorerie', ico: '🏦' },
       { route: '/tiers', libelle: 'Tiers', ico: '👥' },
+      { route: '/relances', libelle: 'Relances', ico: '⏰' },
       { route: '/comptabilite/grand-livre', libelle: 'Grand livre', ico: '📖' },
       { route: '/comptabilite/balance', libelle: 'Balance', ico: '⚖️' },
       { route: '/comptabilite/lettrage', libelle: 'Lettrage', ico: '🔗' },

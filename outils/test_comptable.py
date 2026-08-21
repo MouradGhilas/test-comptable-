@@ -23,13 +23,15 @@ Quatre familles :
               numerotation ni effacer ce qui sert deja ;
   sante       les controles de sante du dossier, chacun mis a l'epreuve sur
               une anomalie provoquee pour lui ;
-  annuelles   la DAS et l'etat des clients, et surtout leurs recoupements.
+  annuelles   la DAS et l'etat des clients, et surtout leurs recoupements ;
+  relances    ce qui est du et depuis quand, et la lettre a ses trois niveaux.
 
 Usage :
     python outils/test_comptable.py               les quatre suites
     python outils/test_comptable.py perimetre     une seule
 """
 import base64
+import datetime
 import http.cookiejar
 import json
 import shutil
@@ -1857,6 +1859,140 @@ def suite_annuelles(dos):
           "spreadsheetml" in mime and octets[:2] == b"PK", mime)
 
 
+def suite_relances(dos):
+    """Relances : ce qui est du, depuis quand, et ce qu'on a deja ecrit.
+
+    Une facture reglee mais non lettree apparaitrait ici a tort : c'est
+    le seul cas ou l'ecran mentirait, et il est verifie.
+    """
+    aujourd = time.strftime("%Y-%m-%d")
+    dos.appel("/api/installation", {
+        "identifiant": "c", "mot_de_passe": "motdepasse123", "nom_complet": "X",
+        "raison_sociale": "SARL RELANCE", "nif": "000116001234567",
+        "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    ex = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]
+    annee = int(ex["date_debut"][:4])
+    aujourd = time.strftime("%Y-%m-%d")
+
+    def client(nom):
+        return dos.appel("/api/tiers", {"societe_id": sid, "type": "client",
+                                    "raison_sociale": nom,
+                                    "nif": "000116009999999"})["id"]
+
+    def facture(tiers, montant, echeance, piece):
+        return dos.appel("/api/ecritures", {
+            "societe_id": sid, "journal": "VE", "date": echeance,
+            "libelle": f"Facture {piece}", "piece": piece,
+            "lignes": [{"compte": "411", "debit": montant, "credit": "0",
+                        "tiers_id": tiers, "echeance": echeance},
+                       {"compte": "701", "debit": "0", "credit": montant}]})
+
+    import datetime
+    def il_y_a(jours):
+        d = datetime.date.fromisoformat(aujourd) - datetime.timedelta(days=jours)
+        return max(d.isoformat(), ex["date_debut"])
+
+    titre("1. Ce qui est dû, groupé par client")
+    a = client("ETS BOUKHARI")
+    b = client("SARL DELTA")
+    facture(a, "100000", il_y_a(120), "FV-001")
+    facture(a, "50000", il_y_a(20), "FV-002")
+    facture(b, "30000", il_y_a(5), "FV-003")
+
+    d = dos.appel(f"/api/relances?societe={sid}")
+    v("les deux clients apparaissent", len(d["clients"]) == 2,
+      [c["raison_sociale"] for c in d["clients"]])
+    v("le plus gros débiteur est en tête",
+      d["clients"][0]["raison_sociale"] == "ETS BOUKHARI",
+      d["clients"][0]["raison_sociale"])
+    v("ses deux pièces sont réunies", len(d["clients"][0]["pieces"]) == 2,
+      d["clients"][0]["pieces"])
+    v("son total est juste", d["clients"][0]["total"] == 15000000,
+      fm(d["clients"][0]["total"]))
+    v("le retard le plus ancien est retenu",
+      d["clients"][0]["retard_max"] >= 119, d["clients"][0]["retard_max"])
+    v("le total général est juste", d["total"] == 18000000, fm(d["total"]))
+
+    titre("2. Le niveau proposé suit le retard")
+    boukhari = d["clients"][0]
+    delta = next(c for c in d["clients"] if c["raison_sociale"] == "SARL DELTA")
+    v("120 jours de retard appellent une mise en demeure",
+      boukhari["niveau_suggere"] == 3, boukhari["niveau_suggere"])
+    v("5 jours appellent un simple rappel",
+      delta["niveau_suggere"] == 1, delta["niveau_suggere"])
+    v("aucun n'a encore été relancé",
+      all(c["derniere_relance"] is None for c in d["clients"]))
+
+    titre("3. Le filtre par retard")
+    d90 = dos.appel(f"/api/relances?societe={sid}&jours=90")
+    v("au-delà de 90 jours, un seul client reste",
+      len(d90["clients"]) == 1 and d90["clients"][0]["raison_sociale"] == "ETS BOUKHARI",
+      [c["raison_sociale"] for c in d90["clients"]])
+    v("… avec sa seule pièce ancienne",
+      len(d90["clients"][0]["pieces"]) == 1, d90["clients"][0]["pieces"])
+
+    titre("4. Une facture lettrée sort de la liste")
+    lignes = dos.appel(f"/api/lettrage?societe={sid}&compte=411&etat=non_lettre")
+    # On encaisse la facture de DELTA et on lettre les deux lignes.
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "BQ", "date": aujourd,
+        "libelle": "Encaissement DELTA",
+        "lignes": [{"compte": "512", "debit": "30000", "credit": "0"},
+                   {"compte": "411", "debit": "0", "credit": "30000",
+                    "tiers_id": b}]})
+    aptes = [l["id"] for l in dos.appel(
+        f"/api/lettrage?societe={sid}&compte=411&etat=non_lettre")["lignes"]
+        if l.get("tiers_id") == b]
+    dos.appel("/api/lettrage", {"societe_id": sid, "lignes": aptes})
+    d = dos.appel(f"/api/relances?societe={sid}")
+    v("le client réglé et lettré disparaît",
+      all(c["raison_sociale"] != "SARL DELTA" for c in d["clients"]),
+      [c["raison_sociale"] for c in d["clients"]])
+
+    titre("5. Consigner une relance")
+    r = dos.appel("/api/relances", {"societe_id": sid, "tiers_id": a, "niveau": 2,
+                                "moyen": "courriel", "note": "au gérant"})
+    v("la relance est enregistrée", r["niveau"] == 2 and r["nb_pieces"] == 2, r)
+    d = dos.appel(f"/api/relances?societe={sid}")
+    c = d["clients"][0]
+    v("elle apparaît comme dernière relance",
+      c["derniere_relance"] and c["derniere_relance"]["niveau"] == 2,
+      c["derniere_relance"])
+    v("… datée d'aujourd'hui", c["jours_depuis_relance"] == 0,
+      c["jours_depuis_relance"])
+    v("le niveau proposé monte d'un cran",
+      c["niveau_suggere"] == 3, c["niveau_suggere"])
+    v("l'historique la retrouve",
+      dos.appel(f"/api/relances/historique?societe={sid}")["relances"][0]["note"]
+      == "au gérant")
+    v("aucune écriture n'a été créée par la relance",
+      dos.appel(f"/api/ecritures?societe={sid}")["total"] == 4,
+      dos.appel(f"/api/ecritures?societe={sid}")["total"])
+
+    titre("6. La lettre, à ses trois niveaux")
+    for niveau, marque in ((1, "RAPPEL"), (2, "RELANCE"), (3, "MISE EN DEMEURE")):
+        html, mime = dos.appel(f"/api/relances/lettre?societe={sid}&tiers={a}"
+                           f"&niveau={niveau}", brut=True)
+        texte = html.decode()
+        v(f"niveau {niveau} : la lettre porte « {marque} »", marque in texte,
+          texte[:200])
+        v(f"… et liste les {2} pièces dues",
+          "FV-001" in texte and "FV-002" in texte, texte[:400])
+    v("la mise en demeure annonce ses effets",
+      "intérêts de retard" in dos.appel(
+          f"/api/relances/lettre?societe={sid}&tiers={a}&niveau=3",
+          brut=True)[0].decode())
+    v("le rappel, lui, suppose l'oubli",
+      "oubli" in dos.appel(f"/api/relances/lettre?societe={sid}&tiers={a}&niveau=1",
+                       brut=True)[0].decode())
+    try:
+        dos.appel(f"/api/relances/lettre?societe={sid}&tiers=99999&niveau=1", brut=True)
+        v("un client inconnu est refusé", False, "aucune erreur")
+    except urllib.error.HTTPError as err:
+        v("un client inconnu est refusé", err.code == 404, err.code)
+
+
 SUITES = [
     ("conformite", "Conformite comptable -- une annee tenue", suite_conformite, True),
     ("limites", "Ce que le logiciel doit refuser", suite_limites, False),
@@ -1866,6 +2002,7 @@ SUITES = [
     ("reprises", "Annuler un import deja valide", suite_reprises, False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
+    ("relances", "Relances clients", suite_relances, False),
 ]
 
 

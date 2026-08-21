@@ -395,6 +395,24 @@ CREATE TABLE IF NOT EXISTS reglements (
 );
 CREATE INDEX IF NOT EXISTS idx_regl_date ON reglements(societe_id, date);
 
+-- Journal des relances : savoir quand on a relancé, et à quel niveau, est
+-- la moitié du travail de recouvrement. Sans trace, on relance deux fois en
+-- huit jours, ou on oublie six mois.
+CREATE TABLE IF NOT EXISTS relances (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    societe_id  INTEGER NOT NULL REFERENCES societes(id) ON DELETE CASCADE,
+    tiers_id    INTEGER NOT NULL REFERENCES tiers(id) ON DELETE CASCADE,
+    date        TEXT NOT NULL,
+    niveau      INTEGER NOT NULL DEFAULT 1,   -- 1 rappel, 2 relance, 3 mise en demeure
+    montant     INTEGER NOT NULL DEFAULT 0,   -- ce qui était dû ce jour-là
+    nb_pieces   INTEGER NOT NULL DEFAULT 0,
+    moyen       TEXT,                         -- courrier | courriel | telephone | autre
+    note        TEXT,
+    cree_le     TEXT NOT NULL,
+    cree_par    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_relances_tiers ON relances(societe_id, tiers_id, date);
+
 -- ---------------------------------------------------------------------------
 -- 8. AGENCE IMMOBILIÈRE — biens, mandats, transactions, gestion locative
 -- ---------------------------------------------------------------------------

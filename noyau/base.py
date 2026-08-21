@@ -141,7 +141,7 @@ SCHEMA = Path(__file__).parent / "schema.sql"
 
 #: Version du schéma attendue par cette version du programme.
 #: À incrémenter dès qu'une migration est ajoutée ci-dessous.
-VERSION_SCHEMA = 6
+VERSION_SCHEMA = 7
 
 
 def colonnes(table: str) -> set[str]:
@@ -282,6 +282,32 @@ def _migration_6() -> None:
     ajoute_colonne("reglements", "import_id", "INTEGER")
 
 
+def _migration_7() -> None:
+    """Journal des relances.
+
+    Savoir quand on a relancé, et à quel niveau, est la moitié du travail de
+    recouvrement : sans trace, on relance deux fois en huit jours, ou l'on
+    oublie six mois. Rien de comptable ici — une relance n'écrit aucune
+    écriture, elle constate ce qui est déjà dû.
+    """
+    execute("""
+        CREATE TABLE IF NOT EXISTS relances (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            societe_id  INTEGER NOT NULL REFERENCES societes(id) ON DELETE CASCADE,
+            tiers_id    INTEGER NOT NULL REFERENCES tiers(id) ON DELETE CASCADE,
+            date        TEXT NOT NULL,
+            niveau      INTEGER NOT NULL DEFAULT 1,
+            montant     INTEGER NOT NULL DEFAULT 0,
+            nb_pieces   INTEGER NOT NULL DEFAULT 0,
+            moyen       TEXT,
+            note        TEXT,
+            cree_le     TEXT NOT NULL,
+            cree_par    TEXT
+        )""")
+    execute("CREATE INDEX IF NOT EXISTS idx_relances_tiers "
+            "ON relances(societe_id, tiers_id, date)")
+
+
 #: version -> fonction de migration. Exécutées dans l'ordre croissant.
 MIGRATIONS = {
     2: _migration_2,
@@ -289,6 +315,7 @@ MIGRATIONS = {
     4: _migration_4,
     5: _migration_5,
     6: _migration_6,
+    7: _migration_7,
 }
 
 

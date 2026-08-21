@@ -3,6 +3,26 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.7.6
+
+- **Relances clients**, nouvel écran dans la rubrique Comptabilité. Il répond
+  à la question que la balance des tiers ne répond pas : **qui me doit quoi,
+  depuis quand, et lui ai-je déjà écrit ?**
+- Chaque client apparaît avec le détail de ses factures échues, le retard le
+  plus ancien, le total dû, et la date de la dernière relance envoyée.
+- **Trois niveaux de lettre**, imprimables à l'en-tête de la société : le
+  *rappel* suppose un oubli, la *relance* constate qu'il n'en était pas un,
+  la *mise en demeure* annonce ses effets. Le niveau proposé tient compte du
+  retard **et** de ce qui a déjà été envoyé — après une relance, c'est la
+  mise en demeure qui est mise en avant.
+- Les relances sont consignées, avec le moyen employé et une note libre : on
+  ne relance plus deux fois en huit jours, et on n'oublie plus six mois.
+  Consigner n'écrit **aucune écriture** : une relance ne crée pas de dette,
+  elle constate celle qui existe.
+- Seules les pièces **non lettrées** figurent ici : une facture réglée mais
+  non lettrée avec son règlement y apparaîtrait à tort — c'est alors le
+  lettrage qu'il faut faire, et l'aide de l'écran le dit.
+
 ## 1.7.5
 
 - **Correction : une mise à jour restée à mi-chemin ne passe plus inaperçue.**

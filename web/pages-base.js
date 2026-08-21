@@ -694,6 +694,166 @@ function carteAnomalie(a) {
     </div>`, '', true);
 }
 
+/* -------------------------------------------------------- Relances ------
+
+   La balance auxiliaire donne un solde ; elle ne dit pas depuis combien de
+   temps il traîne, ni si on a déjà écrit. C'est pourtant ce qui décide d'un
+   coup de téléphone ou d'une mise en demeure. */
+
+App.pages.relances = {
+  titre: 'Relances clients',
+  async afficher(zone, route) {
+    const jours = route.parametres.jours || '0';
+    const d = await charge('/api/relances', { jours });
+    sousTitre(`${d.clients.length} client(s) · ${d.nb_pieces} pièce(s) échue(s)`);
+    actionsPage(`<button onclick="montreHistoriqueRelances()">Historique</button>`);
+
+    const seuils = [['0', 'Toutes les échues'], ['15', 'Plus de 15 jours'],
+      ['45', 'Plus de 45 jours'], ['90', 'Plus de 90 jours']];
+
+    zone.innerHTML = `
+      <div class="barre-outils">
+        <label class="champ"><span>Retard</span>
+          <select id="rel-jours">
+            ${seuils.map(([v, l]) =>
+              `<option value="${v}" ${v === jours ? 'selected' : ''}>${l}</option>`).join('')}
+          </select></label>
+      </div>
+
+      <div class="grille c3" style="margin-bottom:16px">
+        ${indicateur('Total dû', fm(d.total, true), '',
+          d.total ? 'danger' : 'succes')}
+        ${indicateur('Clients concernés', String(d.clients.length))}
+        ${indicateur('Pièces échues', String(d.nb_pieces))}
+      </div>
+
+      ${d.clients.length ? d.clients.map(carteRelance).join('')
+        : `<div class="message succes"><strong>Rien à relancer</strong>
+           Aucune facture client échue et non lettrée${jours !== '0'
+             ? ' au-delà de ce retard' : ''}. Si un règlement a été encaissé
+           sans être lettré avec sa facture, il apparaîtrait pourtant ici :
+           passez par Lettrage.</div>`}`;
+
+    $('#rel-jours').onchange = (ev) => navigue(`/relances?jours=${ev.target.value}`);
+  },
+};
+
+function carteRelance(c) {
+  const relance = c.derniere_relance;
+  const urgence = c.retard_max >= 90 ? 'danger' : (c.retard_max >= 45 ? 'alerte' : '');
+  return carte('', `
+    <div class="anomalie ${urgence || 'info'}">
+      <div class="tete">
+        <div>
+          <strong>${ech(c.raison_sociale)}</strong>
+          <div class="tres-petit">
+            ${ech([c.code, c.telephone, c.email].filter(Boolean).join(' · '))}
+          </div>
+        </div>
+        <div class="num" style="text-align:right">
+          <div style="font-size:17px"><strong>${centimesDiscrets(fm(c.total, true))}</strong></div>
+          <div class="tres-petit">le plus ancien : ${c.retard_max} jours</div>
+        </div>
+      </div>
+
+      <p>${relance
+        ? `Dernière relance le <strong>${ech(fdate(relance.date))}</strong>
+           (${ech(NIVEAU_LIBELLE[relance.niveau] || '')}, il y a
+           ${c.jours_depuis_relance} jours).`
+        : '<strong>Jamais relancé.</strong>'}</p>
+
+      ${tableau([
+        { titre: 'Pièce', cle: 'numero', largeur: '130px' },
+        { titre: 'Date', rendu: (p) => fdate(p.date), largeur: '95px' },
+        { titre: 'Échéance', rendu: (p) => p.echeance ? fdate(p.echeance) : '',
+          largeur: '95px' },
+        { titre: 'Libellé', rendu: (p) => ech(p.libelle) },
+        { titre: 'Retard', classe: 'num', largeur: '80px',
+          rendu: (p) => `${p.retard} j` },
+        { titre: 'Montant', classe: 'num', largeur: '130px',
+          rendu: (p) => fm(p.montant) },
+      ], c.pieces, {
+        clic: true, icone: '⏰',
+        attributsLigne: (p) => `onclick="detailEcriture(${p.ecriture_id})"`,
+      })}
+
+      <div class="rangee" style="margin-top:12px; flex-wrap:wrap">
+        ${[1, 2, 3].map((n) => `<button class="${n === c.niveau_suggere ? 'primaire' : ''}"
+          onclick="lettreRelance(${c.tiers_id}, ${n})">${NIVEAU_LIBELLE[n]}</button>`).join('')}
+        <button onclick="navigue('/tiers/${c.tiers_id}/releve')">Relevé de compte</button>
+        <button class="petit-bouton" onclick="noteRelance(${c.tiers_id}, ${c.niveau_suggere})">
+          Noter une relance faite autrement</button>
+      </div>
+    </div>`, '', true);
+}
+
+const NIVEAU_LIBELLE = { 1: 'Rappel', 2: 'Relance', 3: 'Mise en demeure' };
+
+/** Ouvre la lettre, puis propose d'en garder la trace. */
+function lettreRelance(tiersId, niveau) {
+  telecharge('/api/relances/lettre', { tiers: tiersId, niveau });
+  dialogueRelance(tiersId, niveau, true);
+}
+
+/** Consigner une relance faite autrement : au téléphone, de vive voix. */
+function noteRelance(tiersId, niveau) {
+  dialogueRelance(tiersId, niveau, false);
+}
+
+function dialogueRelance(tiersId, niveau, avecLettre) {
+  modale({
+    titre: `${NIVEAU_LIBELLE[niveau]} — garder la trace ?`,
+    contenu: `${avecLettre ? `<p>La lettre s'est ouverte dans un autre onglet,
+      prête à être imprimée.</p>` : ''}
+      <p class="petit">Consigner la relance évite d'écrire deux fois en huit
+      jours, et de ne plus savoir six mois plus tard où en est le dossier.
+      Rien n'est écrit en comptabilité : une relance ne crée pas de dette,
+      elle constate celle qui existe.</p>
+      <label class="champ"><span>Envoyée par</span>
+        <select id="rel-moyen">
+          <option value="courrier" ${avecLettre ? 'selected' : ''}>Courrier</option>
+          <option value="courriel">Courriel</option>
+          <option value="telephone" ${avecLettre ? '' : 'selected'}>Téléphone</option>
+          <option value="autre">Autre</option>
+        </select></label>
+      <label class="champ"><span>Note (facultatif)</span>
+        <input id="rel-note" placeholder="Ex : remis en main propre au gérant"></label>`,
+    boutons: [
+      { libelle: 'Ne pas consigner' },
+      {
+        libelle: 'Consigner la relance', classe: 'primaire',
+        action: async (corps) => {
+          await envoie('/api/relances', {
+            tiers_id: tiersId, niveau,
+            moyen: $('#rel-moyen', corps).value,
+            note: $('#rel-note', corps).value,
+          });
+          notifie('Relance consignée.', 'succes');
+          afficheRoute();
+        },
+      },
+    ],
+  });
+}
+
+async function montreHistoriqueRelances() {
+  const d = await charge('/api/relances/historique');
+  modale({
+    titre: 'Relances envoyées',
+    large: true,
+    contenu: tableau([
+      { titre: 'Date', rendu: (r) => fdate(r.date), largeur: '110px' },
+      { titre: 'Client', cle: 'raison_sociale' },
+      { titre: 'Niveau', rendu: (r) => ech(NIVEAU_LIBELLE[r.niveau] || r.niveau) },
+      { titre: 'Moyen', cle: 'moyen' },
+      { titre: 'Pièces', classe: 'num', cle: 'nb_pieces', largeur: '70px' },
+      { titre: 'Montant dû', classe: 'num', rendu: (r) => fm(r.montant) },
+      { titre: 'Note', rendu: (r) => ech(r.note || '') },
+    ], d.relances, { icone: '📨', messageVide: 'Aucune relance consignée.' }),
+    boutons: [{ libelle: 'Fermer' }],
+  });
+}
+
 /* ---------------------------------------------------------- Paramètres -- */
 
 App.pages.parametres = {

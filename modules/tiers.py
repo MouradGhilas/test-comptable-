@@ -336,25 +336,140 @@ def api_export_balance_auxiliaire(ctx):
                    f"balance_auxiliaire_{type_tiers}_{soc['code']}.xlsx")
 
 
-@route("GET", "/api/relances")
-def api_relances(ctx):
-    """Créances échues non lettrées, pour relancer les clients."""
-    societe_id = ctx.arg_int("societe")
+#: Ce que chaque niveau dit, et à partir de quand il se justifie d'ordinaire.
+#: Ce ne sont que des repères : c'est le comptable qui décide.
+NIVEAUX_RELANCE = {
+    1: ("Rappel", "Un simple oubli est l'explication la plus fréquente.", 15),
+    2: ("Relance", "La créance est échue depuis un moment et un premier "
+                   "rappel est resté sans effet.", 45),
+    3: ("Mise en demeure", "Dernier courrier avant recouvrement. Il fait "
+                           "courir les intérêts de retard et sert de preuve.", 90),
+}
+
+
+def creances_echues(societe_id: int, jours: int = 0, perimetre=None,
+                    tiers_id: int | None = None) -> list[dict]:
+    """Les pièces client échues et non lettrées, ligne à ligne."""
+    from modules import comptabilite as compta
+    clause, params = compta.clause_perimetre(perimetre)
     aujourdhui = util.aujourdhui()
-    jours = ctx.arg_int("jours", 0) or 0
-    return {"lignes": db.lignes(
-        "SELECT t.id AS tiers_id, t.code, t.raison_sociale, t.telephone, t.email, "
-        "  e.date, e.numero AS num_ecriture, e.libelle, l.echeance, "
+    conditions = ""
+    if tiers_id:
+        conditions = " AND t.id = ?"
+    return db.lignes(
+        "SELECT t.id AS tiers_id, t.code, t.raison_sociale, t.telephone, "
+        "  t.email, t.adresse, t.commune, t.wilaya, t.nif, "
+        "  e.id AS ecriture_id, e.date, e.numero AS num_ecriture, e.piece, "
+        "  e.libelle, l.echeance, l.compte, "
         "  l.debit - l.credit AS montant, "
-        "  CAST(julianday(?) - julianday(COALESCE(l.echeance, e.date)) AS INTEGER) AS retard "
+        "  CAST(julianday(?) - julianday(COALESCE(l.echeance, e.date)) "
+        "       AS INTEGER) AS retard "
         "FROM lignes l JOIN ecritures e ON e.id = l.ecriture_id "
         "JOIN tiers t ON t.id = l.tiers_id "
-        "WHERE e.societe_id = ? AND l.compte LIKE '41%' "
-        "AND (l.lettrage IS NULL OR l.lettrage = '') AND l.debit > l.credit "
-        "AND julianday(?) - julianday(COALESCE(l.echeance, e.date)) >= ? "
+        f"WHERE e.societe_id = ? AND substr(l.compte,1,3) = '411' "
+        f"AND (l.lettrage IS NULL OR l.lettrage = '') AND l.debit > l.credit "
+        f"AND julianday(?) - julianday(COALESCE(l.echeance, e.date)) >= ?"
+        f"{clause}{conditions} "
         "ORDER BY retard DESC",
-        (aujourdhui, societe_id, aujourdhui, jours),
-    )}
+        [aujourdhui, societe_id, aujourdhui, jours, *params]
+        + ([tiers_id] if tiers_id else []))
+
+
+def relances_par_client(societe_id: int, jours: int = 0, perimetre=None) -> dict:
+    """Ce que chaque client doit, depuis quand, et quand il a été relancé.
+
+    La balance auxiliaire donne un solde ; elle ne dit pas depuis combien de
+    temps il traîne, ni si on a déjà écrit. C'est pourtant ce qui décide
+    d'un coup de téléphone ou d'une mise en demeure.
+    """
+    lignes = creances_echues(societe_id, jours, perimetre)
+    clients: dict = {}
+    for l in lignes:
+        c = clients.setdefault(l["tiers_id"], {
+            "tiers_id": l["tiers_id"], "code": l["code"],
+            "raison_sociale": l["raison_sociale"], "telephone": l["telephone"],
+            "email": l["email"], "pieces": [], "total": 0, "retard_max": 0,
+        })
+        c["pieces"].append({
+            "ecriture_id": l["ecriture_id"], "date": l["date"],
+            "numero": l["piece"] or l["num_ecriture"], "libelle": l["libelle"],
+            "echeance": l["echeance"], "montant": l["montant"],
+            "retard": l["retard"],
+        })
+        c["total"] += l["montant"]
+        c["retard_max"] = max(c["retard_max"], l["retard"])
+
+    # La dernière relance envoyée à chacun : relancer deux fois en huit jours
+    # dessert autant qu'oublier six mois.
+    derniere = {r["tiers_id"]: r for r in db.lignes(
+        "SELECT tiers_id, MAX(date) AS date, niveau, moyen FROM relances "
+        "WHERE societe_id = ? GROUP BY tiers_id", (societe_id,))}
+    for c in clients.values():
+        d = derniere.get(c["tiers_id"])
+        c["derniere_relance"] = d or None
+        c["jours_depuis_relance"] = (
+            util.jours_ecart(d["date"], util.aujourdhui()) if d else None)
+        # Le niveau que la situation appelle, à défaut de celui qu'on choisira.
+        c["niveau_suggere"] = (
+            3 if c["retard_max"] >= NIVEAUX_RELANCE[3][2]
+            else 2 if c["retard_max"] >= NIVEAUX_RELANCE[2][2] else 1)
+        if d and d["niveau"] >= c["niveau_suggere"]:
+            c["niveau_suggere"] = min(3, d["niveau"] + 1)
+
+    ordonnes = sorted(clients.values(), key=lambda c: -c["total"])
+    return {
+        "clients": ordonnes,
+        "jours": jours,
+        "total": sum(c["total"] for c in ordonnes),
+        "nb_pieces": sum(len(c["pieces"]) for c in ordonnes),
+        "niveaux": {n: {"libelle": v[0], "quand": v[1], "seuil": v[2]}
+                    for n, v in NIVEAUX_RELANCE.items()},
+    }
+
+
+@route("GET", "/api/relances")
+def api_relances(ctx):
+    """Créances échues non lettrées, groupées par client."""
+    return relances_par_client(ctx.arg_int("societe"),
+                               ctx.arg_int("jours", 0) or 0,
+                               ctx.perimetre())
+
+
+@route("POST", "/api/relances")
+def api_note_relance(ctx):
+    """Consigne une relance envoyée. N'écrit aucune écriture : une relance
+    ne crée pas de dette, elle constate celle qui existe."""
+    ctx.interdit_lecture_seule()
+    societe_id = ctx.entier("societe_id")
+    tiers_id = ctx.entier("tiers_id")
+    if not tiers_id:
+        raise ErreurApplicative("Client manquant.")
+    niveau = max(1, min(3, ctx.entier("niveau", 1) or 1))
+    pieces = creances_echues(societe_id, 0, ctx.champ("perimetre"), tiers_id)
+    with db.transaction():
+        identifiant = db.insere("relances", {
+            "societe_id": societe_id, "tiers_id": tiers_id,
+            "date": ctx.date("date", util.aujourdhui()),
+            "niveau": niveau,
+            "montant": sum(p["montant"] for p in pieces),
+            "nb_pieces": len(pieces),
+            "moyen": util.nettoie(ctx.champ("moyen")) or "courrier",
+            "note": util.nettoie(ctx.champ("note")),
+            "cree_le": util.maintenant(),
+            "cree_par": ctx.nom_utilisateur,
+        })
+        db.trace("relance", "tiers", tiers_id,
+                 {"niveau": niveau, "pieces": len(pieces)}, ctx.nom_utilisateur)
+    return {"id": identifiant, "niveau": niveau, "nb_pieces": len(pieces)}
+
+
+@route("GET", "/api/relances/historique")
+def api_historique_relances(ctx):
+    return {"relances": db.lignes(
+        "SELECT r.*, t.raison_sociale FROM relances r "
+        "JOIN tiers t ON t.id = r.tiers_id "
+        "WHERE r.societe_id = ? ORDER BY r.date DESC, r.id DESC LIMIT 200",
+        (ctx.arg_int("societe"),))}
 
 
 # ---------------------------------------------------------------------------
