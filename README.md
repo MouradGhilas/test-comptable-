@@ -282,6 +282,24 @@ annoncé est donc exactement ce qui se produira.
 * Calendrier des obligations : G50, CNAS, acomptes IBS, liasse fiscale, DAS
 * Droit de timbre calculé automatiquement sur les règlements en espèces
 
+### Déclarations annuelles
+
+Dans **Fiscalité → Déclarations annuelles**, les deux états de début d'année,
+déduits de ce qui est déjà saisi :
+
+* La **déclaration annuelle des salaires** (série G n° 29) : chaque salarié avec
+  son matricule, son n° de sécurité sociale, ses mois payés, son brut, sa CNAS,
+  sa base IRG, l'IRG retenu et le net payé.
+* L'**état des clients** : les ventes de l'année par client, avec son identité
+  fiscale. Un client sans NIF est signalé ; un seuil facultatif écarte les
+  petits montants, et l'écran dit combien.
+
+**Chacun porte son recoupement**, à l'écran comme sur le papier — c'est ce qui
+fait leur valeur. Pour la DAS : les bulletins, le cumul des G50 déposées et le
+compte 4421 doivent porter le même IRG. Pour l'état des clients : le total des
+factures doit égaler les comptes de produits, faute de quoi une vente a été
+comptabilisée sans facture et manquerait à l'état.
+
 ### Paie
 
 * Salariés, primes soumises et non soumises à cotisation
@@ -412,7 +430,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
 python3 outils/test_http.py          # 63 contrôles du serveur et de l'interface
-python3 outils/test_comptable.py     # 176 contrôles de conformité comptable
+python3 outils/test_comptable.py     # 228 contrôles de conformité comptable
 python3 app.py --verifier            # intégrité de vos données
 ```
 
@@ -423,7 +441,7 @@ sont constatés au bon moment et que la clôture se déroule correctement.
 Le test de conformité comptable, lui, ne regarde pas l'interface : il attaque
 l'application par ses interfaces de programmation et vérifie les règles qui,
 si elles cèdent, produisent des comptes **faux sans que rien ne le signale**.
-Six familles, lançables séparément
+Huit familles, lançables séparément
 (`python3 outils/test_comptable.py perimetre`) :
 
 | Suite | Ce qu'elle vérifie |
@@ -434,6 +452,8 @@ Six familles, lançables séparément
 | `perimetre` | l'étanchéité entre le déclaré et le hors déclaration |
 | `cycles` | les cycles métier en mouvement : numérotation, saisies simultanées, une avance sur plan qui devient produit à la livraison, un loyer encaissé qui repart chez son propriétaire |
 | `reprises` | annuler un import déjà validé sans laisser de trou dans la numérotation ni effacer ce qui sert déjà |
+| `sante` | les contrôles de santé du dossier, chacun mis à l'épreuve sur une anomalie provoquée pour lui |
+| `annuelles` | la DAS et l'état des clients, et surtout leurs recoupements |
 
 La suite `perimetre` est la plus importante du lot. Chaque montant hors
 déclaration y est un multiple de 7 777, donc reconnaissable ; on vérifie
@@ -477,7 +497,7 @@ web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
 ├── test_http.py            63 contrôles serveur et interface
-├── test_comptable.py       176 contrôles de conformité comptable
+├── test_comptable.py       228 contrôles de conformité comptable
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur
 ├── installer.py            même installation, sans fichier bloqué par les messageries

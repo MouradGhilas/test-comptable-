@@ -19,9 +19,10 @@ from . import maj              # noqa: F401  mise à jour depuis l'application
 from . import incidents        # noqa: F401  signalement d'un problème
 from . import recherche        # noqa: F401  recherche globale, un seul champ
 from . import sante            # noqa: F401  contrôles de santé du dossier
+from . import annuelles        # noqa: F401  DAS et état des clients
 
 __all__ = [
     "systeme", "comptabilite", "tiers", "facturation", "tresorerie", "agence",
     "promotion", "fiscalite", "paie", "immobilisations", "etats", "documents",
-    "fichiers", "rapports", "recherche", "sante",
+    "fichiers", "rapports", "recherche", "sante", "annuelles",
 ]

@@ -20,7 +20,10 @@ Quatre familles :
               simultanees, une avance sur plan qui devient produit a la
               livraison, un loyer encaisse qui repart chez son proprietaire ;
   reprises    annuler un import deja valide sans laisser de trou dans la
-              numerotation ni effacer ce qui sert deja.
+              numerotation ni effacer ce qui sert deja ;
+  sante       les controles de sante du dossier, chacun mis a l'epreuve sur
+              une anomalie provoquee pour lui ;
+  annuelles   la DAS et l'etat des clients, et surtout leurs recoupements.
 
 Usage :
     python outils/test_comptable.py               les quatre suites
@@ -126,14 +129,19 @@ class Dossier:
         self.ouvre = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(pot))
 
-    def appel(self, chemin, corps=None, methode=None):
+    def appel(self, chemin, corps=None, methode=None, brut=False):
+        """Appelle l'application. `brut` rend les octets et le type MIME,
+        pour les documents imprimables et les classeurs."""
         data = json.dumps(corps).encode() if corps is not None else None
         req = urllib.request.Request(
             f"http://127.0.0.1:{self.port}{chemin}", data=data,
             headers={"Content-Type": "application/json"}, method=methode)
         with self.ouvre.open(req, timeout=60) as r:
-            brut = r.read().decode()
-            return json.loads(brut) if brut else {}
+            contenu = r.read()
+            if brut:
+                return contenu, r.headers.get("Content-Type", "")
+            texte = contenu.decode()
+            return json.loads(texte) if texte else {}
 
     def refuse(self, chemin, corps=None, methode=None):
         """Renvoie le message si la requete est refusee, None si elle passe."""
@@ -153,6 +161,16 @@ class Dossier:
         r = [dict(x) for x in c.execute(requete, params).fetchall()]
         c.close()
         return r
+
+    def ecrit(self, requete, params=()):
+        """Écrit directement en base, hors de l'application.
+
+        Sert à abîmer volontairement une donnée pour vérifier qu'un contrôle
+        la voit : l'application, elle, refuserait de la produire."""
+        c = sqlite3.connect(str(self.dossier / "comptabilite.db"))
+        c.execute(requete, params)
+        c.commit()
+        c.close()
 
     def equilibre_global(self):
         t = self.sql("SELECT COALESCE(SUM(debit),0) d, "
@@ -1580,6 +1598,265 @@ def suite_reprises(dos):
           (rt["import_id"],))[0]["annule_note"])
 
 
+def suite_sante(dos):
+    """Sante du dossier : chaque controle doit voir ce qu'il pretend voir.
+
+    Un controle qui ne se declenche jamais ne protege de rien. Chacun est
+    donc mis a l'epreuve sur une anomalie provoquee pour lui.
+    """
+    dos.appel("/api/connexion", {"identifiant": "demo", "mot_de_passe": "demo1234"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    exid = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]["id"]
+
+    def sante():
+        return dos.appel(f"/api/sante?societe={sid}&exercice={exid}")
+
+    def cles(d):
+        return {a["cle"] for a in d["anomalies"]}
+
+    def trouve(d, cle):
+        return next((a for a in d["anomalies"] if a["cle"] == cle), None)
+
+    titre("1. Sur un dossier sain, les contrôles se taisent")
+    d = sante()
+    v("l'écran répond", "anomalies" in d, d)
+    v("la comptabilité est équilibrée", "equilibre" not in cles(d),
+      trouve(d, "equilibre"))
+    v("aucune écriture déséquilibrée", "ecritures_boiteuses" not in cles(d))
+    v("la numérotation est continue", "numerotation" not in cles(d),
+      trouve(d, "numerotation"))
+    v("la caisse n'est jamais passée en négatif", "caisse" not in cles(d),
+      trouve(d, "caisse"))
+    v("aucune facture validée sans écriture",
+      "factures_sans_ecriture" not in cles(d), trouve(d, "factures_sans_ecriture"))
+    v("aucun tiers au solde inversé", "tiers_inverses" not in cles(d),
+      trouve(d, "tiers_inverses"))
+    v("les G50 déposées collent aux comptes", "tva_declaree" not in cles(d),
+      trouve(d, "tva_declaree"))
+    v("chaque anomalie porte une explication",
+      all(a["explication"] for a in d["anomalies"]),
+      [a["cle"] for a in d["anomalies"] if not a["explication"]])
+    v("… et un chemin où aller, sauf mention",
+      all(a["route"] or a["cle"].startswith("panne_") for a in d["anomalies"]),
+      [a["cle"] for a in d["anomalies"] if not a["route"]])
+
+    titre("2. Chaque contrôle voit ce qu'il prétend voir")
+
+    # -- un trou dans la numérotation
+    cible = dos.sql("SELECT e.id, e.numero FROM ecritures e JOIN journaux j "
+                "ON j.id = e.journal_id WHERE j.code = 'BQ' ORDER BY e.id LIMIT 1 "
+                "OFFSET 2")[0]
+    dos.ecrit("DELETE FROM ecritures WHERE id = ?", (cible["id"],))
+    d = sante()
+    v("un numéro manquant est vu", "numerotation" in cles(d),
+      sorted(cles(d)))
+    v("… en disant lequel",
+      any(cible["numero"].rsplit("-", 1)[-1].lstrip("0")
+          in x for x in trouve(d, "numerotation")["detail"]),
+      trouve(d, "numerotation")["detail"][:2])
+
+    # -- une caisse qui part en négatif
+    ex = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "CA", "date": ex["date_debut"],
+        "libelle": "Sortie de caisse impossible",
+        "lignes": [{"compte": "607", "debit": "9000000", "credit": "0"},
+                   {"compte": "53", "debit": "0", "credit": "9000000"}]})
+    d = sante()
+    v("une caisse créditrice est vue", "caisse" in cles(d), sorted(cles(d)))
+    v("… avec le solde le plus bas atteint",
+      trouve(d, "caisse")["montant"] < 0, trouve(d, "caisse"))
+
+    # -- un client créditeur
+    client = dos.sql("SELECT id, raison_sociale FROM tiers WHERE type = 'client' LIMIT 1")[0]
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "OD", "date": ex["date_debut"],
+        "libelle": "Avance client jamais lettrée",
+        "lignes": [{"compte": "512", "debit": "500000", "credit": "0"},
+                   {"compte": "411", "debit": "0", "credit": "500000",
+                    "tiers_id": client["id"]}]})
+    d = sante()
+    v("un client au solde créditeur est vu", "tiers_inverses" in cles(d),
+      sorted(cles(d)))
+    v("… en le nommant",
+      any(client["raison_sociale"] in x
+          for x in trouve(d, "tiers_inverses")["detail"]),
+      trouve(d, "tiers_inverses")["detail"][:3])
+
+    # -- une G50 déposée qui ne colle plus
+    periode = f"{ex['date_debut'][:4]}-03"
+    g = dos.appel(f"/api/g50?societe={sid}&periode={periode}")
+    dos.appel("/api/g50", {"societe_id": sid, "periode": periode,
+                       **{k: v_ for k, v_ in g.items()
+                          if isinstance(v_, int)}})
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "VE", "date": f"{periode}-15",
+        "libelle": "Vente ajoutée après le dépôt",
+        "lignes": [{"compte": "411", "debit": "119000", "credit": "0"},
+                   {"compte": "701", "debit": "0", "credit": "100000"},
+                   {"compte": "4457", "debit": "0", "credit": "19000"}]})
+    d = sante()
+    v("une G50 déposée qui ne colle plus est vue", "tva_declaree" in cles(d),
+      sorted(cles(d)))
+    v("… en disant de combien",
+      "écart" in (trouve(d, "tva_declaree")["detail"][0] if
+                  trouve(d, "tva_declaree") else ""),
+      trouve(d, "tva_declaree"))
+
+    # -- une écriture en brouillon
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "OD", "date": ex["date_debut"],
+        "libelle": "Brouillon à relire", "valider": 0,
+        "lignes": [{"compte": "607", "debit": "1000", "credit": "0"},
+                   {"compte": "401", "debit": "0", "credit": "1000"}]})
+    d = sante()
+    v("un brouillon est signalé", "brouillons" in cles(d), sorted(cles(d)))
+
+    titre("3. Les anomalies sont classées du plus grave au plus anodin")
+    d = sante()
+    poids = {"critique": 0, "alerte": 1, "info": 2}
+    ordre = [poids[a["niveau"]] for a in d["anomalies"]]
+    v("l'ordre est respecté", ordre == sorted(ordre),
+      [a["niveau"] for a in d["anomalies"]])
+    v("le compte des critiques est juste",
+      d["critiques"] == sum(1 for a in d["anomalies"] if a["niveau"] == "critique"))
+
+    titre("4. Un contrôle qui échoue n'emporte pas les autres")
+    dos.ecrit("UPDATE ecritures SET numero = 'CASSÉ' WHERE id = "
+          "(SELECT id FROM ecritures LIMIT 1)")
+    d = sante()
+    v("l'écran répond encore", "anomalies" in d and d["controles"] > 0, d.keys())
+
+
+def suite_annuelles(dos):
+    """DAS et etat des clients : les deux etats de janvier.
+
+    Le travail n'est pas de les remplir -- tout est deja saisi -- c'est de
+    les recouper. Ce sont les recoupements qui sont verifies ici.
+    """
+    dos.appel("/api/connexion", {"identifiant": "demo", "mot_de_passe": "demo1234"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    annee = int(dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]["date_debut"][:4])
+
+    titre("1. La déclaration annuelle des salaires")
+    d = dos.appel(f"/api/declarations/das?societe={sid}&annee={annee}")
+    attendus = dos.sql("SELECT COUNT(DISTINCT salarie_id) n, COUNT(*) b, "
+                   "SUM(salaire_brut) brut, SUM(irg) irg, SUM(net_a_payer) net "
+                   "FROM bulletins WHERE substr(periode,1,4) = ?", (str(annee),))[0]
+    v(f"elle porte les {attendus['n']} salariés payés",
+      len(d["salaries"]) == attendus["n"], len(d["salaries"]))
+    v("… et tous les bulletins de l'année",
+      d["totaux"]["mois"] == attendus["b"],
+      f"{d['totaux']['mois']} au lieu de {attendus['b']}")
+    v("le brut total est celui des bulletins",
+      d["totaux"]["brut"] == attendus["brut"],
+      f"{fm(d['totaux']['brut'])} vs {fm(attendus['brut'])}")
+    v("l'IRG total aussi", d["totaux"]["irg"] == attendus["irg"],
+      f"{fm(d['totaux']['irg'])} vs {fm(attendus['irg'])}")
+    v("le net payé aussi", d["totaux"]["net"] == attendus["net"],
+      f"{fm(d['totaux']['net'])} vs {fm(attendus['net'])}")
+    v("la date limite est celle de l'année suivante",
+      (d["date_limite"] or "").startswith(str(annee + 1)), d["date_limite"])
+    v("chaque salarié porte son matricule et son n° de sécurité sociale",
+      all(s["matricule"] for s in d["salaries"]),
+      [s for s in d["salaries"] if not s["matricule"]][:2])
+
+    titre("2. Le recoupement de l'IRG — ce qui fait la valeur du document")
+    c = d["controle"]
+    v("l'IRG des bulletins est repris tel quel",
+      c["irg_bulletins"] == d["totaux"]["irg"])
+    v("il est comparé au cumul des G50 déposées",
+      c["irg_g50"] == dos.sql("SELECT COALESCE(SUM(irg_salaires),0) s FROM "
+                          "declarations_g50 WHERE substr(periode,1,4) = ?",
+                          (str(annee),))[0]["s"], c)
+    v("… et au compte 4421 de la comptabilité", "irg_comptes" in c, c)
+    v("les écarts sont calculés",
+      c["ecart_g50"] == c["irg_bulletins"] - c["irg_g50"], c)
+
+    # On fausse une G50 : le recoupement doit crier.
+    dos.ecrit("UPDATE declarations_g50 SET irg_salaires = irg_salaires + 100000 "
+          "WHERE periode = ?", (f"{annee}-03",))
+    d2 = dos.appel(f"/api/declarations/das?societe={sid}&annee={annee}")
+    # Le jeu de démonstration ne dépose pas les douze mois : un écart de base
+    # existe donc, et il est légitime — l'écran annonce le nombre de mois
+    # déclarés à côté. On mesure ici le déplacement, pas la valeur absolue.
+    v("une G50 faussée déplace l'écart d'autant",
+      d2["controle"]["ecart_g50"] == c["ecart_g50"] - 100000,
+      f"{d2['controle']['ecart_g50']} au lieu de {c['ecart_g50'] - 100000}")
+    v("… et le nombre de mois déclarés est annoncé",
+      d2["controle"]["mois_declares"] > 0, d2["controle"]["mois_declares"])
+
+    titre("3. L'état des clients")
+    e = dos.appel(f"/api/declarations/etat-clients?societe={sid}&annee={annee}")
+    reels = dos.sql("SELECT COUNT(DISTINCT tiers_id) n, COALESCE(SUM(montant_ht),0) ht "
+                "FROM factures WHERE substr(date,1,4) = ? AND sens = 'vente' "
+                "AND statut NOT IN ('brouillon','annulee') AND perimetre = 'declare'",
+                (str(annee),))[0]
+    v(f"il porte les {reels['n']} client(s) facturés",
+      len(e["clients"]) == reels["n"], len(e["clients"]))
+    v("le total HT est celui des factures", e["totaux"]["ht"] == reels["ht"],
+      f"{fm(e['totaux']['ht'])} vs {fm(reels['ht'])}")
+    v("chaque client porte son identité fiscale",
+      all("nif" in c for c in e["clients"]))
+    v("les clients sont classés du plus gros au plus petit",
+      [c["ttc"] for c in e["clients"]] ==
+      sorted([c["ttc"] for c in e["clients"]], reverse=True),
+      [c["ttc"] for c in e["clients"]])
+
+    titre("4. Le recoupement du chiffre d'affaires")
+    c = e["controle"]
+    v("le total des factures est comparé aux comptes de produits",
+      "ca_comptes" in c and "ecart" in c, c)
+    # Une vente passée en écriture, sans facture : elle doit manquer à l'état.
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "VE", "date": f"{annee}-06-15",
+        "libelle": "Vente comptabilisée sans facture",
+        "lignes": [{"compte": "411", "debit": "119000", "credit": "0"},
+                   {"compte": "701", "debit": "0", "credit": "100000"},
+                   {"compte": "4457", "debit": "0", "credit": "19000"}]})
+    e2 = dos.appel(f"/api/declarations/etat-clients?societe={sid}&annee={annee}")
+    v("une vente sans facture creuse l'écart",
+      e2["controle"]["ecart"] == c["ecart"] - 10000000,
+      f"{e2['controle']['ecart']} vs {c['ecart'] - 10000000}")
+
+    titre("5. Le seuil écarte les petits clients")
+    gros = max(x["ttc"] for x in e["clients"]) if e["clients"] else 0
+    seuil = dos.appel(f"/api/declarations/etat-clients?societe={sid}&annee={annee}"
+                  f"&seuil={gros // 100}")
+    v("un seuil ne garde que ce qui l'atteint",
+      all(x["ttc"] >= gros for x in seuil["clients"]),
+      [x["ttc"] for x in seuil["clients"]])
+    v("… et dit combien il a écarté",
+      seuil["ecartes"] == len(e["clients"]) - len(seuil["clients"]),
+      f"{seuil['ecartes']}")
+
+    titre("6. Les documents produits")
+    html, mime = dos.appel(f"/api/declarations/das/impression?societe={sid}"
+                       f"&annee={annee}", brut=True)
+    texte = html.decode()
+    v("la DAS imprimable est une page HTML", "text/html" in mime, mime)
+    v("… titrée comme il faut", "DÉCLARATION ANNUELLE DES SALAIRES" in texte)
+    v("… avec la série G n° 29", "G n° 29" in texte)
+    v("… et le recoupement sur le papier",
+      "Recoupement de l'IRG retenu" in texte, texte[:200])
+    v("… et le rappel de vérifier les taux",
+      "loi de finances" in texte)
+
+    html, mime = dos.appel(f"/api/declarations/etat-clients/impression?societe={sid}"
+                       f"&annee={annee}", brut=True)
+    texte = html.decode()
+    v("l'état des clients imprimable aussi", "ÉTAT DES CLIENTS" in texte)
+    v("… avec son recoupement",
+      "Recoupement du chiffre d'affaires" in texte)
+
+    for chemin, nom in ((f"/api/export/das?societe={sid}&annee={annee}", "DAS"),
+                        (f"/api/export/etat-clients?societe={sid}&annee={annee}",
+                         "état des clients")):
+        octets, mime = dos.appel(chemin, brut=True)
+        v(f"l'export {nom} est un classeur",
+          "spreadsheetml" in mime and octets[:2] == b"PK", mime)
+
+
 SUITES = [
     ("conformite", "Conformite comptable -- une annee tenue", suite_conformite, True),
     ("limites", "Ce que le logiciel doit refuser", suite_limites, False),
@@ -1587,6 +1864,8 @@ SUITES = [
     ("perimetre", "Etancheite declare / hors declaration", suite_perimetre, False),
     ("cycles", "Cycles metier en mouvement et numerotation", suite_cycles, True),
     ("reprises", "Annuler un import deja valide", suite_reprises, False),
+    ("sante", "Controles de sante du dossier", suite_sante, True),
+    ("annuelles", "DAS et etat des clients", suite_annuelles, True),
 ]
 
 

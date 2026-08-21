@@ -3,6 +3,26 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.7.4
+
+- **Les deux déclarations de janvier**, dans Fiscalité → « Déclarations
+  annuelles ». Elles ne se saisissent pas : tout est déjà dans le dossier.
+- La **déclaration annuelle des salaires** (série G n° 29) récapitule chaque
+  salarié — matricule, n° de sécurité sociale, mois payés, brut, CNAS, base
+  IRG, IRG retenu, net payé — avec les totaux et la date limite.
+- L'**état des clients** liste les ventes de l'année par client, avec son
+  identité fiscale (NIF, RC, article d'imposition). Un client sans NIF est
+  signalé : l'identifiant est attendu sur cet état. Un seuil permet d'écarter
+  les petits montants, et l'écran dit combien il a écarté.
+- **Chacun porte son recoupement**, à l'écran et sur le papier. C'est ce qui
+  fait leur valeur : pour la DAS, les bulletins, le cumul des G50 déposées et
+  le compte 4421 doivent porter le même IRG — un écart signale un mois
+  déclaré autrement qu'il n'a été payé. Pour l'état des clients, le total des
+  factures doit égaler les comptes de produits — un écart signale une vente
+  comptabilisée sans facture, qui manquerait à l'état.
+- Les deux s'impriment à l'en-tête de la société, avec emplacement de cachet
+  et de signature, et s'exportent vers Excel.
+
 ## 1.7.3
 
 - **Santé du dossier**, nouvel écran dans la rubrique Clôture. Dix contrôles

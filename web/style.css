@@ -729,3 +729,7 @@ button.choix-apparence.actif:hover { background: var(--primaire-clair);
                      border-color: var(--primaire); }
 .points-aide { margin: 10px 0; padding-left: 20px; }
 .points-aide li { margin-bottom: 9px; line-height: 1.6; }
+
+/* Une ligne de recoupement qui ne tombe pas juste doit sauter aux yeux :
+   c'est tout l'intérêt du recoupement. */
+tr.ecart-recoupement td { background: var(--danger-fond); }

@@ -7,16 +7,19 @@ App.pages.fiscalite = {
   async afficher(zone, route) {
     const vue = route.segments[1] || 'g50';
     const onglets = [['g50', 'Déclaration G50'], ['tva', 'Livres de TVA'],
-      ['ibs', 'IBS'], ['obligations', 'Calendrier'], ['parametres', 'Taux et barèmes']];
+      ['ibs', 'IBS'], ['annuelles', 'Déclarations annuelles'],
+      ['obligations', 'Calendrier'], ['parametres', 'Taux et barèmes']];
     zone.innerHTML = `<div class="onglets">${onglets.map(([v, l]) =>
       `<button class="${v === vue ? 'actif' : ''}" onclick="navigue('/fiscalite/${v}')">${l}</button>`).join('')}</div>
       <div id="vue-fisc"><div class="vide">Chargement…</div></div>`;
-    const vues = { g50: vueG50, tva: vueLivreTva, ibs: vueIbs, obligations: vueObligations, parametres: vueParametresFiscaux };
+    const vues = { g50: vueG50, tva: vueLivreTva, ibs: vueIbs,
+      annuelles: vueAnnuelles, obligations: vueObligations,
+      parametres: vueParametresFiscaux };
     await (vues[vue] || vueG50)($('#vue-fisc'), route);
   },
 };
 
-['g50', 'tva', 'ibs', 'obligations', 'parametres'].forEach((v) => {
+['g50', 'tva', 'ibs', 'annuelles', 'obligations', 'parametres'].forEach((v) => {
   App.pages[`fiscalite/${v}`] = App.pages.fiscalite;
 });
 
@@ -814,4 +817,151 @@ function retireTrancheBareme(bouton) {
   if (!zone.querySelectorAll('[data-tranche]').length) {
     zone.innerHTML = lignesBareme([{ plafond: null, taux: 0 }]);
   }
+}
+
+/* ------------------------------------------------ Déclarations annuelles --
+
+   Deux documents que rien n'aidait à produire, et qui coûtent plusieurs
+   jours chaque janvier. Le travail n'est pas de les remplir — tout est déjà
+   saisi — c'est de les recouper. Le recoupement est donc à l'écran, et sur
+   le papier. */
+
+async function vueAnnuelles(zone, route) {
+  const annee = route.parametres.annee
+    || String(App.etat.exercice?.date_debut || aujourdhui()).slice(0, 4);
+  const seuil = route.parametres.seuil || '';
+  const [das, clients] = await Promise.all([
+    charge('/api/declarations/das', { annee }),
+    charge('/api/declarations/etat-clients', { annee, seuil }),
+  ]);
+
+  zone.innerHTML = `
+    <div class="barre-outils">
+      <label class="champ"><span>Année</span>
+        <input id="an-annee" type="number" value="${ech(annee)}" style="width:110px"></label>
+      <label class="champ"><span>Seuil état des clients (DA)</span>
+        <input id="an-seuil" value="${ech(seuil)}" placeholder="tous"></label>
+      <button onclick="filtreAnnuelles()">Afficher</button>
+    </div>
+
+    <div class="message alerte">
+      <strong>Ces deux états se déposent, ils ne se devinent pas</strong>
+      Le seuil de l'état des clients, la date limite de la DAS et les taux
+      employés sont ceux enregistrés dans Paramètres → Fiscalité. Comparez-les
+      à la loi de finances de l'année avant de déposer.
+    </div>
+
+    ${carteDas(das, annee)}
+    ${carteEtatClients(clients, annee, seuil)}`;
+}
+
+function ligneRecoupement(libelle, valeur, ecart) {
+  return `<tr class="${ecart ? 'ecart-recoupement' : ''}">
+    <td>${ech(libelle)}</td>
+    <td class="num">${fm(valeur)}</td>
+    <td>${ecart ? `<span class="rouge">écart de ${fm(Math.abs(ecart))}</span>`
+                : '<span class="vert">✓</span>'}</td></tr>`;
+}
+
+function carteDas(d, annee) {
+  const t = d.totaux;
+  const c = d.controle;
+  return carte(`Déclaration annuelle des salaires ${annee}`, `
+    <p class="petit">Série G n° 29${d.date_limite
+      ? ` — à déposer avant le <strong>${ech(fdate(d.date_limite))}</strong>`
+      : ''}. Établie à partir des ${t.mois} bulletin(s) de l'année.</p>
+
+    ${tableau([
+      { titre: 'Matricule', cle: 'matricule', largeur: '100px' },
+      { titre: 'Nom et prénom', rendu: (s) => `${ech(s.nom)} ${ech(s.prenom)}` },
+      { titre: 'N° sécurité sociale', cle: 'num_secu' },
+      { titre: 'Mois', classe: 'num', largeur: '60px', cle: 'mois' },
+      { titre: 'Brut', classe: 'num', rendu: (s) => fm(s.brut) },
+      { titre: 'CNAS salarié', classe: 'num', rendu: (s) => fm(s.cnas_salarie) },
+      { titre: 'Base IRG', classe: 'num', rendu: (s) => fm(s.base_irg) },
+      { titre: 'IRG retenu', classe: 'num', rendu: (s) => fm(s.irg) },
+      { titre: 'Net payé', classe: 'num', rendu: (s) => fm(s.net) },
+    ], d.salaries, {
+      icone: '💼',
+      messageVide: `Aucun bulletin de paie sur ${annee}.`,
+      pied: [
+        { contenu: `<strong>${d.salaries.length} salarié(s)</strong>` }, {}, {},
+        { classe: 'num', contenu: String(t.mois) },
+        { classe: 'num', contenu: fm(t.brut) },
+        { classe: 'num', contenu: fm(t.cnas_salarie) },
+        { classe: 'num', contenu: fm(t.base_irg) },
+        { classe: 'num', contenu: fm(t.irg) },
+        { classe: 'num', contenu: fm(t.net) },
+      ],
+    })}
+
+    <p class="petit" style="margin-top:12px"><strong>Recoupement de l'IRG
+    retenu</strong> — les trois lignes doivent porter le même montant. Un écart
+    signale un mois déclaré autrement qu'il n'a été payé.</p>
+    <table class="tableau"><tbody>
+      ${ligneRecoupement('Total des bulletins de l\'année', c.irg_bulletins, 0)}
+      ${ligneRecoupement(`Cumul des G50 déposées (${c.mois_declares} mois)`,
+                         c.irg_g50, c.ecart_g50)}
+      ${ligneRecoupement('Compte 4421 « IRG salaires »', c.irg_comptes,
+                         c.ecart_comptes)}
+    </tbody></table>`,
+    `<button onclick="telecharge('/api/declarations/das/impression',{annee:'${annee}'})">Imprimer</button>
+     <button onclick="telecharge('/api/export/das',{annee:'${annee}'})">Exporter</button>`);
+}
+
+function carteEtatClients(d, annee, seuil) {
+  const t = d.totaux;
+  const c = d.controle;
+  return carte(`État des clients ${annee}`, `
+    <p class="petit">Annexé à la déclaration annuelle de résultat. Établi sur
+    les factures de vente du périmètre <strong>déclaré</strong>${
+      d.seuil ? `, au-dessus de ${fm(d.seuil, true)} — ${d.ecartes} client(s)
+      écarté(s)` : ''}.</p>
+
+    ${c.sans_nif.length ? `<div class="message alerte">
+      <strong>${c.sans_nif.length} client(s) sans NIF</strong>
+      L'identifiant fiscal du client est attendu sur cet état :
+      ${ech(c.sans_nif.slice(0, 8).join(', '))}${c.sans_nif.length > 8 ? '…' : ''}.
+      </div>` : ''}
+
+    ${tableau([
+      { titre: 'Client', rendu: (x) => `<strong>${ech(x.raison_sociale
+        || '(client non renseigné)')}</strong>` },
+      { titre: 'NIF', cle: 'nif' },
+      { titre: 'RC', cle: 'rc' },
+      { titre: 'Commune', cle: 'commune' },
+      { titre: 'Factures', classe: 'num', largeur: '80px', cle: 'nb_factures' },
+      { titre: 'Montant HT', classe: 'num', rendu: (x) => fm(x.ht) },
+      { titre: 'TVA', classe: 'num', rendu: (x) => fm(x.tva) },
+      { titre: 'Montant TTC', classe: 'num', rendu: (x) => fm(x.ttc) },
+    ], d.clients, {
+      icone: '🧾',
+      messageVide: `Aucune vente facturée sur ${annee}.`,
+      pied: [
+        { contenu: '<strong>TOTAL</strong>' }, {}, {}, {},
+        { classe: 'num', contenu: String(t.nb_factures) },
+        { classe: 'num', contenu: fm(t.ht) },
+        { classe: 'num', contenu: fm(t.tva) },
+        { classe: 'num', contenu: fm(t.ttc) },
+      ],
+    })}
+
+    <p class="petit" style="margin-top:12px"><strong>Recoupement du chiffre
+    d'affaires</strong> — un écart signale une vente comptabilisée sans
+    facture : elle manquerait à cet état.</p>
+    <table class="tableau"><tbody>
+      ${ligneRecoupement('Total HT des factures de vente', c.ht_factures, 0)}
+      ${ligneRecoupement('Comptes de produits (classe 70)', c.ca_comptes, c.ecart)}
+    </tbody></table>`,
+    `<button onclick="telecharge('/api/declarations/etat-clients/impression',
+       {annee:'${annee}',seuil:'${ech(seuil)}'})">Imprimer</button>
+     <button onclick="telecharge('/api/export/etat-clients',
+       {annee:'${annee}',seuil:'${ech(seuil)}'})">Exporter</button>`);
+}
+
+function filtreAnnuelles() {
+  const p = new URLSearchParams();
+  if ($('#an-annee').value) p.set('annee', $('#an-annee').value);
+  if ($('#an-seuil').value) p.set('seuil', $('#an-seuil').value);
+  navigue(`/fiscalite/annuelles?${p}`);
 }

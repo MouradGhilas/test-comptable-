@@ -757,3 +757,164 @@ def api_releve_tiers_impression(ctx):
       <div><div class="ligne">{e(soc.get('raison_sociale'))}</div></div>
     </div>"""
     return reponse_html(page(f"Relevé {t['raison_sociale']}", corps))
+
+
+# ---------------------------------------------------------------------------
+# Déclarations annuelles : DAS et état des clients
+# ---------------------------------------------------------------------------
+
+#: Titres des blocs de recoupement, sortis des f-strings : une apostrophe
+#: échappée n'y est pas permise avant Python 3.12.
+CONTROLE_IRG = "Recoupement de l'IRG retenu"
+CONTROLE_CA = "Recoupement du chiffre d'affaires"
+
+
+def _bloc_controle(titre_bloc: str, lignes: list[tuple[str, str, bool]]) -> str:
+    """Le recoupement, affiché sur le document lui-même.
+
+    Un état qu'on dépose sans l'avoir recoupé, c'est un état qu'on découvre
+    faux au contrôle. Les écarts figurent donc sur le papier."""
+    rangs = "".join(
+        f'<tr><td>{e(libelle)}</td><td class="num">{e(valeur)}</td>'
+        f'<td>{"⚠ à justifier" if alerte else "✓"}</td></tr>'
+        for libelle, valeur, alerte in lignes)
+    return f"""<table><thead><tr><th colspan="3">{e(titre_bloc)}</th></tr></thead>
+      <tbody>{rangs}</tbody></table>"""
+
+
+@route("GET", "/api/declarations/das/impression")
+def api_das_impression(ctx):
+    from modules import annuelles
+    societe_id = ctx.arg_int("societe")
+    annee = int(ctx.arg("annee") or util.aujourdhui()[:4])
+    d = annuelles.declaration_salaires(societe_id, annee)
+    soc, t, c = d["societe"], d["totaux"], d["controle"]
+
+    rangs = "".join(f"""<tr>
+        <td>{e(s['matricule'])}</td>
+        <td>{e(s['nom'])} {e(s['prenom'])}</td>
+        <td>{e(s['num_secu'] or '')}</td>
+        <td class="num">{s['mois']}</td>
+        <td class="num">{montant(s['brut'])}</td>
+        <td class="num">{montant(s['cnas_salarie'])}</td>
+        <td class="num">{montant(s['base_irg'])}</td>
+        <td class="num">{montant(s['irg'])}</td>
+        <td class="num">{montant(s['net'])}</td></tr>""" for s in d["salaries"])
+
+    corps = f"""
+    <div class="entete">{bloc_societe(soc)}
+      <div class="doc"><div class="badge">DÉCLARATION ANNUELLE DES SALAIRES</div>
+        <div style="margin-top:8px">Exercice {annee}</div>
+        <div class="mentions">Série G n° 29
+        {' — à déposer avant le ' + e(util.date_fr(d['date_limite']))
+         if d['date_limite'] else ''}</div>
+      </div></div>
+
+    <table><thead><tr>
+      <th>Matricule</th><th>Nom et prénom</th><th>N° sécurité sociale</th>
+      <th class="num">Mois</th><th class="num">Salaire brut</th>
+      <th class="num">CNAS salarié</th><th class="num">Base IRG</th>
+      <th class="num">IRG retenu</th><th class="num">Net payé</th>
+    </tr></thead><tbody>
+      {rangs or '<tr><td colspan="9"><em>Aucun bulletin sur cette année.</em></td></tr>'}
+      <tr class="total-ligne"><td colspan="3">TOTAUX — {len(d['salaries'])} salarié(s)</td>
+        <td class="num">{t['mois']}</td>
+        <td class="num">{montant(t['brut'])}</td>
+        <td class="num">{montant(t['cnas_salarie'])}</td>
+        <td class="num">{montant(t['base_irg'])}</td>
+        <td class="num">{montant(t['irg'])}</td>
+        <td class="num">{montant(t['net'])}</td></tr>
+    </tbody></table>
+
+    {_bloc_controle(CONTROLE_IRG, [
+        ("Total des bulletins de l'année", montant(c["irg_bulletins"]) + " DA", False),
+        (f"Cumul des G50 déposées ({c['mois_declares']} mois)",
+         montant(c['irg_g50']) + ' DA', bool(c['ecart_g50'])),
+        ('Compte 4421 « IRG salaires »', montant(c['irg_comptes']) + ' DA',
+         bool(c['ecart_comptes'])),
+    ])}
+
+    <div class="mentions">Cette déclaration est établie à partir des bulletins
+      de paie enregistrés dans le dossier. Les trois lignes de recoupement
+      ci-dessus doivent porter le même montant : un écart signale un mois
+      déclaré autrement qu'il n'a été payé, et doit être justifié avant dépôt.
+      Les taux et la date limite sont ceux enregistrés dans les paramètres
+      fiscaux : vérifiez-les contre la loi de finances de l'année.</div>
+
+    <div class="signature">
+      <div><div class="ligne">Cachet et signature</div></div>
+      <div><div class="ligne">Fait à {e(soc.get('commune') or '')}, le
+        {e(util.date_fr(util.aujourdhui()))}</div></div>
+    </div>"""
+    return reponse_html(page(f"DAS {annee} — {soc['raison_sociale']}", corps))
+
+
+@route("GET", "/api/declarations/etat-clients/impression")
+def api_etat_clients_impression(ctx):
+    from modules import annuelles
+    societe_id = ctx.arg_int("societe")
+    annee = int(ctx.arg("annee") or util.aujourdhui()[:4])
+    d = annuelles.etat_clients(societe_id, annee,
+                               util.centimes(ctx.arg("seuil") or 0))
+    soc, t, c = d["societe"], d["totaux"], d["controle"]
+
+    rangs = "".join(f"""<tr>
+        <td>{e(cl['raison_sociale'] or '(client non renseigné)')}</td>
+        <td>{e(cl['nif'] or '')}</td><td>{e(cl['rc'] or '')}</td>
+        <td>{e(cl['article_imposition'] or '')}</td>
+        <td>{e(cl['adresse'] or '')} {e(cl['commune'] or '')}</td>
+        <td class="num">{cl['nb_factures']}</td>
+        <td class="num">{montant(cl['ht'])}</td>
+        <td class="num">{montant(cl['tva'])}</td>
+        <td class="num">{montant(cl['ttc'])}</td></tr>""" for cl in d["clients"])
+
+    corps = f"""
+    <div class="entete">{bloc_societe(soc)}
+      <div class="doc"><div class="badge">ÉTAT DES CLIENTS</div>
+        <div style="margin-top:8px">Exercice {annee}</div>
+        <div class="mentions">{len(d['clients'])} client(s)
+        {f"· seuil {montant(d['seuil'])} DA, {d['ecartes']} écarté(s)"
+         if d['seuil'] else ''}</div>
+      </div></div>
+
+    <table class="releve"><colgroup>
+      <col style="width:20%"><col style="width:11%"><col style="width:10%">
+      <col style="width:9%"><col style="width:18%"><col style="width:5%">
+      <col style="width:9%"><col style="width:8%"><col style="width:10%">
+      </colgroup><thead><tr>
+      <th>Client</th><th>NIF</th><th>RC</th><th>Art. imp.</th><th>Adresse</th>
+      <th class="num">Fact.</th><th class="num">Montant HT</th>
+      <th class="num">TVA</th><th class="num">Montant TTC</th>
+    </tr></thead><tbody>
+      {rangs or '<tr><td colspan="9"><em>Aucune vente sur cette année.</em></td></tr>'}
+      <tr class="total-ligne"><td colspan="5">TOTAUX</td>
+        <td class="num">{t['nb_factures']}</td>
+        <td class="num">{montant(t['ht'])}</td>
+        <td class="num">{montant(t['tva'])}</td>
+        <td class="num">{montant(t['ttc'])}</td></tr>
+    </tbody></table>
+
+    {_bloc_controle(CONTROLE_CA, [
+        ("Total HT des factures de vente", montant(c["ht_factures"]) + " DA", False),
+        ('Comptes de produits (classe 70)', montant(c['ca_comptes']) + ' DA',
+         bool(c['ecart'])),
+    ])}
+
+    {'' if not c['sans_nif'] else f'''
+    <div class="lettres">{len(c['sans_nif'])} client(s) sans NIF :
+      {e(', '.join(c['sans_nif'][:10]))}{'…' if len(c['sans_nif']) > 10 else ''}.
+      L'identifiant fiscal du client est attendu sur cet état.</div>'''}
+
+    <div class="mentions">Cet état est établi à partir des factures de vente
+      du dossier, périmètre déclaré. Un écart avec les comptes de produits
+      signale une vente comptabilisée sans facture : elle manquerait à cet
+      état. Le seuil applicable, s'il en existe un, est à vérifier contre la
+      loi de finances de l'année.</div>
+
+    <div class="signature">
+      <div><div class="ligne">Cachet et signature</div></div>
+      <div><div class="ligne">Fait à {e(soc.get('commune') or '')}, le
+        {e(util.date_fr(util.aujourdhui()))}</div></div>
+    </div>"""
+    return reponse_html(page(f"État des clients {annee} — {soc['raison_sociale']}",
+                             corps))

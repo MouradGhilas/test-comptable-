@@ -284,6 +284,25 @@ const AIDES = {
       + '<strong>Vérifiez-les</strong> contre la loi de finances de l\'année.',
     ],
   },
+  '/fiscalite/annuelles': {
+    titre: 'Déclarations annuelles',
+    quoi: 'La déclaration annuelle des salaires (série G n° 29) et l\'état '
+        + 'des clients, tous deux déduits de ce que vous avez déjà saisi.',
+    points: [
+      'La DAS récapitule, salarié par salarié, ce qui a été payé et l\'IRG '
+      + 'retenu. Le <strong>recoupement</strong> doit tomber juste : les '
+      + 'bulletins, les douze G50 déposées et le compte 4421 doivent porter '
+      + 'le même IRG. Un écart signale un mois déclaré autrement qu\'il n\'a '
+      + 'été payé.',
+      'L\'état des clients liste les ventes de l\'année par client, avec son '
+      + 'identité fiscale. Un client sans NIF y est signalé : l\'identifiant '
+      + 'est attendu sur cet état.',
+      'Si le total des factures diffère des comptes de produits, une vente a '
+      + 'été comptabilisée sans facture : elle manquerait à l\'état.',
+      'Le seuil applicable et la date limite viennent des paramètres '
+      + 'fiscaux : <strong>vérifiez-les</strong> contre la loi de finances.',
+    ],
+  },
   '/fiscalite/obligations': {
     titre: 'Calendrier fiscal',
     quoi: 'Les échéances déclaratives du dossier, à faire, faites ou en '
