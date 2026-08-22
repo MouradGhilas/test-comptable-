@@ -2327,15 +2327,37 @@ PROG-NEUF;Résidence Les Oliviers;Hydra;16 Alger;3200;48
         "societe_id": sid, "modele": "lots", "contenu": b64(SANS_PROG)})
     v("un lot sans programme reste une anomalie", bool(a["anomalies"]),
       a["anomalies"])
+    # Un reglement sans facture, lui, n'est plus une anomalie du tout :
+    # l'argent est entre. Il est repris non affecte, et se rattachera seul.
     REGLEMENTS = """N° facture;Date;Montant;Sens
-FV-INCONNUE;01/06/{a};50000;encaissement
+FV-ATTENDUE;01/06/{a};119000;encaissement
 """.format(a=annee)
     a = dos.appel("/api/import/analyse", {
         "societe_id": sid, "modele": "reglements", "contenu": b64(REGLEMENTS)})
-    v("un reglement sans sa facture reste une anomalie", bool(a["anomalies"]),
-      a["anomalies"])
-    v("… et le message dit pourquoi, pas « importez d'abord »",
-      "se rattache" in str(a["anomalies"]), a["anomalies"])
+    v("un reglement sans sa facture n'est plus une anomalie",
+      not a["anomalies"], a["anomalies"])
+    v("… il est annonce comme non affecte", a.get("nb_non_affectes") == 1, a)
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "reglements", "contenu": b64(REGLEMENTS)})
+    v("… et il est bien enregistre", r["crees"] == 1, r)
+    reg = dos.sql("SELECT * FROM reglements WHERE societe_id = ?", (sid,))
+    v("… sans facture, mais en gardant son numero",
+      len(reg) == 1 and reg[0]["facture_id"] is None
+      and reg[0]["reference_facture"] == "FV-ATTENDUE", reg)
+
+    FACTURE = """N° facture;Date;Tiers;Désignation;Quantité;Prix unitaire;Taux TVA
+FV-ATTENDUE;01/06/{a};ETS BENALI;Prestation;1;100000;19
+""".format(a=annee)
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "factures_vente", "contenu": b64(FACTURE)})
+    v("la facture arrivee rattache le reglement qui l'attendait",
+      r.get("rattaches") == 1, r)
+    reg = dos.sql("SELECT * FROM reglements WHERE societe_id = ?", (sid,))
+    v("… le reglement pointe maintenant sa facture",
+      reg[0]["facture_id"] is not None, reg[0])
+    fac = dos.sql("SELECT * FROM factures WHERE numero = 'FV-ATTENDUE'")
+    v("… et la facture est soldee",
+      fac and fac[0]["montant_regle"] == fac[0]["net_a_payer"], fac)
 
     # ==================================================================
     titre("8. La sante du dossier compte ce qui reste a remplir")
@@ -2375,6 +2397,185 @@ FV-INCONNUE;01/06/{a};50000;encaissement
     v("la comptabilite reste equilibree", dos.equilibre_global())
 
 
+def suite_attente(dos):
+    """Rien n'est refuse, rien n'est perdu.
+
+    Un comptable experimente n'a pas besoin qu'on lui apprenne l'ordre des
+    choses ni qu'on lui rende son fichier. Ce que l'application ne sait pas
+    ecrire tout de suite attend dans l'application, avec ses valeurs, se
+    corrige sur place, et repart tout seul des que ce qui lui manquait
+    existe. Le seul refus qui subsiste est celui qui produirait des comptes
+    faux.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "c", "mot_de_passe": "motdepasse123", "nom_complet": "X",
+        "raison_sociale": "SARL ATTENTE", "nif": "000116001234567",
+        "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    annee = int(dos.appel(f"/api/exercices?societe={sid}")
+                ["exercices"][0]["date_debut"][:4])
+
+    ECR = """N° écriture;Date;Journal;Libellé;Compte;Tiers;Débit;Crédit
+1;15/03/{a};OD;Achat correct;607;;12000;
+1;;;;401;;;12000
+2;16/03/{a};OD;Ecriture desequilibree;607;;5000;
+2;;;;401;;;4000
+3;17/03/{a};OD;Vente correcte;411;;25000;
+3;;;;701;;;25000
+""".format(a=annee)
+
+    # ==================================================================
+    titre("1. Un fichier n'est plus refuse en bloc")
+    # ==================================================================
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "ecritures", "contenu": b64(ECR),
+        "fichier": "journal.csv"})
+    v("les ecritures saines sont ecrites", r["crees"] == 2, r)
+    v("… celles qui posent question sont mises de cote",
+      r.get("en_attente") == 2, r)
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+    v("… et le desequilibre n'est pas entre en base",
+      dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == 2)
+
+    # ==================================================================
+    titre("2. Ce qui attend garde ses valeurs, telles qu'elles etaient")
+    # ==================================================================
+    att = dos.appel(f"/api/attente?societe={sid}")
+    v("les deux lignes de l'ecriture attendent ensemble",
+      att["nombre"] == 2, att)
+    v("… avec le nom du fichier d'origine",
+      all(l["fichier"] == "journal.csv" for l in att["lignes"]), att["lignes"])
+    v("… leurs numeros de ligne",
+      [l["ligne"] for l in att["lignes"]] == [4, 5], att["lignes"])
+    v("… les en-tetes du fichier",
+      att["lignes"][0]["entetes"][0].startswith("N°"),
+      att["lignes"][0]["entetes"])
+    v("… les valeurs brutes",
+      att["lignes"][0]["valeurs"][6] == "5000", att["lignes"][0]["valeurs"])
+    v("… et la raison, en clair",
+      "quilibr" in (att["lignes"][0]["raison"] or ""),
+      att["lignes"][0]["raison"])
+
+    # ==================================================================
+    titre("3. On corrige dans l'application, pas dans le tableur")
+    # ==================================================================
+    corrections = []
+    for ligne in att["lignes"]:
+        valeurs = list(ligne["valeurs"])
+        if valeurs[7] == "4000":
+            valeurs[7] = "5000"
+        corrections.append({"id": ligne["id"], "valeurs": valeurs})
+    r = dos.appel("/api/attente/corriger",
+                  {"societe_id": sid, "lignes": corrections})
+    v("les deux lignes sont reprises", r["repris"] == 2, r)
+    v("… plus rien n'attend", r["restants"] == 0, r)
+    v("l'ecriture est maintenant en base",
+      dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == 3)
+    v("… numerotee a la suite, sans trou",
+      [e["numero"][-5:] for e in dos.sql(
+          "SELECT numero FROM ecritures ORDER BY id")] ==
+      ["00001", "00002", "00003"],
+      dos.sql("SELECT numero FROM ecritures ORDER BY id"))
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+    v("la liste d'attente est vide",
+      dos.appel(f"/api/attente?societe={sid}")["nombre"] == 0)
+
+    # ==================================================================
+    titre("4. Ce qui attend quelque chose repart tout seul")
+    # ==================================================================
+    # Les quittances avant les baux : la quittance attend, puis passe des
+    # que le bail existe -- sans que personne n'ait a y penser.
+    QUITTANCES = """N° quittance;Bail;Période;Date d'échéance;Loyer;Total
+QT-001;BX-900;{a}-04;05/04/{a};45000;45000
+""".format(a=annee)
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "quittances", "contenu": b64(QUITTANCES),
+        "fichier": "quittances.csv"})
+    v("une quittance sans son bail est mise de cote",
+      r.get("en_attente") == 1, r)
+    v("… et rien n'a ete invente",
+      dos.sql("SELECT COUNT(*) n FROM quittances")[0]["n"] == 0)
+
+    BIENS = """Référence;Désignation;Type
+APT-900;F3 Hydra;appartement
+"""
+    dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "biens", "contenu": b64(BIENS)})
+    BAUX = """N° bail;Bien;Locataire;Date de début;Loyer mensuel
+BX-900;APT-900;CHERIF Sofiane;01/01/{a};45000
+""".format(a=annee)
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "baux", "contenu": b64(BAUX),
+        "fichier": "baux.csv"})
+    v("le bail arrive plus tard", r["crees"] == 1, r)
+    v("… et la quittance qui l'attendait est reprise d'elle-meme",
+      r.get("repris") == 1, r)
+    v("… elle est bien en base",
+      dos.sql("SELECT COUNT(*) n FROM quittances")[0]["n"] == 1)
+    v("plus rien n'attend",
+      dos.appel(f"/api/attente?societe={sid}")["nombre"] == 0)
+
+    # ==================================================================
+    titre("5. Un encaissement sans facture reste un encaissement")
+    # ==================================================================
+    REG = """N° facture;Date;Montant;Sens;Compte de trésorerie
+FV-900;20/05/{a};119000;encaissement;BNA
+""".format(a=annee)
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "reglements", "contenu": b64(REG)})
+    v("il est enregistre, pas refuse", r["crees"] == 1, r)
+    v("… annonce comme non affecte", r.get("non_affectes") == 1, r)
+    v("le compte de tresorerie inconnu a ete cree",
+      dos.sql("SELECT COUNT(*) n FROM comptes_tresorerie WHERE code = 'BNA'"
+              )[0]["n"] == 1)
+    v("… en restant a completer",
+      dos.sql("SELECT incomplet FROM comptes_tresorerie WHERE code = 'BNA'"
+              )[0]["incomplet"] == 1)
+
+    FAC = """N° facture;Date;Tiers;Désignation;Quantité;Prix unitaire;Taux TVA
+FV-900;18/05/{a};ETS BENALI;Prestation;1;100000;19
+""".format(a=annee)
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "factures_vente", "contenu": b64(FAC)})
+    v("la facture rattache le reglement qui l'attendait",
+      r.get("rattaches") == 1, r)
+    fac = dos.sql("SELECT * FROM factures WHERE numero = 'FV-900'")[0]
+    v("… la facture est soldee",
+      fac["montant_regle"] == fac["net_a_payer"], fac)
+    v("… et son statut le dit", fac["statut"] == "reglee", fac["statut"])
+
+    # ==================================================================
+    titre("6. Ce qui produirait des comptes faux reste refuse")
+    # ==================================================================
+    # Ne rien bloquer ne veut pas dire tout accepter : une ligne fausse ne
+    # devient jamais une ecriture, elle attend d'etre corrigee.
+    FAUX = """N° écriture;Date;Journal;Libellé;Compte;Débit;Crédit
+9;32/13/{a};OD;Date impossible;607;1000;
+9;;;;401;;1000
+""".format(a=annee)
+    avant = dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"]
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "ecritures", "contenu": b64(FAUX)})
+    v("une date impossible ne devient pas une ecriture",
+      dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == avant, r)
+    v("… elle attend d'etre corrigee", r.get("en_attente") == 2, r)
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("7. On peut aussi renoncer a une ligne")
+    # ==================================================================
+    att = dos.appel(f"/api/attente?societe={sid}")
+    ids = [l["id"] for l in att["lignes"]]
+    r = dos.appel("/api/attente", {"societe_id": sid, "ids": ids},
+                  methode="DELETE")
+    v("les lignes retirees le sont vraiment", r["retires"] == len(ids), r)
+    v("… et la liste est vide",
+      dos.appel(f"/api/attente?societe={sid}")["nombre"] == 0)
+    v("la comptabilite n'a pas bouge",
+      dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == avant)
+    v("… et reste equilibree", dos.equilibre_global())
+
+
 SUITES = [
     ("conformite", "Conformite comptable -- une annee tenue", suite_conformite, True),
     ("limites", "Ce que le logiciel doit refuser", suite_limites, False),
@@ -2383,6 +2584,7 @@ SUITES = [
     ("cycles", "Cycles metier en mouvement et numerotation", suite_cycles, True),
     ("reprises", "Annuler un import deja valide", suite_reprises, False),
     ("creation", "L'import cree ce dont il a besoin", suite_creation, False),
+    ("attente", "Rien n'est refuse, rien n'est perdu", suite_attente, False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),

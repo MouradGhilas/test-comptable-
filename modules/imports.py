@@ -172,7 +172,7 @@ LIBELLES_REFERENCE = {
 #: quittance sans son bail ne quitte rien, une échéance sans son contrat
 #: n'échoit de rien, et un mouvement sans son compte de trésorerie irait se
 #: poser sur un compte comptable choisi au hasard.
-CREABLES = {"tiers", "compte", "bien", "programme", "lot"}
+CREABLES = {"tiers", "compte", "bien", "programme", "lot", "tresorerie"}
 
 #: Comment fabriquer la fiche minimale d'une référence : la table, la colonne
 #: qui porte l'identité, et le champ où recopier ce nom faute de mieux.
@@ -186,6 +186,12 @@ FICHES_MINIMALES = {
     "lot": {"table": "lots", "cle": "numero", "recopie": None,
             "defauts": {"type_lot": "logement", "statut": "disponible"},
             "parent": "programme"},
+    # Le compte comptable est un choix, pas une évidence : 512 est le cas
+    # courant, la fiche reste marquée « à compléter » pour qu'il le corrige
+    # si c'est une caisse ou un CCP.
+    "tresorerie": {"table": "comptes_tresorerie", "cle": "code",
+                   "recopie": "libelle",
+                   "defauts": {"type": "banque", "compte": "512", "actif": 1}},
 }
 
 
@@ -1401,18 +1407,10 @@ def _reclame(manquants, colonne, valeur, parent) -> str | None:
     return None
 
 
-#: Pourquoi ces quatre-là restent exigés. Ce n'est pas un ordre d'import :
-#: c'est ce que l'objet est. On le dit dans le message plutôt que de laisser
-#: croire à une contrainte arbitraire.
-POURQUOI_EXIGE = {
-    "tresorerie": " — précisez d'abord ce compte dans Trésorerie, pour que "
-                  "les mouvements ne se posent pas sur un compte comptable "
-                  "choisi au hasard",
-    "bail": " — un loyer se rattache à un bail, avec sa durée et son montant : "
-            "passez le fichier des baux, dans l'ordre qui vous arrange",
-    "contrat_vsp": " — une échéance appartient à un contrat de vente sur plan : "
-                   "passez le fichier des contrats, avant ou après le reste",
-}
+#: Ce qui reste sans réponse ne fait plus l'objet d'un cours : la ligne est
+#: mise de côté, avec la raison en une phrase, et rejouée d'elle-même dès que
+#: ce qui lui manquait existe.
+POURQUOI_EXIGE: dict = {}
 
 
 def _pourquoi_exige(reference: str) -> str:
@@ -1943,8 +1941,15 @@ SENS_REGLEMENT = {"encaissement", "decaissement"}
 
 
 def analyse_reglements(societe_id, rangs, association):
-    """Rattache chaque règlement à sa facture et contrôle le reste dû."""
+    """Rattache chaque règlement à sa facture, ou l'encaisse sans l'affecter.
+
+    Un règlement dont la facture n'est pas encore enregistrée n'est pas une
+    anomalie : l'argent est bien entré. Il est repris non affecté, avec le
+    numéro qu'il cite, et se rattachera de lui-même quand la facture
+    arrivera — que ce soit dans dix minutes ou le mois prochain.
+    """
     prets, anomalies, apercu = [], [], []
+    manquants = Manquants(societe_id)
     cumul: dict[int, int] = {}
 
     for decalage, rang in enumerate(rangs):
@@ -1964,11 +1969,6 @@ def analyse_reglements(societe_id, rangs, association):
             "COLLATE NOCASE", (societe_id, numero)) if numero else None
         if not numero:
             erreurs.append("« N° facture » est obligatoire")
-        elif not facture:
-            erreurs.append(
-                f"la facture n° {numero} est introuvable — un règlement se "
-                "rattache à une facture : passez le fichier des factures, "
-                "avant ou après celui-ci")
         if not date:
             erreurs.append("date de règlement incompréhensible")
         if montant <= 0:
@@ -1981,8 +1981,7 @@ def analyse_reglements(societe_id, rangs, association):
                            f"({', '.join(sorted(MODES_REGLEMENT))})")
         tresorerie_id = resout_reference("tresorerie", societe_id, tresorerie)
         if tresorerie and tresorerie_id is None:
-            erreurs.append(f"compte de trésorerie « {tresorerie} » introuvable"
-                           + _pourquoi_exige("tresorerie"))
+            manquants.fiche("tresorerie", tresorerie)
 
         if facture and not erreurs:
             deja = facture["montant_regle"] + cumul.get(facture["id"], 0)
@@ -2000,15 +1999,22 @@ def analyse_reglements(societe_id, rangs, association):
         if erreurs:
             continue
         prets.append({
-            "facture": facture, "date": date, "montant": montant,
-            "sens": sens or ("encaissement" if facture["sens"] == "vente"
-                             else "decaissement"),
+            "facture": facture,
+            # Ce que le fichier disait, gardé même sans facture en face :
+            # c'est par ce numéro que le rattachement se fera plus tard.
+            "reference_facture": numero,
+            "tresorerie": tresorerie,
+            "date": date, "montant": montant,
+            "sens": sens or ("encaissement" if facture and facture["sens"] == "vente"
+                             else ("decaissement" if facture else "encaissement")),
             "mode": mode or None, "tresorerie_id": tresorerie_id,
             "reference": _valeur(rang, association, "Référence") or None,
         })
 
+    non_affectes = len([p for p in prets if not p["facture"]])
     return {"prets": prets, "anomalies": anomalies, "apercu": apercu,
-            "nb_valides": len(prets),
+            "nb_valides": len(prets), "a_creer": manquants.resume(),
+            "nb_non_affectes": non_affectes,
             "nb_rejetes": len([a for a in apercu if a["erreurs"]])}
 
 
@@ -2055,6 +2061,11 @@ def _analyse(ctx, octets: bytes, cle_modele: str) -> dict:
     resultat.update({
         "modele": cle_modele,
         "libelle": modele["libelle"],
+        # Le fichier tel qu'il est arrivé. Sert à mettre de côté, telles
+        # quelles, les lignes que l'application n'a pas su écrire : elles se
+        # corrigent ensuite dans l'application, sans repasser par le tableur.
+        "_entetes": [str(e).strip() for e in entetes],
+        "_rangs": rangs,
         # Non pas la liste des colonnes reconnues, mais la façon dont le
         # fichier a été lu : c'est souvent la réponse à « pourquoi ça ne
         # marche pas ». Une colonne lue de travers se voit immédiatement.
@@ -2076,8 +2087,78 @@ def api_analyse(ctx):
     if cle not in MODELES:
         raise ErreurApplicative("Modèle inconnu.", 404)
     resultat = _analyse(ctx, _decode_fichier(ctx), cle)
-    resultat.pop("prets", None)          # inutile au navigateur, parfois volumineux
+    for interne in ("prets", "_rangs", "_entetes"):
+        resultat.pop(interne, None)      # inutile au navigateur, volumineux
     return resultat
+
+
+# ---------------------------------------------------------------------------
+# Ce qui n'a pas pu être écrit : mis de côté, pas refusé
+# ---------------------------------------------------------------------------
+#
+# Une ligne que l'application ne sait pas écrire tout de suite n'est ni
+# refusée ni perdue. Elle attend, avec ses valeurs telles qu'elles étaient
+# dans le fichier. Elle se corrige dans l'application — pas dans le tableur,
+# pas en refaisant l'import — et surtout : elle est rejouée d'elle-même après
+# chaque import suivant. Reprendre les règlements avant les factures marche
+# donc, sans que personne n'ait à y penser.
+
+#: Les champs de la requête d'import à conserver avec une ligne mise de
+#: côté : sans eux, la rejouer plus tard n'aurait pas le même sens.
+CHAMPS_CONSERVES = ("date_reprise", "perimetre", "journal")
+
+
+def _lignes_rejetees(resultat: dict) -> dict:
+    """{numéro de ligne du fichier : raison} — pour tous les modèles.
+
+    Les modèles qui groupent (factures, écritures) rejettent un groupe
+    entier : toutes ses lignes partent ensemble, sinon on en perdrait la
+    moitié en chemin.
+    """
+    rejetees: dict = {}
+    for vue in resultat.get("apercu") or []:
+        erreurs = vue.get("erreurs") or []
+        if not erreurs:
+            continue
+        raison = " ; ".join(erreurs)
+        for numero in (vue.get("lignes_fichier") or
+                       ([vue["ligne"]] if vue.get("ligne") else [])):
+            rejetees[numero] = raison
+    for anomalie in resultat.get("anomalies") or []:
+        numero = anomalie.get("ligne")
+        if numero and numero not in rejetees:
+            rejetees[numero] = anomalie.get("message", "")
+    return rejetees
+
+
+def met_de_cote(ctx, societe_id, cle, resultat, import_id) -> int:
+    """Range les lignes non écrites, avec le fichier dont elles viennent."""
+    rejetees = _lignes_rejetees(resultat)
+    if not rejetees:
+        return 0
+    entetes = json.dumps(resultat.get("_entetes") or [], ensure_ascii=False)
+    rangs = resultat.get("_rangs") or []
+    fichier = util.nettoie(ctx.champ("fichier")) or None
+    # Ce que la requête portait en plus du fichier : sans la date de reprise,
+    # une ligne de balance rejouée plus tard n'aurait plus de repère.
+    contexte = json.dumps({c: ctx.champ(c) for c in CHAMPS_CONSERVES
+                           if ctx.champ(c)}, ensure_ascii=False)
+    posees = 0
+    for numero, raison in sorted(rejetees.items()):
+        index = numero - 2                    # +1 en-tête, +1 pour compter de 1
+        if index < 0 or index >= len(rangs):
+            continue
+        db.insere("lignes_attente", {
+            "societe_id": societe_id, "import_id": import_id, "modele": cle,
+            "fichier": fichier, "ligne": numero, "entetes": entetes,
+            "valeurs": json.dumps([str(c) if c is not None else ""
+                                   for c in rangs[index]], ensure_ascii=False),
+            "raison": raison, "contexte": contexte,
+            "cree_le": util.maintenant(),
+            "cree_par": ctx.nom_utilisateur,
+        })
+        posees += 1
+    return posees
 
 
 # ---------------------------------------------------------------------------
@@ -2091,19 +2172,21 @@ def api_valide(ctx):
     cle = ctx.champ_requis("modele")
     if cle not in MODELES:
         raise ErreurApplicative("Modèle inconnu.", 404)
+    return importe(ctx, cle, _decode_fichier(ctx))
 
-    octets = _decode_fichier(ctx)
+
+def importe(ctx, cle, octets, rejouer=True) -> dict:
+    """Écrit ce qui est écrivable, range le reste, rejoue ce qui attendait."""
     resultat = _analyse(ctx, octets, cle)
-    if resultat["anomalies"] and not ctx.booleen("ignorer_anomalies"):
-        raise ErreurApplicative(
-            f"{len(resultat['anomalies'])} anomalie(s) : rien n'a été importé. "
-            "Corrigez le fichier, ou demandez l'import des seules lignes saines.",
-            details=resultat["anomalies"][:50])
 
+    # Un fichier n'est plus refusé en bloc parce que neuf lignes sur quatre
+    # cents posent question. Ce qui est écrivable est écrit, le reste est mis
+    # de côté — corrigeable dans l'application, et rejoué tout seul ensuite.
     societe_id = resultat["societe_id"]
     a_creer = resultat.get("a_creer") or {}
     prets = resultat["prets"]
-    if not prets and not _quelque_chose_a_creer(a_creer):
+    if not prets and not _quelque_chose_a_creer(a_creer) \
+            and not resultat["anomalies"]:
         if resultat.get("nb_ignorees"):
             raise ErreurApplicative(
                 f"{resultat['nb_ignorees']} ligne(s) sur {resultat['nb_ignorees']} "
@@ -2139,14 +2222,10 @@ def api_valide(ctx):
                 raise ErreurApplicative(
                     "Certains éléments désignés par le fichier n'ont pas pu "
                     "être créés. Rien n'a été importé.")
-            if resultat["anomalies"] and not ctx.booleen("ignorer_anomalies"):
-                raise ErreurApplicative(
-                    f"{len(resultat['anomalies'])} anomalie(s) : rien n'a été "
-                    "importé.", details=resultat["anomalies"][:50])
-        if not prets:
-            raise ErreurApplicative("Aucune ligne exploitable dans ce fichier.")
 
-        if cle == "ecritures":
+        if not prets:
+            bilan = {"nb": 0, "objets": {}}
+        elif cle == "ecritures":
             bilan = _importe_ecritures(ctx, societe_id, prets)
         elif cle == "balance_ouverture":
             bilan = _importe_balance(ctx, societe_id, prets[0])
@@ -2156,6 +2235,10 @@ def api_valide(ctx):
             bilan = _importe_factures(ctx, societe_id, prets)
         else:
             bilan = _importe_generique(societe_id, MODELES[cle], prets)
+
+        # Ce qui n'a pas pu être écrit attend dans l'application, avec ses
+        # valeurs d'origine. Rien ne se perd, rien n'est à ressaisir.
+        en_attente = met_de_cote(ctx, societe_id, cle, resultat, import_id)
 
         crees = bilan["nb"]
         # Les éléments créés en préalable appartiennent à cet import : annuler
@@ -2181,9 +2264,19 @@ def api_valide(ctx):
                  {"crees": crees, "rejetes": resultat["nb_rejetes"]},
                  ctx.nom_utilisateur)
 
+    # Hors transaction : ce qui attendait peut maintenant passer. Les
+    # règlements déposés avant leurs factures se rattachent ici, sans que
+    # personne n'ait eu à y penser.
+    repris = (rejoue_attente(ctx, societe_id) if rejouer and crees else {})
+    rattaches = rattache_reglements(societe_id) if crees else 0
+
     return {"crees": crees, "rejetes": resultat["nb_rejetes"],
             "ignorees": resultat.get("nb_ignorees", 0),
             "completes": resultat.get("nb_completes", 0),
+            "en_attente": en_attente,
+            "non_affectes": resultat.get("nb_non_affectes", 0),
+            "repris": repris.get("repris", 0),
+            "rattaches": rattaches,
             "import_id": import_id, "anomalies": resultat["anomalies"],
             "prealables": {t: len(i) for t, i in prealables.items()},
             "libelle": resultat["libelle"]}
@@ -2192,6 +2285,228 @@ def api_valide(ctx):
 def _quelque_chose_a_creer(a_creer) -> bool:
     return any((a_creer or {}).get(quoi) for quoi in
                ("comptes", "tiers", "journaux", "fiches"))
+
+
+class _Rejeu:
+    """Un contexte d'appel minimal, pour rejouer une ligne mise de côté.
+
+    Le chemin d'import demande un contexte de requête ; ici il n'y a pas de
+    requête, seulement des valeurs conservées. Plutôt qu'un second chemin
+    d'écriture — qui divergerait du premier au bout de deux versions — on
+    fabrique le contexte qui manque.
+    """
+
+    def __init__(self, societe_id, nom_utilisateur, valeurs=None):
+        self.societe_id = societe_id
+        self.nom_utilisateur = nom_utilisateur
+        self._valeurs = dict(valeurs or {})
+        self._valeurs["societe_id"] = societe_id
+
+    def champ(self, nom, defaut=None):
+        valeur = self._valeurs.get(nom)
+        return defaut if valeur in (None, "") else valeur
+
+    def champ_requis(self, nom):
+        valeur = self.champ(nom)
+        if valeur in (None, ""):
+            raise ErreurApplicative(f"« {nom} » est obligatoire.")
+        return valeur
+
+    def entier(self, nom, defaut=None):
+        try:
+            return int(self._valeurs.get(nom))
+        except (TypeError, ValueError):
+            return defaut
+
+    def arg_int(self, nom, defaut=None):
+        return self.entier(nom, defaut)
+
+    def booleen(self, nom):
+        return bool(self._valeurs.get(nom))
+
+    def interdit_lecture_seule(self):
+        return None
+
+    def exige_role(self, *roles):
+        return None
+
+
+def _en_csv(entetes: list, rangs: list) -> bytes:
+    """Refabrique un fichier à partir de valeurs conservées."""
+    import csv
+    import io
+    tampon = io.StringIO()
+    graveur = csv.writer(tampon, delimiter=";", lineterminator="\n")
+    graveur.writerow([str(e) for e in entetes])
+    for rang in rangs:
+        graveur.writerow(["" if c is None else str(c) for c in rang])
+    return tampon.getvalue().encode("utf-8-sig")
+
+
+def lignes_en_attente(societe_id: int, modele: str | None = None) -> list:
+    return db.lignes(
+        "SELECT * FROM lignes_attente WHERE societe_id = ?"
+        + (" AND modele = ?" if modele else "")
+        + " ORDER BY modele, ligne",
+        (societe_id, modele) if modele else (societe_id,))
+
+
+def rejoue_attente(ctx, societe_id: int, modele: str | None = None) -> dict:
+    """Reprend ce qui attendait et qui passe maintenant.
+
+    Appelée après chaque import : déposer les règlements avant les factures
+    marche alors sans que personne n'ait à y penser. Ce qui ne passe toujours
+    pas reste en attente, avec la raison mise à jour — jamais perdu, jamais
+    réécrit deux fois.
+    """
+    repris, restants = 0, 0
+    for cle in {l["modele"] for l in lignes_en_attente(societe_id, modele)}:
+        if cle not in MODELES:
+            continue
+        lot = lignes_en_attente(societe_id, cle)
+        entetes = json.loads(lot[0]["entetes"] or "[]")
+        rangs = [json.loads(l["valeurs"] or "[]") for l in lot]
+        garde = {}
+        try:
+            garde = json.loads(lot[0]["contexte"] or "{}")
+        except ValueError:
+            pass
+        contexte = _Rejeu(societe_id, getattr(ctx, "nom_utilisateur", None),
+                          {**garde, "modele": cle,
+                           "fichier": lot[0]["fichier"]})
+        try:
+            essai = _analyse(contexte, _en_csv(entetes, rangs), cle)
+        except ErreurApplicative:
+            continue                    # le fichier n'est plus lisible tel quel
+        rejetees = _lignes_rejetees(essai)
+        passent = [i for i in range(len(rangs)) if (i + 2) not in rejetees]
+        if not passent:
+            for i, ligne in enumerate(lot):
+                raison = rejetees.get(i + 2)
+                db.modifie("lignes_attente", ligne["id"],
+                           {"essais": ligne["essais"] + 1,
+                            "raison": raison or ligne["raison"]})
+            restants += len(lot)
+            continue
+        # Seules les lignes qui passent sont rejouées : les autres restent
+        # exactement là où elles sont, avec ce qu'elles avaient.
+        for i in passent:
+            db.supprime("lignes_attente", lot[i]["id"])
+        importe(contexte, cle, _en_csv(entetes, [rangs[i] for i in passent]),
+                rejouer=False)
+        repris += len(passent)
+        restants += len(lot) - len(passent)
+    return {"repris": repris, "restants": restants}
+
+
+def rattache_reglements(societe_id: int) -> int:
+    """Les encaissements non affectés retrouvent leur facture, si elle est là.
+
+    Un règlement repris avant sa facture n'est pas une anomalie : l'argent
+    est entré. Il attend simplement de savoir à quoi il se rapporte — et le
+    saura tout seul.
+    """
+    rattaches = 0
+    for r in db.lignes(
+            "SELECT * FROM reglements WHERE societe_id = ? AND facture_id IS NULL "
+            "AND reference_facture IS NOT NULL AND reference_facture <> ''",
+            (societe_id,)):
+        facture = db.ligne(
+            "SELECT * FROM factures WHERE societe_id = ? AND numero = ? "
+            "COLLATE NOCASE", (societe_id, r["reference_facture"]))
+        if not facture:
+            continue
+        regle = facture["montant_regle"] + r["montant"]
+        if regle > facture["net_a_payer"]:
+            continue                    # le rattachement dépasserait le dû
+        db.modifie("reglements", r["id"], {
+            "facture_id": facture["id"],
+            "tiers_id": r["tiers_id"] or facture["tiers_id"],
+            "perimetre": facture["perimetre"],
+            "libelle": f"Reprise — facture {facture['numero']}",
+        })
+        db.modifie("factures", facture["id"], {
+            "montant_regle": regle,
+            "statut": "reglee" if regle >= facture["net_a_payer"]
+                      else ("partielle" if facture["statut"] != "brouillon"
+                            else facture["statut"]),
+        })
+        rattaches += 1
+    return rattaches
+
+
+@route("GET", "/api/attente")
+def api_attente(ctx):
+    """Ce qui n'a pas pu être écrit, tel qu'il était dans le fichier."""
+    societe_id = ctx.arg_int("societe")
+    lignes = []
+    for l in lignes_en_attente(societe_id, ctx.arg("modele") or None):
+        lignes.append({
+            "id": l["id"], "modele": l["modele"],
+            "modele_libelle": MODELES.get(l["modele"], {}).get("libelle",
+                                                              l["modele"]),
+            "fichier": l["fichier"], "ligne": l["ligne"],
+            "entetes": json.loads(l["entetes"] or "[]"),
+            "valeurs": json.loads(l["valeurs"] or "[]"),
+            "raison": l["raison"], "essais": l["essais"],
+            "cree_le": l["cree_le"],
+        })
+    return {"lignes": lignes, "nombre": len(lignes)}
+
+
+@route("POST", "/api/attente/corriger")
+def api_corrige_attente(ctx):
+    """Enregistre les valeurs corrigées, puis retente l'écriture."""
+    ctx.interdit_lecture_seule()
+    ctx.exige_role("admin", "comptable")
+    societe_id = ctx.entier("societe_id") or ctx.arg_int("societe")
+    for correction in ctx.champ("lignes") or []:
+        ligne = db.ligne("SELECT * FROM lignes_attente WHERE id = ? AND "
+                         "societe_id = ?", (correction.get("id"), societe_id))
+        if not ligne:
+            continue
+        db.modifie("lignes_attente", ligne["id"], {
+            "valeurs": json.dumps([str(v) if v is not None else ""
+                                   for v in correction.get("valeurs") or []],
+                                  ensure_ascii=False)})
+    bilan = rejoue_attente(ctx, societe_id, ctx.champ("modele"))
+    bilan["message"] = (
+        f"{bilan['repris']} ligne(s) reprise(s)."
+        + (f" {bilan['restants']} reste(nt) en attente."
+           if bilan["restants"] else ""))
+    return bilan
+
+
+@route("POST", "/api/attente/rejouer")
+def api_rejoue_attente(ctx):
+    """Retente tout ce qui attend, sans rien corriger."""
+    ctx.interdit_lecture_seule()
+    ctx.exige_role("admin", "comptable")
+    societe_id = ctx.entier("societe_id") or ctx.arg_int("societe")
+    bilan = rejoue_attente(ctx, societe_id, ctx.champ("modele"))
+    bilan["rattaches"] = rattache_reglements(societe_id)
+    bilan["message"] = (
+        f"{bilan['repris']} ligne(s) reprise(s)."
+        + (f" {bilan['restants']} reste(nt) en attente."
+           if bilan["restants"] else " Rien ne reste en attente."))
+    return bilan
+
+
+@route("DELETE", "/api/attente")
+def api_oublie_attente(ctx):
+    """Retire des lignes en attente : elles ne seront pas reprises."""
+    ctx.interdit_lecture_seule()
+    ctx.exige_role("admin", "comptable")
+    societe_id = ctx.entier("societe_id") or ctx.arg_int("societe")
+    identifiants = ctx.champ("ids") or []
+    retires = 0
+    for identifiant in identifiants:
+        if db.ligne("SELECT id FROM lignes_attente WHERE id = ? AND "
+                    "societe_id = ?", (identifiant, societe_id)):
+            db.supprime("lignes_attente", identifiant)
+            retires += 1
+    return {"retires": retires,
+            "message": f"{retires} ligne(s) retirée(s) de l'attente."}
 
 
 def _photo_compteurs(societe_id: int) -> dict:
@@ -2284,25 +2599,36 @@ def _importe_reglements(ctx, societe_id, rangs) -> dict:
     avant = {}
     for r in rangs:
         facture = r["facture"]
-        avant.setdefault(facture["id"], {
-            "id": facture["id"], "montant_regle": facture["montant_regle"],
-            "statut": facture["statut"]})
+        if facture:
+            avant.setdefault(facture["id"], {
+                "id": facture["id"], "montant_regle": facture["montant_regle"],
+                "statut": facture["statut"]})
         exercice = compta.exercice_pour_date(societe_id, r["date"])
         identifiants.append(db.insere("reglements", {
             "societe_id": societe_id,
             "exercice_id": exercice["id"],
             "sens": r["sens"],
             "date": r["date"],
-            "tiers_id": facture["tiers_id"],
-            "tresorerie_id": r["tresorerie_id"],
+            "tiers_id": facture["tiers_id"] if facture else None,
+            "tresorerie_id": r["tresorerie_id"] or resout_reference(
+                "tresorerie", societe_id, r.get("tresorerie")),
             "montant": r["montant"],
-            "mode": r["mode"],
+            # La colonne « Mode » est facultative dans le fichier ; la
+            # colonne l'est moins en base. Un fichier sans elle faisait
+            # échouer tout l'import sur une contrainte NOT NULL.
+            "mode": r["mode"] or "virement",
             "reference": r["reference"],
-            "libelle": f"Reprise — facture {facture['numero']}",
-            "facture_id": facture["id"],
-            "perimetre": facture["perimetre"],
+            "libelle": (f"Reprise — facture {facture['numero']}" if facture
+                        else f"Reprise — encaissement non affecté "
+                             f"({r['reference_facture']})"),
+            "facture_id": facture["id"] if facture else None,
+            # Gardé dans tous les cas : c'est la clé du rattachement à venir.
+            "reference_facture": r["reference_facture"],
+            "perimetre": facture["perimetre"] if facture else "declare",
             "cree_le": util.maintenant(),
         }))
+        if not facture:
+            continue
         regle = facture["montant_regle"] + r["montant"]
         db.modifie("factures", facture["id"], {
             "montant_regle": regle,

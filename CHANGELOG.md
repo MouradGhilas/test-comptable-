@@ -3,6 +3,36 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.8.0
+
+**L'application ne refuse plus rien, et ne perd plus rien.** Jusqu'ici elle
+se comportait en gardien : neuf lignes douteuses sur quatre cents, et le
+fichier entier repartait. Pour quelqu'un qui tient une comptabilité depuis
+quinze ans, c'est du temps perdu à corriger un tableur pour satisfaire un
+logiciel. Le rôle du logiciel est d'organiser, pas d'arbitrer.
+
+- **Un import écrit ce qui est écrivable et met le reste de côté.** Les
+  lignes non écrites vous attendent **dans l'application**, avec leurs
+  valeurs telles qu'elles étaient dans le fichier, et la raison en une
+  phrase. Plus de « rien n'a été importé ».
+- **On les corrige sur place**, dans une grille, et on clique sur
+  *Reprendre*. Plus de retour au tableur, plus d'import à refaire.
+- **Ce qui attend quelque chose repart tout seul.** Une quittance déposée
+  avant son bail attend ; le jour où le bail arrive, elle est reprise
+  d'elle-même, sans que personne n'y pense. Idem pour tout le reste.
+- **Un encaissement sans facture reste un encaissement.** Il est repris
+  **non affecté**, avec le numéro qu'il cite, et se rattache tout seul à sa
+  facture quand elle est enregistrée — le montant réglé et le statut de la
+  facture suivent.
+- **Un compte de trésorerie inconnu est créé** (512 par défaut), marqué à
+  compléter, plutôt que de bloquer la reprise.
+- **Ce qui reste refusé, c'est ce qui produirait des comptes faux** : une
+  écriture déséquilibrée, une date impossible. Elle n'entre pas en
+  comptabilité — elle attend d'être corrigée, ce qui n'est pas la même
+  chose qu'être rejetée.
+- Correction d'un défaut ancien : un fichier de règlements **sans colonne
+  « Mode »** faisait échouer tout l'import sur une contrainte de la base.
+
 ## 1.7.9
 
 - **Plus aucun ordre d'importation.** L'écran affichait une colonne « Ordre »

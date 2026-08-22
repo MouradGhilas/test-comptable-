@@ -141,7 +141,7 @@ SCHEMA = Path(__file__).parent / "schema.sql"
 
 #: Version du schéma attendue par cette version du programme.
 #: À incrémenter dès qu'une migration est ajoutée ci-dessous.
-VERSION_SCHEMA = 8
+VERSION_SCHEMA = 9
 
 
 def colonnes(table: str) -> set[str]:
@@ -312,7 +312,7 @@ def _migration_7() -> None:
 #: importé. Elles portent alors le drapeau `incomplet` jusqu'à ce qu'on les
 #: remplisse — à la main, ou par l'import du fichier qui les décrit vraiment.
 TABLES_A_COMPLETER = ("comptes", "tiers", "journaux", "biens", "programmes",
-                      "lots")
+                      "lots", "comptes_tresorerie")
 
 
 def _migration_8() -> None:
@@ -328,6 +328,40 @@ def _migration_8() -> None:
         ajoute_colonne(table, "incomplet", "INTEGER NOT NULL DEFAULT 0")
 
 
+def _migration_9() -> None:
+    """Ce qui ne passe pas à l'import est mis de côté, pas refusé.
+
+    Un comptable expérimenté n'a pas besoin qu'on lui apprenne l'ordre des
+    choses : il a besoin qu'on ne lui reprenne pas son travail. Une ligne
+    que l'application ne sait pas écrire tout de suite attend ici, avec ses
+    valeurs telles qu'elles étaient dans le fichier — corrigeable sur place,
+    et rejouée d'elle-même dès que ce qui lui manquait existe.
+    """
+    execute("""
+        CREATE TABLE IF NOT EXISTS lignes_attente (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            societe_id  INTEGER NOT NULL REFERENCES societes(id) ON DELETE CASCADE,
+            import_id   INTEGER REFERENCES imports(id) ON DELETE SET NULL,
+            modele      TEXT NOT NULL,
+            fichier     TEXT,
+            ligne       INTEGER NOT NULL,
+            entetes     TEXT NOT NULL,       -- colonnes du fichier, en JSON
+            valeurs     TEXT NOT NULL,       -- la ligne telle qu'elle était
+            raison      TEXT,
+            contexte    TEXT,                -- ce que la requête portait en plus
+            essais      INTEGER NOT NULL DEFAULT 0,
+            cree_le     TEXT NOT NULL,
+            cree_par    TEXT
+        )""")
+    execute("CREATE INDEX IF NOT EXISTS idx_attente_soc "
+            "ON lignes_attente(societe_id, modele)")
+    # Un règlement dont la facture n'est pas encore là garde son numéro :
+    # c'est par lui qu'il la retrouvera, le jour où elle arrivera.
+    ajoute_colonne("reglements", "reference_facture", "TEXT")
+    ajoute_colonne("comptes_tresorerie", "incomplet",
+                   "INTEGER NOT NULL DEFAULT 0")
+
+
 #: version -> fonction de migration. Exécutées dans l'ordre croissant.
 MIGRATIONS = {
     2: _migration_2,
@@ -337,6 +371,7 @@ MIGRATIONS = {
     6: _migration_6,
     7: _migration_7,
     8: _migration_8,
+    9: _migration_9,
 }
 
 

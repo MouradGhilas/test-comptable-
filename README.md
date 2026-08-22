@@ -240,9 +240,24 @@ Les listes **Ventes** et **Achats** portent les deux actions directement :
 feuille d'en-têtes de factures, une feuille de lignes — en respectant les
 filtres affichés, périmètre compris.
 
+* **Rien n'est refusé, rien n'est perdu.** L'import écrit ce qui est
+  écrivable et **met le reste de côté** : les lignes non écrites attendent
+  dans l'application (table `lignes_attente`), avec leurs valeurs telles
+  qu'elles étaient dans le fichier et la raison en une phrase. On les corrige
+  **dans une grille, sur place**, et elles repartent — pas de retour au
+  tableur, pas d'import à refaire.
+* **Ce qui attend quelque chose repart tout seul.** Après chaque import,
+  l'application rejoue ce qui attendait : une quittance déposée avant son bail
+  est reprise d'elle-même le jour où le bail arrive. Personne n'a à y penser.
+* **Un encaissement sans facture reste un encaissement** : il est repris
+  *non affecté*, garde le numéro qu'il cite (`reglements.reference_facture`),
+  et se rattache seul quand la facture est enregistrée — montant réglé et
+  statut de la facture suivent.
+* **Ce qui reste refusé est ce qui produirait des comptes faux** : une
+  écriture déséquilibrée, une date impossible. Elle n'entre pas en
+  comptabilité, elle attend d'être corrigée — ce n'est pas la même chose.
 * L'import se fait **en deux temps** : contrôle complet sans écriture, puis
-  validation. Chaque anomalie est rapportée avec son **numéro de ligne**, et le
-  message dit quoi faire.
+  validation. Chaque ligne mise de côté l'est avec son **numéro de ligne**.
 * **Aucun ordre à respecter.** Les fichiers se déposent dans l'ordre qui
   arrange celui qui les a, et seulement ceux qui l'intéressent. Ce qu'un
   fichier cite et que le dossier ne connaît pas — un compte, un tiers, un
@@ -471,7 +486,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
 python3 outils/test_http.py          # 63 contrôles du serveur et de l'interface
-python3 outils/test_comptable.py     # 330 contrôles de conformité comptable
+python3 outils/test_comptable.py     # 371 contrôles de conformité comptable
 python3 outils/test_mise_a_jour.py   # 39 contrôles du chemin de mise à jour
 python3 app.py --verifier            # intégrité de vos données
 ```
@@ -483,7 +498,7 @@ sont constatés au bon moment et que la clôture se déroule correctement.
 Le test de conformité comptable, lui, ne regarde pas l'interface : il attaque
 l'application par ses interfaces de programmation et vérifie les règles qui,
 si elles cèdent, produisent des comptes **faux sans que rien ne le signale**.
-Onze familles, lançables séparément
+Douze familles, lançables séparément
 (`python3 outils/test_comptable.py perimetre`) :
 
 | Suite | Ce qu'elle vérifie |
@@ -494,7 +509,8 @@ Onze familles, lançables séparément
 | `perimetre` | l'étanchéité entre le déclaré et le hors déclaration |
 | `cycles` | les cycles métier en mouvement : numérotation, saisies simultanées, une avance sur plan qui devient produit à la livraison, un loyer encaissé qui repart chez son propriétaire |
 | `reprises` | annuler un import déjà validé sans laisser de trou dans la numérotation ni effacer ce qui sert déjà |
-| `creation` | l'import crée ce qu'il cite, le complète quand le vrai fichier arrive, et nomme les quatre renvois qui restent exigés |
+| `creation` | l'import crée ce qu'il cite, et le complète quand le vrai fichier arrive |
+| `attente` | rien n'est refusé, rien n'est perdu : ce qui ne passe pas attend, se corrige sur place et repart tout seul |
 | `sante` | les contrôles de santé du dossier, chacun mis à l'épreuve sur une anomalie provoquée pour lui |
 | `annuelles` | la DAS et l'état des clients, et surtout leurs recoupements |
 | `relances` | ce qui est dû et depuis quand, et la lettre à ses trois niveaux |
@@ -542,7 +558,7 @@ web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
 ├── test_http.py            63 contrôles serveur et interface
-├── test_comptable.py       330 contrôles de conformité comptable
+├── test_comptable.py       371 contrôles de conformité comptable
 ├── test_mise_a_jour.py     39 contrôles du chemin de mise à jour
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur

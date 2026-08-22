@@ -387,6 +387,10 @@ const AIDES = {
       'Vos données vivent dans un dossier local. Les sauvegardes aussi : '
       + 'copiez-les régulièrement hors du poste, sinon une panne de disque '
       + 'emporte les deux.',
+      'Un import ne refuse rien et ne perd rien : ce qu\'il ne sait pas '
+      + 'écrire est <strong>mis de côté dans l\'application</strong>, avec ses '
+      + 'valeurs. On le corrige dans la grille, ou on le laisse — il repart '
+      + 'tout seul dès que ce qui lui manquait existe.',
       'Il n\'y a <strong>aucun ordre d\'importation</strong> à respecter. '
       + 'Ce qu\'un fichier cite et que le dossier ne connaît pas est créé '
       + 'avec lui, marqué « à compléter » ; le fichier qui le décrit '

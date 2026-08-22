@@ -300,6 +300,9 @@ CREATE TABLE IF NOT EXISTS comptes_tresorerie (
     est_sequestre INTEGER NOT NULL DEFAULT 0,
     programme_id  INTEGER,
     actif       INTEGER NOT NULL DEFAULT 1,
+    -- fiche née d'une simple mention dans un fichier importé :
+    -- elle n'a que son nom tant que personne ne l'a remplie
+    incomplet   INTEGER NOT NULL DEFAULT 0,
     UNIQUE(societe_id, code)
 );
 
@@ -382,6 +385,26 @@ CREATE TABLE IF NOT EXISTS facture_lignes (
 CREATE INDEX IF NOT EXISTS idx_fl_fact ON facture_lignes(facture_id);
 
 -- Règlements (encaissements clients / décaissements fournisseurs)
+-- Ce qu'un import n'a pas su écrire tout de suite. Rien n'est refusé, rien
+-- n'est perdu : la ligne attend ici avec ses valeurs d'origine, se corrige
+-- sur place, et se rejoue d'elle-même dès que ce qui lui manquait existe.
+CREATE TABLE IF NOT EXISTS lignes_attente (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    societe_id  INTEGER NOT NULL REFERENCES societes(id) ON DELETE CASCADE,
+    import_id   INTEGER REFERENCES imports(id) ON DELETE SET NULL,
+    modele      TEXT NOT NULL,
+    fichier     TEXT,
+    ligne       INTEGER NOT NULL,
+    entetes     TEXT NOT NULL,
+    valeurs     TEXT NOT NULL,
+    raison      TEXT,
+    contexte    TEXT,                -- ce que la requête d'origine portait
+    essais      INTEGER NOT NULL DEFAULT 0,
+    cree_le     TEXT NOT NULL,
+    cree_par    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_attente_soc ON lignes_attente(societe_id, modele);
+
 CREATE TABLE IF NOT EXISTS reglements (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     societe_id    INTEGER NOT NULL REFERENCES societes(id) ON DELETE CASCADE,
@@ -395,6 +418,9 @@ CREATE TABLE IF NOT EXISTS reglements (
     reference     TEXT,                        -- n° chèque / virement
     libelle       TEXT,
     facture_id    INTEGER REFERENCES factures(id) ON DELETE SET NULL,
+    -- facture citée par le fichier mais pas encore enregistrée : le
+    -- règlement est encaissé sans être affecté, et se rattachera tout seul
+    reference_facture TEXT,
     echeance_id   INTEGER,                     -- échéance VSP réglée
     quittance_id  INTEGER,
     perimetre     TEXT NOT NULL DEFAULT 'declare',

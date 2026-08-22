@@ -1716,6 +1716,8 @@ async function ongletImport(zone) {
     <p class="petit">Les colonnes en gras sont obligatoires. Formats acceptés :
     Excel (.xlsx) et CSV enregistré depuis Excel.</p>
 
+    <div id="zone-attente"></div>
+
     ${carte('Reprises déjà faites', `
       <p class="petit">Chaque import reste inscrit ici. Vous vous êtes trompé de
       fichier, ou vous avez passé le même deux fois&nbsp;? Il peut être défait :
@@ -1735,6 +1737,100 @@ async function ongletImport(zone) {
   brancheDepot(zone, () => choix.value);
   $('#bouton-demo', zone).onclick = creeDossierEssai;
   rafraichitJournalImports(zone);
+  rafraichitAttente(zone);
+}
+
+/* ----------------------------------------------------- Lignes en attente ----
+   Ce qu'un import n'a pas su écrire. Ni refusé, ni perdu : la ligne est là,
+   avec ses valeurs telles qu'elles étaient dans le fichier. On la corrige
+   ici — pas dans le tableur, pas en refaisant l'import — et elle repart.
+   Celles qui attendent quelque chose qui n'existe pas encore sont reprises
+   toutes seules au prochain import, sans qu'on ait à y penser. */
+
+async function rafraichitAttente(racine) {
+  const hote = $('#zone-attente', racine) || $('#zone-attente');
+  if (!hote) return;
+  let d;
+  try { d = await api(requete('/api/attente', { societe: App.etat.societe?.id })); }
+  catch (err) { return; }
+  if (!d.nombre) { hote.innerHTML = ''; return; }
+
+  // Un même fichier a les mêmes colonnes : on groupe pour n'afficher
+  // l'en-tête qu'une fois, et garder une grille lisible.
+  const lots = {};
+  for (const l of d.lignes) {
+    const cle = l.modele + '|' + (l.fichier || '');
+    (lots[cle] = lots[cle] || { modele: l.modele, libelle: l.modele_libelle,
+                                fichier: l.fichier, entetes: l.entetes,
+                                lignes: [] }).lignes.push(l);
+  }
+
+  hote.innerHTML = carte(`Lignes en attente (${d.nombre})`, `
+    <p class="petit">Ces lignes n'ont pas pu être écrites telles quelles.
+    Elles ne sont pas perdues&nbsp;: corrigez la valeur dans la grille et
+    cliquez sur <em>Reprendre</em>. Celles qui attendent quelque chose qui
+    n'existe pas encore — une facture, un bail — repartiront d'elles-mêmes
+    au prochain import.</p>
+    ${Object.values(lots).map((lot, index) => `
+      <div class="lot-attente">
+        <h4>${ech(lot.libelle)}${lot.fichier
+          ? ` <span class="tres-petit">— ${ech(lot.fichier)}</span>` : ''}</h4>
+        <div style="overflow-x:auto">
+        <table class="tableau"><thead><tr>
+          <th style="width:52px">Ligne</th>
+          ${lot.entetes.map((e) => `<th>${ech(e)}</th>`).join('')}
+          <th style="width:34%">Ce qui manque</th><th style="width:36px"></th>
+        </tr></thead><tbody>
+          ${lot.lignes.map((l) => `<tr data-id="${l.id}">
+            <td class="tres-petit num">${l.ligne}</td>
+            ${lot.entetes.map((e, i) => `<td><input class="cellule-attente"
+              data-index="${i}" value="${ech(l.valeurs[i] || '')}"></td>`).join('')}
+            <td class="tres-petit">${ech(l.raison || '')}</td>
+            <td><button class="petit-bouton plat" data-retirer="${l.id}"
+              title="Retirer cette ligne : elle ne sera pas reprise">✕</button></td>
+          </tr>`).join('')}
+        </tbody></table></div>
+      </div>`).join('')}
+    <div class="rangee" style="margin-top:12px">
+      <button class="primaire" id="attente-reprendre">Reprendre ces lignes</button>
+      <button id="attente-rejouer">Réessayer sans rien changer</button>
+    </div>`);
+
+  $('#attente-reprendre', hote).onclick = async () => {
+    const bouton = $('#attente-reprendre', hote);
+    bouton.disabled = true;
+    bouton.textContent = 'Reprise en cours…';
+    const lignes = [...hote.querySelectorAll('tr[data-id]')].map((tr) => ({
+      id: Number(tr.dataset.id),
+      valeurs: [...tr.querySelectorAll('.cellule-attente')].map((i) => i.value),
+    }));
+    try {
+      const r = await envoie('/api/attente/corriger', { lignes });
+      notifie(r.message, r.repris ? 'succes' : 'alerte', 7000);
+      rafraichitAttente(document);
+      rafraichitJournalImports(document);
+    } catch (err) {
+      notifie(err.message, 'danger');
+      bouton.disabled = false;
+      bouton.textContent = 'Reprendre ces lignes';
+    }
+  };
+  $('#attente-rejouer', hote).onclick = async () => {
+    try {
+      const r = await envoie('/api/attente/rejouer', {});
+      notifie(r.message, r.repris ? 'succes' : 'info', 7000);
+      rafraichitAttente(document);
+    } catch (err) { notifie(err.message, 'danger'); }
+  };
+  hote.querySelectorAll('[data-retirer]').forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm('Retirer cette ligne ? Elle ne sera pas reprise.')) return;
+      try {
+        await envoie('/api/attente', { ids: [Number(b.dataset.retirer)] }, 'DELETE');
+        rafraichitAttente(document);
+      } catch (err) { notifie(err.message, 'danger'); }
+    };
+  });
 }
 
 async function creeDossierEssai() {
@@ -1967,12 +2063,13 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
        </div>` : '';
 
   const resume = anomalies.length
-    ? `<div class="message alerte">
-         <strong>${d.nb_valides} ligne(s) prête(s), ${anomalies.length} anomalie(s)
-         ${groupes.length < anomalies.length
-           ? `de ${groupes.length} sorte(s)` : ''}</strong>
-         Rien n'est encore enregistré. Corrigez le fichier et recommencez, ou
-         importez uniquement les lignes saines.</div>`
+    ? `<div class="message info">
+         <strong>${d.nb_valides} ligne(s) seront écrites, ${anomalies.length}
+         mise(s) de côté${groupes.length < anomalies.length
+           ? ` — ${groupes.length} sorte(s) de raison` : ''}</strong>
+         Rien n'est refusé et rien ne se perd : ce qui ne passe pas vous
+         attendra plus bas, avec ses valeurs, corrigeable sur place. Vous
+         n'avez pas à retoucher votre fichier.</div>`
     : `<div class="message succes">
          <strong>${d.nb_valides} ligne(s) prête(s) à être importée(s)</strong>
          ${nbIgnorees ? `${nbIgnorees} ligne(s) déjà là seront laissées de côté.`
@@ -1981,7 +2078,7 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
   const detail = groupes.length ? `
     <table class="tableau"><thead><tr>
       <th style="width:110px">Lignes</th><th style="width:80px" class="num">Combien</th>
-      <th>Anomalie</th>
+      <th>Ce qui les met de côté</th>
     </tr></thead><tbody>
       ${groupes.slice(0, 40).map((g) => `<tr>
         <td class="tres-petit">${g.lignes.slice(0, 6).join(', ')}${
@@ -1994,18 +2091,18 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
   // Le bouton énonce lui-même ce qu'il va faire : pas de fenêtre de
   // confirmation par-dessus, qui remplacerait celle de l'import.
   const libelleImport = anomalies.length
-    ? `Importer les ${d.nb_valides} ligne(s) saines et ignorer `
-      + `${anomalies.length} anomalie(s)`
+    ? `Importer : ${d.nb_valides} ligne(s) écrite(s), `
+      + `${anomalies.length} mise(s) de côté`
     : `Importer ${d.nb_valides} ligne(s)`;
 
   zone.innerHTML = diagnostic + resume + prealables + aRemplir + dejaLa + lecture + ignorees
     + lignesIgnorees + detail + `
     <div class="rangee" style="margin-top:12px">
-      ${d.nb_valides ? `<button class="primaire" id="bouton-importer">
+      ${d.nb_valides || anomalies.length ? `<button class="primaire" id="bouton-importer">
         ${libelleImport}</button>` : ''}
     </div>`;
 
-  if (!d.nb_valides) return;
+  if (!d.nb_valides && !anomalies.length) return;
   $('#bouton-importer', zone).onclick = async () => {
     const bouton = $('#bouton-importer', zone);
     bouton.disabled = true;                 // un double clic doublerait l'import
@@ -2023,7 +2120,7 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
         .map(([t, n]) => `${n} ${NOMS_PREALABLES[t] || t}`);
       notifie(`${r.crees} ligne(s) importée(s).`
             + (r.completes ? ` ${r.completes} fiche(s) complétée(s).` : '')
-            + (r.rejetes ? ` ${r.rejetes} rejetée(s).` : '')
+            + (r.en_attente ? ` ${r.en_attente} mise(s) de côté.` : '')
             + (r.ignorees ? ` ${r.ignorees} déjà là.` : ''), 'succes', 7000);
       const brouillon = modele === 'ecritures'
         ? 'Les écritures sont en brouillon : relisez-les au journal avant de les valider.'
@@ -2032,17 +2129,29 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
             + 'comptable qu\'une fois validées.' : '');
       zone.innerHTML = `<div class="message succes">
         <strong>Import terminé</strong>
-        ${r.crees} ligne(s) enregistrée(s)${r.rejetes ? `, ${r.rejetes} rejetée(s)` : ''}${
+        ${r.crees} ligne(s) enregistrée(s)${
           r.ignorees ? `, ${r.ignorees} déjà enregistrée(s) et laissée(s) de côté` : ''}.
         ${faits.length ? `<div>Créé(s) au passage&nbsp;: ${ech(faits.join(', '))},
           avec leur seul nom. Ils sont marqués « à compléter »&nbsp;: le fichier
           qui les décrit les remplira, quand vous voudrez.</div>` : ''}
         ${r.completes ? `<div>${r.completes} fiche(s) qui n'avaient que leur nom
           ont été complétées par ce fichier.</div>` : ''}
+        ${r.non_affectes ? `<div>${r.non_affectes} règlement(s) sans facture
+          enregistrée ont été repris <b>non affectés</b>. Ils se rattacheront
+          d'eux-mêmes le jour où leur facture sera là.</div>` : ''}
+        ${r.rattaches ? `<div>${r.rattaches} règlement(s) qui attendaient leur
+          facture viennent de la retrouver.</div>` : ''}
+        ${r.repris ? `<div>${r.repris} ligne(s) qui étaient en attente ont pu
+          être reprises au passage.</div>` : ''}
+        ${r.en_attente ? `<div><b>${r.en_attente} ligne(s) mise(s) de côté.</b>
+          Elles vous attendent plus bas, avec leurs valeurs : corrigez-les sur
+          place, ou laissez-les — elles seront reprises toutes seules dès que
+          ce qui leur manque existera.</div>` : ''}
         ${brouillon}
         Ce n'était pas le bon fichier&nbsp;? Cette reprise peut être défaite
         depuis « Reprises déjà faites », plus bas.</div>`;
       rafraichitJournalImports(document);
+      rafraichitAttente(document);
       // Import lancé depuis une liste : rafraîchir ce qui est affiché derrière,
       // sans effacer le compte rendu qui, lui, est dans la fenêtre.
       if (!$('#contenu').contains(zone)) afficheRoute();

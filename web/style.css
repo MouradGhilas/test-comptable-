@@ -764,3 +764,10 @@ tr.ecart-recoupement td { background: var(--danger-fond); }
 .lecture-fichier summary { cursor: pointer; font-size: 12.5px;
                            color: var(--primaire-clair); font-weight: 600; }
 .lecture-fichier table { margin-top: 9px; }
+
+/* Lignes qu'un import n'a pas su écrire : une grille où l'on corrige sur
+   place, plutôt qu'un message qui renvoie au tableur. */
+.lot-attente { margin-bottom: 16px; }
+.lot-attente h4 { margin: 0 0 6px; font-size: 13px; }
+.lot-attente input.cellule-attente { width: 100%; min-width: 84px; padding: 3px 6px;
+                                     font-size: 12px; }
