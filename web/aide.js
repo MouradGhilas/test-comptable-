@@ -387,6 +387,10 @@ const AIDES = {
       'Vos données vivent dans un dossier local. Les sauvegardes aussi : '
       + 'copiez-les régulièrement hors du poste, sinon une panne de disque '
       + 'emporte les deux.',
+      'Il n\'y a <strong>aucun ordre d\'importation</strong> à respecter. '
+      + 'Ce qu\'un fichier cite et que le dossier ne connaît pas est créé '
+      + 'avec lui, marqué « à compléter » ; le fichier qui le décrit '
+      + 'vraiment le remplira, qu\'il passe avant ou après.',
       'Les versions déjà installées restent sur le poste : on peut '
       + '<strong>revenir à l\'une d\'elles</strong> si une mise à jour '
       + 'déplaît. Tant que la version visée sait lire votre base, seul le '

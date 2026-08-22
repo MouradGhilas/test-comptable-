@@ -1203,7 +1203,7 @@ async function ongletMaj(zone) {
         <strong>Vous êtes en version ${ech(d.version)}</strong>
         Quand vous recevez un fichier de mise à jour, déposez-le ici. Il est
         contrôlé avant d'être appliqué, vos données sont sauvegardées, et
-        l'application se rouvre toute seule. <strong>Rien n'est perdu&nbsp;:</strong>
+        l'application se rouvre toute seule. <b>Rien n'est perdu&nbsp;:</b>
         en cas de problème, la version précédente est remise en place
         automatiquement.
       </div>
@@ -1638,11 +1638,10 @@ async function ongletImport(zone) {
 
   const tableauModeles = (modeles) => `
     <table class="tableau"><thead><tr>
-      <th style="width:44px">Ordre</th><th style="width:30%">Données</th>
+      <th style="width:30%">Données</th>
       <th>Colonnes attendues</th><th style="width:150px"></th>
     </tr></thead><tbody>
       ${modeles.map((m) => `<tr>
-        <td class="num tres-petit">${m.rang}</td>
         <td><strong>${ech(m.libelle)}</strong></td>
         <td class="tres-petit">${m.colonnes.map((c) =>
           c.requis ? `<strong>${ech(c.nom)}</strong>` : ech(c.nom)).join(' · ')}</td>
@@ -1661,13 +1660,22 @@ async function ongletImport(zone) {
         l'application contrôle tout et vous montre les anomalies
         <em>avant</em> d'enregistrer quoi que ce soit.
       </div>
-      <div class="message alerte">
-        <strong>L'ordre indiqué aide, il n'oblige plus</strong>
-        Ce que votre fichier désigne et qui n'est <em>qu'un nom</em> — un
-        compte, un tiers, un journal — est créé avec l'import&nbsp;: vous
-        n'avez pas à préparer trois fichiers avant celui qui vous intéresse.
-        Ce qui porte des décisions — un programme, un lot, un bail, un bien —
-        reste à créer vous-même : surface, prix, durée ne s'inventent pas.
+      <div class="message succes">
+        <strong>Aucun ordre à respecter</strong>
+        Déposez vos fichiers dans l'ordre qui vous arrange, et seulement ceux
+        qui vous intéressent. Ce qu'un fichier cite et que le dossier ne
+        connaît pas — un compte, un client, un journal, un bien, un
+        programme, un lot — est <b>créé avec lui</b>, avec son seul nom,
+        marqué « à compléter ». Le jour où vous passez le fichier qui le
+        décrit vraiment, il le <b>remplit</b> au lieu de le sauter : avant,
+        après, cela revient au même.
+        ${(d.exiges || []).length ? `<details><summary>Les seules exceptions,
+          et pourquoi</summary><ul class="petit">
+          <li>Un <strong>règlement</strong> se rattache à une facture : sans
+            elle, il ne règle rien.</li>
+          ${d.exiges.map((e) => `<li>${ech(e.pourquoi.charAt(0).toUpperCase()
+            + e.pourquoi.slice(1))}</li>`).join('')}
+        </ul></details>` : ''}
       </div>
       <p class="petit">L'import <strong>reprend</strong> votre situation, il ne
       recomptabilise pas le passé : baux, lots, contrats et immobilisations
@@ -1694,7 +1702,7 @@ async function ongletImport(zone) {
         <label class="champ"><span>Type de données</span>
           <select id="import-modele">
             ${d.modeles.map((m) =>
-              `<option value="${m.cle}">${m.rang}. ${ech(m.libelle)}</option>`).join('')}
+              `<option value="${m.cle}">${ech(m.libelle)}</option>`).join('')}
           </select></label>
         <label class="champ" id="champ-date-reprise" hidden>
           <span>Date de reprise</span>
@@ -1918,12 +1926,19 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
   // Ce que l'import va créer de lui-même. Annoncé avant, pas découvert
   // après : c'est la contrepartie de ne plus rien réclamer.
   const aCreer = d.a_creer || {};
+  const fiches = aCreer.fiches || [];
+  const parGenre = (genre) => fiches.filter((f) => f.reference === genre);
   const paquets = [
     ['comptes', aCreer.comptes || [], 'compte', 'comptes',
      (x) => `${x.numero} — ${x.libelle}`],
     ['tiers', aCreer.tiers || [], 'tiers', 'tiers', (x) => x.raison_sociale],
     ['journaux', aCreer.journaux || [], 'journal', 'journaux',
      (x) => `${x.code} — ${x.libelle}`],
+    ['biens', parGenre('bien'), 'bien', 'biens', (x) => x.valeur],
+    ['programmes', parGenre('programme'), 'programme', 'programmes',
+     (x) => x.valeur],
+    ['lots', parGenre('lot'), 'lot', 'lots',
+     (x) => x.valeur + (x.parent ? ` (${x.parent})` : '')],
   ].filter(([, liste]) => liste.length);
   const prealables = paquets.length ? `
     <div class="message info">
@@ -1932,14 +1947,24 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
         ${paquets.reduce((t, [, l]) => t + l.length, 0) > 1
           ? 'seront créés' : 'sera créé'} au passage</strong>
       Votre fichier les désigne, votre dossier ne les connaît pas encore.
-      L'import les crée avec lui&nbsp;: rien à préparer d'avance. Ils feront
-      partie de cette reprise, et repartiront avec elle si vous l'annulez.
+      L'import les crée avec lui&nbsp;: rien à préparer d'avance. Ils n'auront
+      que leur nom et resteront <b>marqués « à compléter »</b> — le
+      jour où vous passerez le fichier qui les décrit, il les remplira. Ils
+      font partie de cette reprise, et repartiront avec elle si vous l'annulez.
       ${paquets.map(([cle, liste, un, pluriel, texte]) => `
         <details><summary>${liste.length} ${liste.length > 1 ? pluriel : un}</summary>
           <div class="petit">${liste.slice(0, 60).map((x) => ech(texte(x)))
             .join(' · ')}${liste.length > 60
               ? ` … et ${liste.length - 60} autre(s)` : ''}</div></details>`).join('')}
     </div>` : '';
+
+  const aRemplir = d.nb_completes
+    ? `<div class="message succes">
+         <strong>${d.nb_completes} fiche(s) seront complétées</strong>
+         Elles existent déjà, mais n'ont que leur nom : un import précédent
+         les avait créées en passant. Ce fichier les décrit : il les remplit
+         au lieu de les ignorer.
+       </div>` : '';
 
   const resume = anomalies.length
     ? `<div class="message alerte">
@@ -1973,7 +1998,7 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
       + `${anomalies.length} anomalie(s)`
     : `Importer ${d.nb_valides} ligne(s)`;
 
-  zone.innerHTML = diagnostic + resume + prealables + dejaLa + lecture + ignorees
+  zone.innerHTML = diagnostic + resume + prealables + aRemplir + dejaLa + lecture + ignorees
     + lignesIgnorees + detail + `
     <div class="rangee" style="margin-top:12px">
       ${d.nb_valides ? `<button class="primaire" id="bouton-importer">
@@ -1991,11 +2016,13 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
           fichier: _fichierImport?.name || '',
           ignorer_anomalies: anomalies.length ? 1 : 0 });
       const NOMS_PREALABLES = { comptes: 'compte(s)', tiers: 'tiers',
-                                journaux: 'journal/journaux' };
+                                journaux: 'journal/journaux', biens: 'bien(s)',
+                                programmes: 'programme(s)', lots: 'lot(s)' };
       const faits = Object.entries(r.prealables || {})
         .filter(([, n]) => n)
         .map(([t, n]) => `${n} ${NOMS_PREALABLES[t] || t}`);
       notifie(`${r.crees} ligne(s) importée(s).`
+            + (r.completes ? ` ${r.completes} fiche(s) complétée(s).` : '')
             + (r.rejetes ? ` ${r.rejetes} rejetée(s).` : '')
             + (r.ignorees ? ` ${r.ignorees} déjà là.` : ''), 'succes', 7000);
       const brouillon = modele === 'ecritures'
@@ -2007,8 +2034,11 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
         <strong>Import terminé</strong>
         ${r.crees} ligne(s) enregistrée(s)${r.rejetes ? `, ${r.rejetes} rejetée(s)` : ''}${
           r.ignorees ? `, ${r.ignorees} déjà enregistrée(s) et laissée(s) de côté` : ''}.
-        ${faits.length ? `<div>Créé(s) au passage&nbsp;: ${ech(faits.join(', '))}.
-          Vous les retrouverez dans votre plan comptable et vos tiers.</div>` : ''}
+        ${faits.length ? `<div>Créé(s) au passage&nbsp;: ${ech(faits.join(', '))},
+          avec leur seul nom. Ils sont marqués « à compléter »&nbsp;: le fichier
+          qui les décrit les remplira, quand vous voudrez.</div>` : ''}
+        ${r.completes ? `<div>${r.completes} fiche(s) qui n'avaient que leur nom
+          ont été complétées par ce fichier.</div>` : ''}
         ${brouillon}
         Ce n'était pas le bon fichier&nbsp;? Cette reprise peut être défaite
         depuis « Reprises déjà faites », plus bas.</div>`;
@@ -2101,7 +2131,7 @@ async function montrePlanAnnulation(identifiant) {
       <strong>Cet import ne peut plus être effacé — il sera contre-passé</strong>
       Des écritures ont été passées depuis. Effacer laisserait un trou dans la
       numérotation d'un journal, ce qu'un contrôle fiscal cherche justement.
-      Chaque écriture importée sera donc <strong>extournée</strong> : elle
+      Chaque écriture importée sera donc <b>extournée</b> : elle
       reste visible, et une écriture inverse l'annule.</div>`,
     partiel: `<div class="message alerte">
       <strong>Une partie seulement peut être retirée</strong>

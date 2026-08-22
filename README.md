@@ -243,19 +243,29 @@ filtres affichés, périmètre compris.
 * L'import se fait **en deux temps** : contrôle complet sans écriture, puis
   validation. Chaque anomalie est rapportée avec son **numéro de ligne**, et le
   message dit quoi faire.
-* **Ce qui n'est qu'un nom se crée tout seul.** Un sous-compte, un tiers, un
-  journal cités par le fichier et absents du dossier ne sont plus une anomalie :
-  ils sont créés avec l'import. Exiger l'inverse revenait à faire reprendre le
-  dossier trois fois, dans le bon ordre, en corrigeant à chaque tour. Ce qui
-  est créé est **annoncé avant** (« 3 comptes et 12 tiers seront créés au
-  passage », avec la liste), **redit après**, et **rattaché à la reprise** :
-  l'annuler les reprend, sauf ceux qui servent déjà ailleurs. Un compte hérite
-  de son compte de rattachement — nature, rubrique, caractère lettrable ; un
-  tiers est rangé d'après le sien (411 client, 401 fournisseur, 4671 mandant,
-  421 salarié).
-* **Ce qui porte une décision continue d'être réclamé** : un programme, un lot,
-  un bail, un bien ont une surface, un prix, une durée, qui ne s'inventent pas
-  au milieu d'une reprise.
+* **Aucun ordre à respecter.** Les fichiers se déposent dans l'ordre qui
+  arrange celui qui les a, et seulement ceux qui l'intéressent. Ce qu'un
+  fichier cite et que le dossier ne connaît pas — un compte, un tiers, un
+  journal, un bien, un programme, un lot — est **créé avec lui**, avec son
+  seul nom, et marqué `incomplet`. C'est **annoncé avant** (« 3 comptes et 12
+  tiers seront créés au passage », avec la liste), **redit après**, et
+  **rattaché à la reprise** : l'annuler les reprend, sauf ceux qui servent
+  déjà ailleurs. Un compte hérite de son compte de rattachement — nature,
+  rubrique, caractère lettrable ; un tiers est rangé d'après le sien (411
+  client, 401 fournisseur, 4671 mandant, 421 salarié).
+* **Le fichier qui décrit vraiment remplit la fiche.** Une fiche `incomplet`
+  n'est pas « déjà enregistrée » : l'import qui la décrit la **complète** au
+  lieu de la sauter. Passer les lots avant les programmes revient donc à les
+  passer après. Une fiche déjà complète, elle, n'est jamais réécrite.
+* **Quatre renvois restent exigés, et ce n'est pas un ordre** : un règlement
+  se rattache à une facture, une quittance à un bail, une échéance à un
+  contrat VSP, un mouvement à un compte de trésorerie — sans quoi il irait se
+  poser sur un compte comptable choisi au hasard. Le message dit lequel et
+  pourquoi. Seule autre limite : un lot demande que sa colonne *Programme*
+  soit renseignée, faute de quoi on ne sait pas où le ranger.
+* La santé du dossier compte les fiches qui restent à compléter — en
+  information, pas en alerte : rien n'est faux, il manque un NIF ou une
+  surface.
 * Le fichier est lu **comme un journal se lit** : une cellule vide reprend la
   valeur de la ligne du dessus, de sorte que la date, le journal et le numéro
   ne s'écrivent qu'une fois par écriture. Le journal est reconnu par son code
@@ -461,7 +471,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
 python3 outils/test_http.py          # 63 contrôles du serveur et de l'interface
-python3 outils/test_comptable.py     # 311 contrôles de conformité comptable
+python3 outils/test_comptable.py     # 330 contrôles de conformité comptable
 python3 outils/test_mise_a_jour.py   # 39 contrôles du chemin de mise à jour
 python3 app.py --verifier            # intégrité de vos données
 ```
@@ -484,7 +494,7 @@ Onze familles, lançables séparément
 | `perimetre` | l'étanchéité entre le déclaré et le hors déclaration |
 | `cycles` | les cycles métier en mouvement : numérotation, saisies simultanées, une avance sur plan qui devient produit à la livraison, un loyer encaissé qui repart chez son propriétaire |
 | `reprises` | annuler un import déjà validé sans laisser de trou dans la numérotation ni effacer ce qui sert déjà |
-| `creation` | l'import crée ce dont il a besoin — et seulement cela : ce qui porte une décision reste réclamé |
+| `creation` | l'import crée ce qu'il cite, le complète quand le vrai fichier arrive, et nomme les quatre renvois qui restent exigés |
 | `sante` | les contrôles de santé du dossier, chacun mis à l'épreuve sur une anomalie provoquée pour lui |
 | `annuelles` | la DAS et l'état des clients, et surtout leurs recoupements |
 | `relances` | ce qui est dû et depuis quand, et la lettre à ses trois niveaux |
@@ -532,7 +542,7 @@ web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
 ├── test_http.py            63 contrôles serveur et interface
-├── test_comptable.py       311 contrôles de conformité comptable
+├── test_comptable.py       330 contrôles de conformité comptable
 ├── test_mise_a_jour.py     39 contrôles du chemin de mise à jour
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur

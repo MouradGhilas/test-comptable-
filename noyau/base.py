@@ -141,7 +141,7 @@ SCHEMA = Path(__file__).parent / "schema.sql"
 
 #: Version du schéma attendue par cette version du programme.
 #: À incrémenter dès qu'une migration est ajoutée ci-dessous.
-VERSION_SCHEMA = 7
+VERSION_SCHEMA = 8
 
 
 def colonnes(table: str) -> set[str]:
@@ -308,6 +308,26 @@ def _migration_7() -> None:
             "ON relances(societe_id, tiers_id, date)")
 
 
+#: Les tables dont une fiche peut naître d'une simple mention dans un fichier
+#: importé. Elles portent alors le drapeau `incomplet` jusqu'à ce qu'on les
+#: remplisse — à la main, ou par l'import du fichier qui les décrit vraiment.
+TABLES_A_COMPLETER = ("comptes", "tiers", "journaux", "biens", "programmes",
+                      "lots")
+
+
+def _migration_8() -> None:
+    """Une fiche créée en passant se souvient qu'elle est incomplète.
+
+    Un import qui cite un client, un compte ou un programme absent les crée
+    désormais plutôt que de tout rejeter — mais une fiche ainsi née n'a que
+    son nom. Le drapeau permet trois choses : le dire à l'écran, laisser
+    l'import du vrai fichier la compléter plus tard au lieu de la sauter, et
+    compter dans la santé du dossier ce qui reste à remplir.
+    """
+    for table in TABLES_A_COMPLETER:
+        ajoute_colonne(table, "incomplet", "INTEGER NOT NULL DEFAULT 0")
+
+
 #: version -> fonction de migration. Exécutées dans l'ordre croissant.
 MIGRATIONS = {
     2: _migration_2,
@@ -316,6 +336,7 @@ MIGRATIONS = {
     5: _migration_5,
     6: _migration_6,
     7: _migration_7,
+    8: _migration_8,
 }
 
 

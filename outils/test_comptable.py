@@ -2254,24 +2254,105 @@ def suite_creation(dos):
     v("la comptabilite reste equilibree", dos.equilibre_global())
 
     # ==================================================================
-    titre("5. Ce qui porte une decision continue d'etre reclame")
+    titre("5. Aucun ordre a respecter : le fichier qui cite cree la fiche")
     # ==================================================================
-    # Un lot, c'est une surface, un prix, un etage. L'inventer au milieu
-    # d'une reprise serait pire que de le reclamer.
-    LOTS = """Programme;N° lot;Type;Surface;Prix de vente
-PROG-INEXISTANT;A-12;appartement;85;12000000
+    # Le frere du demandeur importe ce qu'il veut, quand il veut. Un fichier
+    # de lots passe avant celui des programmes ne doit plus etre rejete : le
+    # programme nait avec son seul code, a completer.
+    LOTS = """Programme;N° lot;Type;Surface habitable;Prix de vente
+PROG-NEUF;A-12;appartement;85;12000000
+PROG-NEUF;A-13;appartement;95;13500000
 """
     a = dos.appel("/api/import/analyse", {
         "societe_id": sid, "modele": "lots", "contenu": b64(LOTS)})
-    v("un programme absent reste une anomalie", bool(a["anomalies"]),
+    v("un programme absent n'est plus une anomalie", not a["anomalies"],
       a["anomalies"])
-    v("… et le message nomme ce qui manque",
-      "PROG-INEXISTANT" in str(a["anomalies"]), a["anomalies"])
-    v("rien n'est propose a la creation",
-      not (a.get("a_creer") or {}).get("comptes"), a.get("a_creer"))
+    fiches = (a.get("a_creer") or {}).get("fiches", [])
+    v("… il est annonce a la creation",
+      [f["valeur"] for f in fiches] == ["PROG-NEUF"], fiches)
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "lots", "contenu": b64(LOTS)})
+    v("les deux lots sont crees", r["crees"] == 2, r)
+    prog = dos.sql("SELECT * FROM programmes WHERE societe_id = ? AND "
+                   "code = 'PROG-NEUF'", (sid,))
+    v("le programme existe", bool(prog))
+    v("… marque a completer", prog and prog[0]["incomplet"] == 1, prog)
+    v("… son intitule reprend son code faute de mieux",
+      prog and prog[0]["intitule"] == "PROG-NEUF", prog)
+    v("les lots sont bien ranges dedans",
+      dos.sql("SELECT COUNT(*) n FROM lots WHERE programme_id = ?",
+              (prog[0]["id"],))[0]["n"] == 2)
 
     # ==================================================================
-    titre("6. La balance de reprise se complete elle aussi")
+    titre("6. Le fichier qui decrit vraiment remplit la fiche")
+    # ==================================================================
+    PROGRAMMES = """Code;Intitulé;Commune;Wilaya;Surface terrain;Nombre de logements
+PROG-NEUF;Résidence Les Oliviers;Hydra;16 Alger;3200;48
+"""
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "programmes", "contenu": b64(PROGRAMMES)})
+    v("la fiche incomplete n'est plus « deja enregistree »",
+      a.get("nb_completes") == 1, a.get("nb_completes"))
+    v("… elle compte comme une ligne prete", a["nb_valides"] == 1, a)
+    v("… et n'est pas rangee dans les ignorees",
+      not a.get("nb_ignorees"), a.get("ignorees"))
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "programmes", "contenu": b64(PROGRAMMES)})
+    v("l'import annonce la fiche completee", r.get("completes") == 1, r)
+    prog = dos.sql("SELECT * FROM programmes WHERE societe_id = ? AND "
+                   "code = 'PROG-NEUF'", (sid,))
+    v("il n'y a toujours qu'un seul programme", len(prog) == 1, prog)
+    v("… son intitule est celui du fichier",
+      prog[0]["intitule"] == "Résidence Les Oliviers", prog[0]["intitule"])
+    v("… il n'est plus a completer", prog[0]["incomplet"] == 0, prog[0])
+    v("… et les lots y sont toujours",
+      dos.sql("SELECT COUNT(*) n FROM lots WHERE programme_id = ?",
+              (prog[0]["id"],))[0]["n"] == 2)
+
+    # Un second passage du meme fichier n'a plus rien a faire.
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "programmes", "contenu": b64(PROGRAMMES)})
+    v("une fiche complete redevient « deja enregistree »",
+      a.get("nb_ignorees") == 1 and not a.get("nb_completes"), a)
+
+    # ==================================================================
+    titre("7. Ce qui n'est pas un ordre mais une nature")
+    # ==================================================================
+    # Un lot sans programme du tout n'a nulle part ou se ranger, et un
+    # reglement sans facture ne regle rien. Les deux sont dits, et pourquoi.
+    SANS_PROG = """Programme;N° lot;Type
+;B-01;appartement
+"""
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "lots", "contenu": b64(SANS_PROG)})
+    v("un lot sans programme reste une anomalie", bool(a["anomalies"]),
+      a["anomalies"])
+    REGLEMENTS = """N° facture;Date;Montant;Sens
+FV-INCONNUE;01/06/{a};50000;encaissement
+""".format(a=annee)
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "reglements", "contenu": b64(REGLEMENTS)})
+    v("un reglement sans sa facture reste une anomalie", bool(a["anomalies"]),
+      a["anomalies"])
+    v("… et le message dit pourquoi, pas « importez d'abord »",
+      "se rattache" in str(a["anomalies"]), a["anomalies"])
+
+    # ==================================================================
+    titre("8. La sante du dossier compte ce qui reste a remplir")
+    # ==================================================================
+    dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "ecritures", "contenu": b64(fichier),
+        "fichier": "journal-mars-2.csv"})
+    exid = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]["id"]
+    sante = dos.appel(f"/api/sante?societe={sid}&exercice={exid}")
+    fiche = [a for a in sante["anomalies"] if a["cle"] == "fiches_incompletes"]
+    v("le controle signale les fiches a completer", bool(fiche), sante["anomalies"])
+    v("… sans crier a l'erreur comptable",
+      fiche and fiche[0]["niveau"] == "info", fiche)
+    v("… en disant lesquelles", fiche and fiche[0]["detail"], fiche)
+
+    # ==================================================================
+    titre("9. La balance de reprise se complete elle aussi")
     # ==================================================================
     BALANCE = """Compte;Intitulé;Débit;Crédit
 41102;Clients divers;450000;

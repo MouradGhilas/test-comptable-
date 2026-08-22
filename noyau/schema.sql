@@ -149,6 +149,9 @@ CREATE TABLE IF NOT EXISTS comptes (
     -- compte de TVA : collectee | deductible_bs | deductible_immo | precompte | a_payer
     role_tva    TEXT,
     actif       INTEGER NOT NULL DEFAULT 1,
+    -- fiche née d'une simple mention dans un fichier importé :
+    -- elle n'a que son nom tant que personne ne l'a remplie
+    incomplet   INTEGER NOT NULL DEFAULT 0,
     UNIQUE(societe_id, numero)
 );
 CREATE INDEX IF NOT EXISTS idx_comptes_num ON comptes(societe_id, numero);
@@ -167,6 +170,9 @@ CREATE TABLE IF NOT EXISTS journaux (
     type                TEXT NOT NULL,
     compte_contrepartie TEXT,
     actif               INTEGER NOT NULL DEFAULT 1,
+    -- fiche née d'une simple mention dans un fichier importé :
+    -- elle n'a que son nom tant que personne ne l'a remplie
+    incomplet   INTEGER NOT NULL DEFAULT 0,
     UNIQUE(societe_id, code)
 );
 
@@ -205,6 +211,9 @@ CREATE TABLE IF NOT EXISTS tiers (
     notes           TEXT,
     actif           INTEGER NOT NULL DEFAULT 1,
     cree_le         TEXT NOT NULL,
+    -- fiche née d'une simple mention dans un fichier importé :
+    -- elle n'a que son nom tant que personne ne l'a remplie
+    incomplet   INTEGER NOT NULL DEFAULT 0,
     UNIQUE(societe_id, code)
 );
 CREATE INDEX IF NOT EXISTS idx_tiers_soc_type ON tiers(societe_id, type);
@@ -440,6 +449,9 @@ CREATE TABLE IF NOT EXISTS biens (
     statut         TEXT NOT NULL DEFAULT 'disponible',
     description    TEXT,
     cree_le        TEXT NOT NULL,
+    -- fiche née d'une simple mention dans un fichier importé :
+    -- elle n'a que son nom tant que personne ne l'a remplie
+    incomplet   INTEGER NOT NULL DEFAULT 0,
     UNIQUE(societe_id, reference)
 );
 CREATE INDEX IF NOT EXISTS idx_biens_soc ON biens(societe_id, statut);
@@ -603,6 +615,9 @@ CREATE TABLE IF NOT EXISTS programmes (
     fgcmpi_taux       INTEGER NOT NULL DEFAULT 0,   -- centièmes de %
     notes             TEXT,
     cree_le           TEXT NOT NULL,
+    -- fiche née d'une simple mention dans un fichier importé :
+    -- elle n'a que son nom tant que personne ne l'a remplie
+    incomplet   INTEGER NOT NULL DEFAULT 0,
     UNIQUE(societe_id, code)
 );
 
@@ -639,6 +654,9 @@ CREATE TABLE IF NOT EXISTS lots (
     -- disponible | reserve | vendu | livre | bloque
     statut         TEXT NOT NULL DEFAULT 'disponible',
     notes          TEXT,
+    -- fiche née d'une simple mention dans un fichier importé :
+    -- elle n'a que son nom tant que personne ne l'a remplie
+    incomplet   INTEGER NOT NULL DEFAULT 0,
     UNIQUE(programme_id, numero)
 );
 CREATE INDEX IF NOT EXISTS idx_lots_prog ON lots(programme_id, statut);

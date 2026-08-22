@@ -161,11 +161,32 @@ LIBELLES_REFERENCE = {
 }
 
 #: Ce qu'un import crée de lui-même quand le fichier le désigne sans qu'il
-#: existe. Volontairement court : un tiers et un compte ne sont qu'un nom et
-#: un numéro, alors qu'un programme, un lot ou un bail portent des décisions
-#: — surface, prix, durée, indexation — qu'on ne devine pas et qu'on ne doit
-#: pas inventer au milieu d'une reprise.
-CREABLES = {"tiers", "compte"}
+#: existe : tout ce dont la référence **est** l'identité. Un client, un
+#: compte, un journal, un bien, un programme, un lot ne sont, vus d'un
+#: fichier qui les cite, qu'un nom ou un numéro. La fiche naît donc avec ce
+#: nom, marquée « à compléter », et le fichier qui la décrit vraiment la
+#: remplira plus tard — dans n'importe quel ordre.
+#:
+#: Quatre renvois n'y sont pas, et ce n'est pas un ordre imposé mais ce que
+#: ces objets sont : un règlement sans sa facture ne règle rien, une
+#: quittance sans son bail ne quitte rien, une échéance sans son contrat
+#: n'échoit de rien, et un mouvement sans son compte de trésorerie irait se
+#: poser sur un compte comptable choisi au hasard.
+CREABLES = {"tiers", "compte", "bien", "programme", "lot"}
+
+#: Comment fabriquer la fiche minimale d'une référence : la table, la colonne
+#: qui porte l'identité, et le champ où recopier ce nom faute de mieux.
+FICHES_MINIMALES = {
+    "bien": {"table": "biens", "cle": "reference", "recopie": "designation",
+             "defauts": {"type_bien": "appartement", "statut": "disponible"}},
+    "programme": {"table": "programmes", "cle": "code", "recopie": "intitule",
+                  "defauts": {"statut": "etude"}},
+    # Un lot n'existe que dans un programme : sans lui, la fiche n'aurait
+    # nulle part où se ranger. C'est le seul de la liste qui peut échouer.
+    "lot": {"table": "lots", "cle": "numero", "recopie": None,
+            "defauts": {"type_lot": "logement", "statut": "disponible"},
+            "parent": "programme"},
+}
 
 
 # ---------------------------------------------------------------------------
@@ -240,8 +261,8 @@ MODELES = {
             "(classes 6 et 7) si vous importez par ailleurs le détail des",
             "écritures de l'exercice : ils seraient comptés deux fois.",
             "",
-            "Les comptes absents du plan comptable sont signalés : créez-les",
-            "d'abord par le modèle « Plan comptable ».",
+            "Les comptes absents du plan comptable sont créés avec la balance,",
+            "d'après leur compte de rattachement, et marqués « à compléter ».",
         ],
         "colonnes": [
             Colonne("Compte", "Numéro du compte", "411", requis=True,
@@ -520,7 +541,8 @@ MODELES = {
             "Renseignez « Loyer mensuel » pour un bien en location, « Prix de",
             "vente » pour un bien à vendre.",
             "",
-            "Le propriétaire doit exister : importez vos tiers d'abord.",
+            "Le propriétaire n'a pas besoin d'exister : s'il est inconnu, il",
+            "est créé avec son nom, à compléter ensuite.",
         ],
         "colonnes": [
             Colonne("Référence", "Référence interne du bien", "APT-001",
@@ -562,7 +584,8 @@ MODELES = {
             "La commission s'exprime soit en taux (5 pour 5 %), soit en montant",
             "forfaitaire. Renseignez l'une ou l'autre.",
             "",
-            "Le bien et le mandant doivent exister : importez-les d'abord.",
+            "Le bien et le mandant n'ont pas besoin d'exister : inconnus, ils",
+            "sont créés avec leur référence, à compléter ensuite.",
         ],
         "colonnes": [
             Colonne("N° mandat", "Référence du mandat", "MD-2026-001",
@@ -597,8 +620,8 @@ MODELES = {
         "defauts": {"statut": "actif", "cree_le": util.maintenant,
                     "periodicite_mois": 1},
         "notice": [
-            "Le bien, le propriétaire et le locataire doivent exister :",
-            "importez vos tiers et vos biens d'abord.",
+            "Le bien, le propriétaire et le locataire sont créés s'ils sont",
+            "inconnus : aucun fichier n'est à passer avant celui-ci.",
             "",
             "« Jour d'échéance » est le jour du mois où le loyer est dû.",
             "",
@@ -751,7 +774,8 @@ MODELES = {
         "notice": [
             "Un lot = un logement ou un local à vendre.",
             "",
-            "Le programme doit exister : importez vos programmes d'abord.",
+            "Le programme est créé s'il est inconnu, avec son seul code : le",
+            "fichier des programmes le complétera, avant ou après celui-ci.",
             "",
             "« Statut » accepte : libre, reserve, vendu, livre.",
             "",
@@ -787,8 +811,10 @@ MODELES = {
         "table": "contrats_vsp", "cle_unique": "numero",
         "defauts": {"statut": "en_cours", "cree_le": util.maintenant},
         "notice": [
-            "Le programme, le lot et l'acquéreur doivent exister : importez-les",
-            "d'abord.",
+            "Le programme, le lot et l'acquéreur sont créés s'ils sont inconnus,",
+            "avec leur seul nom, à compléter ensuite. Un lot demande toutefois",
+            "que sa colonne « Programme » soit renseignée : sans elle, on ne",
+            "sait pas dans quel programme le ranger.",
             "",
             "« Montant encaissé » reprend le cumul déjà perçu à la date de",
             "reprise. Aucune écriture n'est générée : la balance d'ouverture",
@@ -837,7 +863,9 @@ MODELES = {
         "notice": [
             "Une ligne = une tranche de l'échéancier d'un contrat.",
             "",
-            "Le contrat doit exister : importez vos contrats VSP d'abord.",
+            "Le contrat, lui, doit exister : une échéance appartient à un",
+            "contrat, avec son prix et son plan de paiement. Passez le fichier",
+            "des contrats — avant ou après le reste, peu importe.",
             "",
             "Renseignez soit le pourcentage du prix, soit le montant.",
             "",
@@ -867,9 +895,11 @@ MODELES = {
     },
 }
 
-#: Ordre dans lequel reprendre un dossier : chaque étape s'appuie sur la
-#: précédente (une facture a besoin de son tiers, un bail de son bien…).
-ORDRE_CONSEILLE = [
+#: Ordre d'affichage des modèles à l'écran — un rangement, pas une marche à
+#: suivre. Les fichiers se déposent dans l'ordre qui arrange celui qui les a :
+#: ce qu'un fichier cite et qui n'existe pas encore est créé avec lui, puis
+#: complété par le fichier qui le décrit, qu'il arrive avant ou après.
+ORDRE_AFFICHAGE = [
     "comptes", "tiers", "tresorerie", "balance_ouverture", "biens", "mandats",
     "baux", "quittances", "programmes", "lots", "contrats_vsp", "echeances_vsp",
     "immobilisations", "salaries", "factures_vente", "factures_achat",
@@ -924,16 +954,19 @@ def construit_modele(cle: str) -> bytes:
 def api_modeles(ctx):
     return {
         "groupes": GROUPES,
-        "ordre_conseille": ORDRE_CONSEILLE,
+        # Ce que l'import crée de lui-même, et les quelques renvois qui
+        # restent exigés — pour que l'écran le dise sans les énumérer à la main.
+        "creables": sorted(LIBELLES_REFERENCE[r] for r in CREABLES),
+        "exiges": [{"libelle": LIBELLES_REFERENCE[r], "pourquoi": p.lstrip(" —")}
+                   for r, p in POURQUOI_EXIGE.items()],
         "modeles": [
             {"cle": cle, "libelle": MODELES[cle]["libelle"],
              "groupe": MODELES[cle].get("groupe", "Comptabilité"),
-             "rang": ORDRE_CONSEILLE.index(cle) + 1 if cle in ORDRE_CONSEILLE else 99,
              "colonnes": [{"nom": c.nom, "requis": c.requis, "aide": c.aide}
                           for c in MODELES[cle]["colonnes"]]}
             for cle in sorted(MODELES,
-                              key=lambda c: ORDRE_CONSEILLE.index(c)
-                              if c in ORDRE_CONSEILLE else 99)
+                              key=lambda c: ORDRE_AFFICHAGE.index(c)
+                              if c in ORDRE_AFFICHAGE else 99)
         ],
     }
 
@@ -1092,6 +1125,8 @@ class Manquants:
         self.comptes: dict = {}
         self.tiers: dict = {}
         self.journaux: dict = {}
+        #: {(reference, valeur, parent) : {...}} — biens, programmes, lots.
+        self.fiches: dict = {}
 
     def compte(self, numero: str) -> None:
         if numero and numero not in self.comptes:
@@ -1114,13 +1149,24 @@ class Manquants:
                 "type": TYPES_JOURNAL.get(propre, "od"),
             }
 
+    def fiche(self, reference: str, valeur: str, parent: str = "") -> None:
+        """Une fiche qui n'a encore que son nom : bien, programme, lot."""
+        cle = (reference, str(valeur).strip().lower(), str(parent or "").lower())
+        if valeur and cle not in self.fiches:
+            self.fiches[cle] = {"reference": reference,
+                                "valeur": str(valeur).strip(),
+                                "parent": str(parent or "").strip(),
+                                "libelle": LIBELLES_REFERENCE.get(reference,
+                                                                  reference)}
+
     def resume(self) -> dict:
         return {"comptes": list(self.comptes.values()),
                 "tiers": list(self.tiers.values()),
-                "journaux": list(self.journaux.values())}
+                "journaux": list(self.journaux.values()),
+                "fiches": list(self.fiches.values())}
 
     def __bool__(self) -> bool:
-        return bool(self.comptes or self.tiers or self.journaux)
+        return bool(self.comptes or self.tiers or self.journaux or self.fiches)
 
 
 def cree_manquants(societe_id: int, a_creer: dict, utilisateur=None) -> dict:
@@ -1136,6 +1182,7 @@ def cree_manquants(societe_id: int, a_creer: dict, utilisateur=None) -> dict:
             continue
         donnees = {c: v for c, v in compte.items() if c != "parent"}
         donnees["societe_id"] = societe_id
+        donnees["incomplet"] = 1
         crees.setdefault("comptes", []).append(db.insere("comptes", donnees))
 
     for tiers in (a_creer or {}).get("tiers", []):
@@ -1150,7 +1197,7 @@ def cree_manquants(societe_id: int, a_creer: dict, utilisateur=None) -> dict:
             # Le compte collectif suit le type : c'est là que ses écritures
             # iront se ranger.
             "compte_comptable": COMPTES_PAR_TYPE.get(tiers["type"], "411"),
-            "actif": 1, "cree_le": util.maintenant(),
+            "actif": 1, "incomplet": 1, "cree_le": util.maintenant(),
         }))
 
     for journal in (a_creer or {}).get("journaux", []):
@@ -1159,8 +1206,33 @@ def cree_manquants(societe_id: int, a_creer: dict, utilisateur=None) -> dict:
             continue
         crees.setdefault("journaux", []).append(db.insere("journaux", {
             "societe_id": societe_id, "code": journal["code"],
-            "libelle": journal["libelle"], "type": journal["type"], "actif": 1,
+            "libelle": journal["libelle"], "type": journal["type"],
+            "actif": 1, "incomplet": 1,
         }))
+
+    # Les programmes d'abord : un lot a besoin du sien, et il vient peut-être
+    # d'être créé à la ligne du dessus.
+    fiches = (a_creer or {}).get("fiches", [])
+    ordre = {"programme": 0, "bien": 1, "lot": 2}
+    for fiche in sorted(fiches, key=lambda f: ordre.get(f["reference"], 9)):
+        forme = FICHES_MINIMALES.get(fiche["reference"])
+        if not forme or resout_reference(fiche["reference"], societe_id,
+                                         fiche["valeur"]):
+            continue
+        donnees = {"societe_id": societe_id, "incomplet": 1,
+                   forme["cle"]: fiche["valeur"], **forme["defauts"]}
+        if forme.get("recopie"):
+            donnees[forme["recopie"]] = fiche["valeur"]
+        if forme.get("parent"):
+            parent_id = resout_reference(forme["parent"], societe_id,
+                                         fiche.get("parent"))
+            if not parent_id:
+                continue          # signalé à l'analyse, pas créé en silence
+            donnees[f"{forme['parent']}_id"] = parent_id
+        if "cree_le" in db.colonnes(forme["table"]):
+            donnees["cree_le"] = util.maintenant()
+        crees.setdefault(forme["table"], []).append(
+            db.insere(forme["table"], donnees))
     if crees and utilisateur is not None:
         db.trace("creation_import", "reprise", None,
                  {t: len(i) for t, i in crees.items()}, utilisateur)
@@ -1180,13 +1252,24 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
     # réponse : l'élément est déjà enregistré — il n'y a rien à faire, ce
     # n'est pas une erreur — ou il figure deux fois dans le fichier, et là
     # il faut le corriger. On garde la ligne du premier passage pour le dire.
-    deja_en_base = set()
+    # {clé : (id, à compléter ?)} — une fiche née d'une simple mention dans
+    # un autre fichier n'a que son nom. Quand le fichier qui la décrit
+    # arrive, il doit la remplir, pas passer son chemin : c'est ce qui rend
+    # l'ordre des imports indifférent.
+    deja_en_base: dict = {}
     if cle_unique:
-        deja_en_base = {str(r[cle_unique]).lower() for r in db.lignes(
-            f"SELECT {cle_unique} FROM {table} WHERE societe_id = ?", (societe_id,))
-            if r[cle_unique] is not None}
+        a_completer = "incomplet" in db.colonnes(table)
+        for r in db.lignes(
+                f"SELECT id, {cle_unique}"
+                + (", incomplet" if a_completer else "")
+                + f" FROM {table} WHERE societe_id = ?", (societe_id,)):
+            if r[cle_unique] is None:
+                continue
+            deja_en_base[str(r[cle_unique]).lower()] = (
+                r["id"], bool(r["incomplet"]) if a_completer else False)
     vus_dans_le_fichier: dict = {}
     manquants = Manquants(societe_id)
+    completes = 0
 
     for decalage, rang in enumerate(rangs):
         numero_ligne = decalage + 2          # +1 en-tête, +1 pour compter de 1
@@ -1219,19 +1302,21 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
                 identifiant = resout_reference(colonne.reference, societe_id,
                                                valeur, parent_id)
                 if identifiant is None and colonne.reference in CREABLES:
-                    # Un tiers ou un compte désigné par son nom n'engage
-                    # aucune décision : il se crée. Un programme, un lot, un
-                    # bail, si — ceux-là restent à saisir en connaissance de
-                    # cause, et l'import continue de les réclamer.
-                    if colonne.reference == "tiers":
-                        manquants.tiers_nomme(valeur)
-                    else:
-                        manquants.compte(str(valeur).strip())
+                    # La référence est l'identité : la fiche naît avec ce
+                    # nom, marquée « à compléter ». Aucun ordre à respecter,
+                    # donc — le fichier qui la décrit vraiment la remplira,
+                    # qu'il passe avant ou après.
+                    manque = _reclame(manquants, colonne, valeur,
+                                      brut.get(colonne.parent or "", ""))
+                    if manque:
+                        erreurs.append(manque)
+                    elif colonne.reference == "compte":
                         enregistrement[colonne.champ] = str(valeur).strip()
                     continue
                 if identifiant is None:
                     libelle = LIBELLES_REFERENCE[colonne.reference]
-                    erreurs.append(f"{libelle} « {valeur} » introuvable")
+                    erreurs.append(f"{libelle} « {valeur} » introuvable"
+                                   + _pourquoi_exige(colonne.reference))
                     continue
                 resolus[colonne.nom] = identifiant
                 enregistrement[colonne.champ] = identifiant
@@ -1247,6 +1332,21 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
         affichee = (brut.get(_nom_de_champ(modele, cle_unique))
                     if cle_unique else "")
         if reference and reference in deja_en_base:
+            identifiant, a_remplir = deja_en_base[reference]
+            if a_remplir:
+                # Elle existe parce qu'un autre fichier l'a citée, et n'a que
+                # son nom. Cette ligne-ci la décrit : on la remplit.
+                enregistrement["_completer"] = identifiant
+                erreurs += _controles_specifiques(societe_id, cle_modele, brut,
+                                                  enregistrement)
+                for message in erreurs:
+                    anomalies.append({"ligne": numero_ligne, "message": message})
+                apercu.append({"ligne": numero_ligne, "valeurs": brut,
+                               "erreurs": erreurs, "complete": True})
+                if not erreurs:
+                    prets.append(enregistrement)
+                    completes += 1
+                continue
             # Rien à faire n'est pas une erreur : l'import reprend l'existant,
             # il ne le réécrit pas. Bloquer tout le fichier pour cela serait
             # absurde — un plan comptable repris est déjà là aux neuf dixièmes.
@@ -1273,12 +1373,50 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
     resultat = {"prets": prets, "anomalies": anomalies, "apercu": apercu,
                 "ignorees": ignorees, "nb_ignorees": len(ignorees),
                 "nb_valides": len(prets), "a_creer": manquants.resume(),
+                "nb_completes": completes,
                 "nb_rejetes": len(apercu) - len(prets) - len(ignorees)}
     diagnostic = _fichier_suspect(modele, cle_unique, vus_dans_le_fichier,
                                   ignorees, len(apercu))
     if diagnostic:
         resultat["avertissement"] = diagnostic
     return resultat
+
+
+def _reclame(manquants, colonne, valeur, parent) -> str | None:
+    """Inscrit la fiche à créer. Renvoie un message si elle ne peut pas l'être."""
+    if colonne.reference == "tiers":
+        manquants.tiers_nomme(valeur)
+        return None
+    if colonne.reference == "compte":
+        manquants.compte(str(valeur).strip())
+        return None
+    forme = FICHES_MINIMALES.get(colonne.reference, {})
+    if forme.get("parent") and not parent:
+        # Le seul cas où la fiche minimale ne suffit pas : un lot sans son
+        # programme n'a nulle part où se ranger.
+        return (f"le lot « {valeur} » est inconnu, et la colonne "
+                f"« Programme » n'est pas renseignée : sans elle, impossible "
+                f"de savoir dans quel programme le créer")
+    manquants.fiche(colonne.reference, valeur, parent)
+    return None
+
+
+#: Pourquoi ces quatre-là restent exigés. Ce n'est pas un ordre d'import :
+#: c'est ce que l'objet est. On le dit dans le message plutôt que de laisser
+#: croire à une contrainte arbitraire.
+POURQUOI_EXIGE = {
+    "tresorerie": " — précisez d'abord ce compte dans Trésorerie, pour que "
+                  "les mouvements ne se posent pas sur un compte comptable "
+                  "choisi au hasard",
+    "bail": " — un loyer se rattache à un bail, avec sa durée et son montant : "
+            "passez le fichier des baux, dans l'ordre qui vous arrange",
+    "contrat_vsp": " — une échéance appartient à un contrat de vente sur plan : "
+                   "passez le fichier des contrats, avant ou après le reste",
+}
+
+
+def _pourquoi_exige(reference: str) -> str:
+    return POURQUOI_EXIGE.get(reference, "")
 
 
 def _fichier_suspect(modele, cle_unique, vus, ignorees, nb_lignes) -> str | None:
@@ -1376,8 +1514,18 @@ def _valeur_defaut(defaut, societe_id, enregistrement):
 
 
 def _importe_generique(societe_id, modele, rangs) -> dict:
-    identifiants = []
+    identifiants, completes = [], []
     for enregistrement in rangs:
+        # Une fiche qui n'avait que son nom : cette ligne la décrit enfin.
+        # Elle est remplie, pas dupliquée — et elle n'appartient pas à cet
+        # import, qui ne l'a pas créée : l'annuler ne doit pas l'emporter.
+        a_completer = enregistrement.pop("_completer", None)
+        if a_completer:
+            donnees = {c: v for c, v in enregistrement.items() if v is not None}
+            donnees["incomplet"] = 0
+            db.modifie(modele["table"], a_completer, donnees)
+            completes.append(a_completer)
+            continue
         if not modele.get("sans_societe"):
             enregistrement["societe_id"] = societe_id
         for champ, defaut in modele.get("defauts", {}).items():
@@ -1391,7 +1539,8 @@ def _importe_generique(societe_id, modele, rangs) -> dict:
         identifiants.append(
             db.insere(modele["table"], {c: v for c, v in enregistrement.items()
                                         if v is not None}))
-    return {"nb": len(rangs), "objets": {modele["table"]: identifiants}}
+    return {"nb": len(rangs), "objets": {modele["table"]: identifiants},
+            "completes": {modele["table"]: completes} if completes else {}}
 
 
 # ---------------------------------------------------------------------------
@@ -1816,8 +1965,10 @@ def analyse_reglements(societe_id, rangs, association):
         if not numero:
             erreurs.append("« N° facture » est obligatoire")
         elif not facture:
-            erreurs.append(f"la facture n° {numero} est introuvable : "
-                           "importez d'abord vos factures")
+            erreurs.append(
+                f"la facture n° {numero} est introuvable — un règlement se "
+                "rattache à une facture : passez le fichier des factures, "
+                "avant ou après celui-ci")
         if not date:
             erreurs.append("date de règlement incompréhensible")
         if montant <= 0:
@@ -1830,7 +1981,8 @@ def analyse_reglements(societe_id, rangs, association):
                            f"({', '.join(sorted(MODES_REGLEMENT))})")
         tresorerie_id = resout_reference("tresorerie", societe_id, tresorerie)
         if tresorerie and tresorerie_id is None:
-            erreurs.append(f"compte de trésorerie « {tresorerie} » introuvable")
+            erreurs.append(f"compte de trésorerie « {tresorerie} » introuvable"
+                           + _pourquoi_exige("tresorerie"))
 
         if facture and not erreurs:
             deja = facture["montant_regle"] + cumul.get(facture["id"], 0)
@@ -2017,6 +2169,9 @@ def api_valide(ctx):
             "nb_crees": crees,
             "objets": json.dumps({
                 "tables": bilan.get("objets", {}),
+                # Complétées, pas créées : annuler l'import ne les emporte pas,
+                # elles existaient avant lui.
+                "completes": bilan.get("completes", {}),
                 "compteurs": _compteurs_consommes(
                     compteurs_avant, _photo_compteurs(societe_id)),
                 "factures_reglees": bilan.get("factures_reglees", []),
@@ -2028,6 +2183,7 @@ def api_valide(ctx):
 
     return {"crees": crees, "rejetes": resultat["nb_rejetes"],
             "ignorees": resultat.get("nb_ignorees", 0),
+            "completes": resultat.get("nb_completes", 0),
             "import_id": import_id, "anomalies": resultat["anomalies"],
             "prealables": {t: len(i) for t, i in prealables.items()},
             "libelle": resultat["libelle"]}
@@ -2035,7 +2191,7 @@ def api_valide(ctx):
 
 def _quelque_chose_a_creer(a_creer) -> bool:
     return any((a_creer or {}).get(quoi) for quoi in
-               ("comptes", "tiers", "journaux"))
+               ("comptes", "tiers", "journaux", "fiches"))
 
 
 def _photo_compteurs(societe_id: int) -> dict:
@@ -2303,6 +2459,7 @@ def _details_import(imp: dict) -> dict:
             "SELECT * FROM reglements WHERE import_id = ? ORDER BY id",
             (identifiant,)),
         "tables": objets.get("tables") or {},
+        "completes": objets.get("completes") or {},
         "compteurs": objets.get("compteurs") or {},
         "factures_reglees": objets.get("factures_reglees") or [],
     }
@@ -2496,6 +2653,9 @@ def api_plan_annulation(ctx):
             "factures": len(detail["factures"]),
             "reglements": len(detail["reglements"]),
             "objets": {t: len(i) for t, i in detail["tables"].items()},
+            # Ces fiches-là existaient avant l'import, qui n'a fait que les
+            # remplir : elles restent, et l'écran doit le dire.
+            "completes": {t: len(i) for t, i in detail["completes"].items()},
         },
     }
     if imp["annule_le"]:

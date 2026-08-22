@@ -3,6 +3,28 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.7.9
+
+- **Plus aucun ordre d'importation.** L'écran affichait une colonne « Ordre »
+  numérotée de 1 à 18 et un encadré « Suivez l'ordre indiqué ». C'est fini :
+  déposez les fichiers que vous voulez, dans l'ordre qui vous arrange.
+- **Ce qu'un fichier cite, l'import le crée** — comptes, tiers, journaux
+  (déjà en 1.7.8), et désormais aussi **biens, programmes et lots**. La fiche
+  naît avec son seul nom et reste **marquée « à compléter »**.
+- **Le fichier qui décrit vraiment remplit la fiche.** Passez le fichier des
+  programmes après celui des lots : au lieu de dire « déjà enregistré, rien à
+  faire », l'import **complète** le programme créé en passant. Avant, après :
+  cela revient au même. Une fiche déjà complète, elle, reste intacte — un
+  import ne réécrit jamais ce que vous avez saisi.
+- **Les quatre exceptions sont nommées, et expliquées.** Un règlement se
+  rattache à une facture, une quittance à un bail, une échéance à un contrat,
+  un mouvement à un compte de trésorerie. Ce n'est pas un ordre imposé, c'est
+  ce que sont ces objets — et le message le dit, au lieu d'un « importez
+  d'abord… ».
+- **Santé du dossier** : un nouveau contrôle compte les fiches créées par un
+  import qui restent à remplir. En information, pas en alerte : rien n'est
+  faux, il manque seulement l'adresse d'un client ou la surface d'un lot.
+
 ## 1.7.8
 
 - **On peut revenir à une version précédente.** Une mise à jour qui déplaît

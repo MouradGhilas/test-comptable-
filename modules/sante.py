@@ -291,9 +291,52 @@ def _sauvegarde(societe_id, ex, anomalies):
 
 
 #: Ordre d'exécution : du plus grave au plus anodin.
+#: Les fiches qu'un import peut créer d'une simple mention, et le nom qu'on
+#: leur donne à l'écran. Voir `noyau.base.TABLES_A_COMPLETER`.
+FICHES_INCOMPLETES = {
+    "comptes": ("compte", "comptes", "/parametres"),
+    "tiers": ("tiers", "tiers", "/tiers"),
+    "journaux": ("journal", "journaux", "/parametres"),
+    "biens": ("bien", "biens", "/agence/biens"),
+    "programmes": ("programme", "programmes", "/promotion/programmes"),
+    "lots": ("lot", "lots", "/promotion/programmes"),
+}
+
+
+def _fiches_a_completer(societe_id, ex, anomalies):
+    """Ce qu'un import a créé en passant, et que personne n'a rempli depuis.
+
+    Un import qui cite un client absent le crée plutôt que de tout rejeter :
+    la fiche n'a alors que son nom. Ce n'est pas une erreur comptable — les
+    écritures sont justes — mais un état des lieux à ne pas laisser durer,
+    sans quoi le fichier des tiers reste indéfiniment à passer.
+    """
+    total, detail = 0, []
+    for table, (un, pluriel, route_ecran) in FICHES_INCOMPLETES.items():
+        if "incomplet" not in db.colonnes(table):
+            continue
+        nombre = db.valeur(
+            f"SELECT COUNT(*) FROM {table} WHERE societe_id = ? AND incomplet = 1",
+            (societe_id,), 0)
+        if nombre:
+            total += nombre
+            detail.append(f"{nombre} {pluriel if nombre > 1 else un}")
+    if total:
+        anomalies.append(_anomalie(
+            "fiches_incompletes", "info",
+            f"{total} fiche(s) créée(s) par un import restent à compléter",
+            "Un import les a créées parce qu'un fichier les citait, avec leur "
+            "seul nom. Rien n'est faux pour autant : les écritures les "
+            "utilisent normalement. Il manque ce qui les décrit — adresse et "
+            "NIF d'un client, surface d'un lot. Passez le fichier qui les "
+            "décrit : il les remplira au lieu de les recréer. Vous pouvez "
+            "aussi les compléter à la main, ou les laisser ainsi.",
+            nombre=total, detail=detail, route_ecran="/parametres"))
+
+
 CONTROLES = [_equilibre, _numerotation, _caisse, _factures_sans_ecriture,
              _tiers_inverses, _tva_declaree, _brouillons, _justificatifs,
-             _lettrage, _sauvegarde]
+             _lettrage, _fiches_a_completer, _sauvegarde]
 
 POIDS = {"critique": 0, "alerte": 1, "info": 2}
 
