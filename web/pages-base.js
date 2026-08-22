@@ -1215,6 +1215,8 @@ async function ongletMaj(zone) {
       </div>
       <div id="maj-resultat"></div>`)}
 
+    <div id="maj-bibliotheque"></div>
+
     ${d.changelog ? carte('Ce que contient votre version', `
       <div class="notes-version">${notesEnHtml(d.changelog)}</div>`) : ''}`;
 
@@ -1224,7 +1226,89 @@ async function ongletMaj(zone) {
     $('#maj-resultat').innerHTML = '';
   };
   $('#maj-controler').onclick = controleMaj;
+  remplitBibliotheque();
   annonceVersionPubliee();
+}
+
+/* Les versions gardées sur le poste. Une mise à jour qu'on regrette doit
+   pouvoir être défaite : sans cela, on hésite à en installer une. Le fichier
+   reçu une fois reste donc disponible, et la version en place est archivée
+   avant d'être remplacée. */
+async function remplitBibliotheque() {
+  const hote = $('#maj-bibliotheque');
+  if (!hote) return;
+  let d;
+  try { d = await api('/api/maj/versions'); } catch (err) { return; }
+  const versions = d.versions || [];
+  const place = versions.reduce((t, v) => t + (v.taille || 0), 0);
+
+  const etat = (v) => {
+    if (v.installee) return 'Version que vous utilisez';
+    if (v.sens === 'avance') return 'Plus récente que la vôtre';
+    if (v.donnees_compatibles) return 'Retour possible, sans toucher aux données';
+    return 'Retour possible, en remettant aussi les données d\'alors';
+  };
+  const libelleBouton = (v) => (v.installee ? 'Réinstaller'
+    : v.sens === 'avance' ? 'Installer' : 'Revenir à cette version');
+
+  hote.innerHTML = carte('Versions présentes sur ce poste', `
+    <p class="petit">
+      Chaque version installée est conservée ici&nbsp;: vous pouvez y revenir
+      sans redemander le fichier à personne. ${versions.length} version(s),
+      ${_octets(place)} dans <code>${ech(d.dossier)}</code>.
+    </p>
+    ${versions.length ? `<table class="tableau"><thead><tr>
+        <th>Version</th><th>Reçue le</th><th>Ce qu'elle permet</th><th></th>
+      </tr></thead><tbody>
+      ${versions.map((v) => `<tr>
+        <td><strong>${ech(v.version)}</strong>
+          ${v.installee ? ' <span class="etiquette succes">en cours</span>' : ''}
+          ${!v.installee && !v.donnees_compatibles
+            ? ' <span class="etiquette alerte">données à remettre</span>' : ''}</td>
+        <td class="petit">${ech(v.date)}<br><span class="tres-petit">${_octets(v.taille)}</span></td>
+        <td class="petit">${ech(etat(v))}</td>
+        <td style="text-align:right; white-space:nowrap">
+          <button class="petit-bouton" data-version="${ech(v.fichier)}"
+            >${libelleBouton(v)}</button>
+          ${v.installee ? '' : `<button class="petit-bouton plat"
+            data-oublier="${ech(v.fichier)}"
+            title="Retirer ce paquet du poste">Retirer</button>`}
+        </td></tr>`).join('')}
+      </tbody></table>`
+    : `<div class="vide">Aucun paquet conservé pour l'instant. La version que
+       vous utilisez y sera rangée dès la prochaine ouverture de cet écran.</div>`}
+    <div id="maj-choix"></div>`);
+
+  hote.querySelectorAll('[data-version]').forEach((b) => {
+    b.onclick = () => proposeVersion(b.dataset.version);
+  });
+  hote.querySelectorAll('[data-oublier]').forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm(`Retirer ce paquet de ce poste ? Vous ne pourrez plus
+revenir à cette version sans qu'on vous renvoie le fichier.`)) return;
+      try {
+        await envoie('/api/maj/versions?fichier='
+                     + encodeURIComponent(b.dataset.oublier), {}, 'DELETE');
+        notifie('Paquet retiré.', 'succes');
+        remplitBibliotheque();
+      } catch (err) { notifie(err.message, 'danger'); }
+    };
+  });
+}
+
+/** Contrôle un paquet déjà présent sur le poste, et propose ce qu'il permet. */
+async function proposeVersion(fichier) {
+  const zone = $('#maj-choix');
+  if (!zone) return;
+  zone.innerHTML = '<div class="vide">Contrôle du paquet…</div>';
+  try {
+    const d = await envoie('/api/maj/analyse', { fichier });
+    afficheControleMaj(zone, d, { fichier });
+    zone.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (err) {
+    zone.innerHTML = `<div class="message danger"><strong>Paquet inutilisable</strong>
+      ${ech(err.message)}</div>`;
+  }
 }
 
 /* Si l'utilisateur a fermé l'onglet pendant l'installation — ou rouvert
@@ -1335,45 +1419,80 @@ async function controleMaj() {
   try {
     const contenu = await litFichierBase64(_paquetMaj);
     const d = await envoie('/api/maj/analyse', { contenu });
-    afficheControleMaj(zone, d, contenu);
+    afficheControleMaj(zone, d, { contenu });
   } catch (err) {
     zone.innerHTML = `<div class="message danger"><strong>Fichier refusé</strong>
       ${ech(err.message)}</div>`;
   }
 }
 
-function afficheControleMaj(zone, d, contenu) {
-  if (d.avertissement) {
-    zone.innerHTML = `<div class="message alerte">
-      <strong>Rien à faire</strong>${ech(d.avertissement)}</div>`;
-    return;
-  }
-  zone.innerHTML = `
-    <div class="message succes">
-      <strong>Version ${ech(d.version)} prête à être installée</strong>
-      Vous êtes en ${ech(d.version_installee)}. ${d.fichiers} fichier(s) seront
-      remplacés. Votre comptabilité n'est pas touchée.
-    </div>
-    ${d.changelog ? `<div class="notes-version">${notesEnHtml(d.changelog)}</div>` : ''}
-    <div class="rangee" style="margin-top:12px">
-      <button class="primaire" id="maj-appliquer">
-        Installer la version ${ech(d.version)}</button>
-    </div>`;
+/**
+ * Ce que le paquet ferait, et le bouton qui le fait. Trois cas : installer
+ * plus récent, réinstaller la même — une mise à jour restée à mi-chemin se
+ * répare ainsi —, ou revenir en arrière. Le retour se confirme, et si la
+ * base a pris de l'avance sur la version visée, il faut choisir jusqu'où
+ * remonter les données : ce qui a été saisi depuis serait perdu, et c'est
+ * dit avant, pas après.
+ *
+ * `charge` désigne le paquet : `{ contenu }` s'il vient d'être déposé,
+ * `{ fichier }` s'il est déjà rangé sur le poste.
+ */
+function afficheControleMaj(zone, d, charge) {
+  const s = d.situation || {};
+  const avecDonnees = s.action === 'revenir_avec_donnees';
+  const sansIssue = avecDonnees && !s.possible;
+  const sauvegardes = d.sauvegardes || [];
 
-  $('#maj-appliquer', zone).onclick = async () => {
-    const bouton = $('#maj-appliquer', zone);
+  zone.innerHTML = `
+    <div class="message ${ech(s.ton || 'info')}">
+      <strong>${ech(s.titre || '')}</strong>${ech(s.detail || '')}
+    </div>
+    ${d.changelog && s.action === 'installer'
+      ? `<div class="notes-version">${notesEnHtml(d.changelog)}</div>` : ''}
+    ${avecDonnees && s.possible ? `
+      <label class="champ" style="max-width:520px">
+        <span>Données à remettre en place</span>
+        <select id="maj-sauvegarde">
+          ${sauvegardes.map((v) => `<option value="${ech(v.nom)}">
+            ${ech(v.date)} — faite par la version ${ech(v.version)}
+            (${_octets(v.taille)})</option>`).join('')}
+        </select>
+      </label>
+      <div class="message danger">
+        <strong>Ce qui a été saisi après cette sauvegarde sera perdu.</strong>
+        Une sauvegarde de l'état actuel est prise juste avant&nbsp;: si vous
+        changez d'avis, vous la retrouverez dans l'écran Sauvegardes.
+      </div>` : ''}
+    ${s.confirmation && !sansIssue ? `
+      <label class="champ" style="max-width:300px">
+        <span>Saisissez ${ech(s.confirmation)} pour confirmer</span>
+        <input id="maj-confirmation" autocomplete="off" spellcheck="false"></label>` : ''}
+    ${sansIssue ? '' : `<div class="rangee" style="margin-top:12px">
+      <button class="primaire" id="maj-appliquer">${ech(s.bouton || 'Installer')}</button>
+    </div>`}`;
+
+  const bouton = $('#maj-appliquer', zone);
+  if (!bouton) return;
+  bouton.onclick = async () => {
+    const corps = { ...charge };
+    if (s.confirmation) corps.confirmation = ($('#maj-confirmation', zone) || {}).value || '';
+    if (avecDonnees) corps.sauvegarde = ($('#maj-sauvegarde', zone) || {}).value || '';
     bouton.disabled = true;
-    bouton.textContent = 'Installation en cours…';
+    bouton.textContent = 'Opération en cours…';
     try {
-      const r = await envoie('/api/maj/appliquer', { contenu });
+      const r = await envoie('/api/maj/appliquer', corps);
       zone.innerHTML = `<div class="message succes">
-        <strong>Mise à jour en cours</strong>${ech(r.message)}</div>`;
+        <strong>En cours</strong>${ech(r.message)}</div>`;
       // Le serveur s'arrête : la sonde de reconnexion reprendra la main et
       // rechargera la page dès que la nouvelle version répondra.
-      attendRetourApresMaj(r.version);
+      attendRetourApresMaj(r.version, r.action);
     } catch (err) {
-      zone.innerHTML = `<div class="message danger">
-        <strong>Mise à jour refusée</strong>${ech(err.message)}</div>`;
+      bouton.disabled = false;
+      bouton.textContent = s.bouton || 'Installer';
+      const alerte = document.createElement('div');
+      alerte.className = 'message danger';
+      alerte.innerHTML = `<strong>Refusé</strong>${ech(err.message)}`;
+      zone.prepend(alerte);
     }
   };
 }
@@ -1398,12 +1517,17 @@ const ETAPES_ATTENDUES = [
 const DELAI_MAX_MAJ = 300;
 
 /** Panneau plein écran : attente, puis résultat réel de la mise à jour. */
-function attendRetourApresMaj(version) {
+function attendRetourApresMaj(version, action) {
+  const titres = {
+    revenir: `Retour à la version ${ech(version)}`,
+    revenir_avec_donnees: `Retour à la version ${ech(version)}`,
+    reinstaller: `Réinstallation de la version ${ech(version)}`,
+  };
   const panneau = document.createElement('div');
   panneau.className = 'ecran-maj';
   panneau.innerHTML = `<div class="carte-maj">
       <div class="logo-grand">⚙️</div>
-      <h2>Installation de la version ${ech(version)}</h2>
+      <h2>${titres[action] || `Installation de la version ${ech(version)}`}</h2>
       <p class="petit">L'application se ferme, s'installe et se rouvre toute
         seule. Ne fermez pas cette fenêtre : elle vous dira ce qui s'est passé.</p>
       <ol class="etapes-maj">${ETAPES_ATTENDUES.map((e) =>
@@ -1538,10 +1662,12 @@ async function ongletImport(zone) {
         <em>avant</em> d'enregistrer quoi que ce soit.
       </div>
       <div class="message alerte">
-        <strong>Suivez l'ordre indiqué</strong>
-        Chaque étape s'appuie sur la précédente : une facture a besoin de son
-        tiers, un bail de son bien, un contrat de son lot. Un élément
-        introuvable est signalé, jamais créé au hasard.
+        <strong>L'ordre indiqué aide, il n'oblige plus</strong>
+        Ce que votre fichier désigne et qui n'est <em>qu'un nom</em> — un
+        compte, un tiers, un journal — est créé avec l'import&nbsp;: vous
+        n'avez pas à préparer trois fichiers avant celui qui vous intéresse.
+        Ce qui porte des décisions — un programme, un lot, un bail, un bien —
+        reste à créer vous-même : surface, prix, durée ne s'inventent pas.
       </div>
       <p class="petit">L'import <strong>reprend</strong> votre situation, il ne
       recomptabilise pas le passé : baux, lots, contrats et immobilisations
@@ -1729,34 +1855,116 @@ async function controleImport(racine, modele) {
   }
 }
 
+/** Cent fois la même anomalie n'apprend rien de plus qu'une fois.
+
+    Un fichier de trois cents lignes dont la colonne est mal lue produit
+    trois cents messages identiques : l'écran devient illisible, et la cause
+    unique se perd. On regroupe, en gardant les premières lignes en exemple. */
+function groupeAnomalies(anomalies) {
+  const paquets = new Map();
+  for (const a of anomalies) {
+    const p = paquets.get(a.message) || { message: a.message, lignes: [] };
+    p.lignes.push(a.ligne);
+    paquets.set(a.message, p);
+  }
+  return [...paquets.values()].sort((x, y) => y.lignes.length - x.lignes.length);
+}
+
 function afficheControleImport(zone, d, modele, contenu, options = {}) {
   const anomalies = d.anomalies || [];
-  const ignorees = (d.colonnes_ignorees || []).length
-    ? `<p class="petit">Colonnes du fichier non utilisées :
-       ${d.colonnes_ignorees.map(ech).join(', ')}.</p>` : '';
+  const groupes = groupeAnomalies(anomalies);
+  const nbIgnorees = d.nb_ignorees || 0;
+
+  // Comment le fichier a été lu : une colonne prise pour une autre se voit
+  // là, et nulle part ailleurs.
+  const lecture = (d.colonnes_reconnues || []).length ? `
+    <details class="lecture-fichier">
+      <summary>Comment votre fichier a été lu
+        (${d.colonnes_reconnues.length} colonne(s) reconnue(s))</summary>
+      <table class="tableau"><thead><tr>
+        <th>Colonne attendue</th><th>Colonne trouvée dans votre fichier</th>
+      </tr></thead><tbody>
+        ${d.colonnes_reconnues.map((c) => `<tr><td>${ech(c.attendu)}</td>
+          <td>${ech(c.trouve)}</td></tr>`).join('')}
+      </tbody></table>
+      ${(d.colonnes_ignorees || []).length
+        ? `<p class="petit">Colonnes de votre fichier non utilisées :
+           ${d.colonnes_ignorees.map(ech).join(', ')}.</p>` : ''}
+    </details>` : '';
+
+  const ignorees = '';
   const lignesIgnorees = (d.lignes_ignorees || []).length
     ? `<p class="petit">Ligne(s) de totaux ignorée(s) :
        ${d.lignes_ignorees.join(', ')}. Une ligne sans compte dont le débit et
        le crédit sont tous deux remplis est comprise comme un total de
        tableau.</p>` : '';
 
+  // Le diagnostic du serveur passe avant tout le reste : quand il tombe,
+  // il dit la cause, là où les anomalies ne disent que les symptômes.
+  const diagnostic = d.avertissement
+    ? `<div class="message danger"><strong>Ce fichier ne correspond pas au
+       type de données choisi</strong>${ech(d.avertissement)}</div>` : '';
+
+  const dejaLa = nbIgnorees
+    ? `<div class="message info">
+         <strong>${nbIgnorees} ligne(s) déjà enregistrée(s)</strong>
+         Elles ne seront pas réimportées et ne bloquent rien : l'import
+         reprend ce qui manque, il ne réécrit pas ce qui existe.
+         ${(d.ignorees || []).length ? `<span class="petit">Par exemple :
+           ${ech((d.ignorees || []).slice(0, 3).map((i) =>
+             `ligne ${i.ligne}, ${i.message}`).join(' · '))}.</span>` : ''}
+       </div>` : '';
+
+  // Ce que l'import va créer de lui-même. Annoncé avant, pas découvert
+  // après : c'est la contrepartie de ne plus rien réclamer.
+  const aCreer = d.a_creer || {};
+  const paquets = [
+    ['comptes', aCreer.comptes || [], 'compte', 'comptes',
+     (x) => `${x.numero} — ${x.libelle}`],
+    ['tiers', aCreer.tiers || [], 'tiers', 'tiers', (x) => x.raison_sociale],
+    ['journaux', aCreer.journaux || [], 'journal', 'journaux',
+     (x) => `${x.code} — ${x.libelle}`],
+  ].filter(([, liste]) => liste.length);
+  const prealables = paquets.length ? `
+    <div class="message info">
+      <strong>${paquets.map(([, l, un, pluriel]) =>
+        `${l.length} ${l.length > 1 ? pluriel : un}`).join(', ')}
+        ${paquets.reduce((t, [, l]) => t + l.length, 0) > 1
+          ? 'seront créés' : 'sera créé'} au passage</strong>
+      Votre fichier les désigne, votre dossier ne les connaît pas encore.
+      L'import les crée avec lui&nbsp;: rien à préparer d'avance. Ils feront
+      partie de cette reprise, et repartiront avec elle si vous l'annulez.
+      ${paquets.map(([cle, liste, un, pluriel, texte]) => `
+        <details><summary>${liste.length} ${liste.length > 1 ? pluriel : un}</summary>
+          <div class="petit">${liste.slice(0, 60).map((x) => ech(texte(x)))
+            .join(' · ')}${liste.length > 60
+              ? ` … et ${liste.length - 60} autre(s)` : ''}</div></details>`).join('')}
+    </div>` : '';
+
   const resume = anomalies.length
     ? `<div class="message alerte">
-         <strong>${d.nb_valides} ligne(s) prête(s), ${anomalies.length} anomalie(s)</strong>
+         <strong>${d.nb_valides} ligne(s) prête(s), ${anomalies.length} anomalie(s)
+         ${groupes.length < anomalies.length
+           ? `de ${groupes.length} sorte(s)` : ''}</strong>
          Rien n'est encore enregistré. Corrigez le fichier et recommencez, ou
          importez uniquement les lignes saines.</div>`
     : `<div class="message succes">
          <strong>${d.nb_valides} ligne(s) prête(s) à être importée(s)</strong>
-         Aucune anomalie détectée.</div>`;
+         ${nbIgnorees ? `${nbIgnorees} ligne(s) déjà là seront laissées de côté.`
+           : 'Aucune anomalie détectée.'}</div>`;
 
-  const detail = anomalies.length ? `
+  const detail = groupes.length ? `
     <table class="tableau"><thead><tr>
-      <th style="width:90px">Ligne</th><th>Anomalie</th>
+      <th style="width:110px">Lignes</th><th style="width:80px" class="num">Combien</th>
+      <th>Anomalie</th>
     </tr></thead><tbody>
-      ${anomalies.slice(0, 100).map((a) => `<tr>
-        <td>${a.ligne}</td><td>${ech(a.message)}</td></tr>`).join('')}
+      ${groupes.slice(0, 40).map((g) => `<tr>
+        <td class="tres-petit">${g.lignes.slice(0, 6).join(', ')}${
+          g.lignes.length > 6 ? '…' : ''}</td>
+        <td class="num">${g.lignes.length}</td>
+        <td>${ech(g.message)}</td></tr>`).join('')}
     </tbody></table>
-    ${anomalies.length > 100 ? `<p class="petit">… et ${anomalies.length - 100} autre(s).</p>` : ''}` : '';
+    ${groupes.length > 40 ? `<p class="petit">… et ${groupes.length - 40} autre(s) sorte(s).</p>` : ''}` : '';
 
   // Le bouton énonce lui-même ce qu'il va faire : pas de fenêtre de
   // confirmation par-dessus, qui remplacerait celle de l'import.
@@ -1765,7 +1973,8 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
       + `${anomalies.length} anomalie(s)`
     : `Importer ${d.nb_valides} ligne(s)`;
 
-  zone.innerHTML = resume + ignorees + lignesIgnorees + detail + `
+  zone.innerHTML = diagnostic + resume + prealables + dejaLa + lecture + ignorees
+    + lignesIgnorees + detail + `
     <div class="rangee" style="margin-top:12px">
       ${d.nb_valides ? `<button class="primaire" id="bouton-importer">
         ${libelleImport}</button>` : ''}
@@ -1781,8 +1990,14 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
         { modele, contenu, ...options,
           fichier: _fichierImport?.name || '',
           ignorer_anomalies: anomalies.length ? 1 : 0 });
+      const NOMS_PREALABLES = { comptes: 'compte(s)', tiers: 'tiers',
+                                journaux: 'journal/journaux' };
+      const faits = Object.entries(r.prealables || {})
+        .filter(([, n]) => n)
+        .map(([t, n]) => `${n} ${NOMS_PREALABLES[t] || t}`);
       notifie(`${r.crees} ligne(s) importée(s).`
-            + (r.rejetes ? ` ${r.rejetes} ignorée(s).` : ''), 'succes', 7000);
+            + (r.rejetes ? ` ${r.rejetes} rejetée(s).` : '')
+            + (r.ignorees ? ` ${r.ignorees} déjà là.` : ''), 'succes', 7000);
       const brouillon = modele === 'ecritures'
         ? 'Les écritures sont en brouillon : relisez-les au journal avant de les valider.'
         : (modele.startsWith('factures_')
@@ -1790,7 +2005,10 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
             + 'comptable qu\'une fois validées.' : '');
       zone.innerHTML = `<div class="message succes">
         <strong>Import terminé</strong>
-        ${r.crees} ligne(s) enregistrée(s)${r.rejetes ? `, ${r.rejetes} ignorée(s)` : ''}.
+        ${r.crees} ligne(s) enregistrée(s)${r.rejetes ? `, ${r.rejetes} rejetée(s)` : ''}${
+          r.ignorees ? `, ${r.ignorees} déjà enregistrée(s) et laissée(s) de côté` : ''}.
+        ${faits.length ? `<div>Créé(s) au passage&nbsp;: ${ech(faits.join(', '))}.
+          Vous les retrouverez dans votre plan comptable et vos tiers.</div>` : ''}
         ${brouillon}
         Ce n'était pas le bon fichier&nbsp;? Cette reprise peut être défaite
         depuis « Reprises déjà faites », plus bas.</div>`;

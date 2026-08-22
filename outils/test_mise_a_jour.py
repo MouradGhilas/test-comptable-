@@ -16,6 +16,11 @@ Cet outil rejoue le chemin complet sur une installation jetable :
 Puis il provoque volontairement l'etat mixte et verifie que l'application
 le dit -- au lieu de laisser chercher.
 
+Il verifie enfin le chemin inverse, celui qui manquait : revenir a une
+version anterieure. Deux cas a ne pas confondre -- la version visee sait
+ouvrir la base telle qu'elle est (seul le programme recule), ou elle ne le
+sait pas (les donnees reculent avec, ce qui se confirme et se chiffre).
+
     python3 outils/test_mise_a_jour.py
 """
 
@@ -130,6 +135,17 @@ class Installation:
             brut = r.read().decode()
             return json.loads(brut) if brut else {}
 
+    def erreur_sur(self, chemin, corps):
+        """Le message de refus d'un appel qui doit echouer."""
+        try:
+            self.appel(chemin, corps)
+            return None
+        except urllib.error.HTTPError as err:
+            try:
+                return json.loads(err.read().decode()).get("erreur", "")
+            except ValueError:
+                return f"code {err.code}"
+
     def erreur_de(self, chemin):
         try:
             self.appel(chemin)
@@ -163,6 +179,90 @@ def paquet_de_la_version_courante(dossier):
     subprocess.run([sys.executable, "outils/faire_paquet.py", "--vers", dossier],
                    cwd=RACINE, check=True, capture_output=True)
     return Path(dossier) / f"maj-{VERSION}.zip"
+
+
+def paquet_modifie(source, dossier, version, schema=None):
+    """Le meme paquet, qui se declare a une autre version -- et parfois a un
+    schema de base anterieur. De quoi rejouer un retour en arriere sans avoir
+    a garder sous la main les archives de toutes les versions passees."""
+    import re
+    import zipfile
+    cible = Path(dossier) / f"paquet-{version}.zip"
+    with zipfile.ZipFile(source) as entree, \
+            zipfile.ZipFile(cible, "w", zipfile.ZIP_DEFLATED) as sortie:
+        for info in entree.infolist():
+            octets = entree.read(info.filename)
+            if info.filename.endswith("noyau/config.py"):
+                octets = re.sub(rb'^VERSION\s*=\s*"[^"]+"',
+                                f'VERSION = "{version}"'.encode(),
+                                octets, count=1, flags=re.M)
+            if schema is not None and info.filename.endswith("noyau/base.py"):
+                octets = re.sub(rb"^VERSION_SCHEMA\s*=\s*\d+",
+                                f"VERSION_SCHEMA = {schema}".encode(),
+                                octets, count=1, flags=re.M)
+            sortie.writestr(info, octets)
+    return cible
+
+
+def sauvegarde_fabriquee(app, version, schema):
+    """Une sauvegarde telle que la version `version` en aurait laissee.
+
+    Le comptable qui veut revenir a une version d'il y a trois mois a, lui,
+    de vraies sauvegardes de cette epoque. Ici on en fabrique une : copie de
+    la base, ramenee au schema d'alors, avec le manifeste qui va avec.
+    """
+    import zipfile
+    cible = app.donnees / "sauvegardes" / f"sauvegarde_20250101_000000_essai.zip"
+    cible.parent.mkdir(parents=True, exist_ok=True)
+    copie = Path(tempfile.mkdtemp(prefix="maj_base_")) / "comptabilite.db"
+    source = sqlite3.connect(str(app.donnees / "comptabilite.db"))
+    destination = sqlite3.connect(str(copie))
+    source.backup(destination)
+    destination.execute("INSERT OR REPLACE INTO meta (cle, valeur) VALUES "
+                        "('version_schema', ?)", (str(schema),))
+    # Une sauvegarde identique a la base actuelle ne prouverait rien : on la
+    # rend reconnaissable, et on lui retire trois ecritures pour que la perte
+    # annoncee soit mesurable.
+    destination.execute("INSERT OR REPLACE INTO meta (cle, valeur) VALUES "
+                        "('essai_retour', 'oui')")
+    destination.execute(
+        "DELETE FROM lignes WHERE ecriture_id IN "
+        "(SELECT id FROM ecritures ORDER BY id DESC LIMIT 3)")
+    destination.execute(
+        "DELETE FROM ecritures WHERE id IN "
+        "(SELECT id FROM ecritures ORDER BY id DESC LIMIT 3)")
+    destination.commit()
+    destination.close()
+    source.close()
+    with zipfile.ZipFile(cible, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.write(copie, "comptabilite.db")
+        archive.writestr("manifeste.json", json.dumps({
+            "application": "Cabinet Immo", "version": version,
+            "date": "2025-01-01 00:00:00", "motif": "essai", "societes": [],
+        }, ensure_ascii=False))
+    return cible
+
+
+def attend_version(app, attendue, tours=90):
+    """L'application se ferme et se rouvre : on attend qu'elle reponde."""
+    for _ in range(tours):
+        time.sleep(2)
+        try:
+            etat = json.loads(urllib.request.urlopen(
+                f"http://127.0.0.1:{app.port}/api/etat", timeout=3).read().decode())
+        except Exception:                                       # noqa: BLE001
+            continue
+        if etat.get("version") == attendue:
+            return etat
+    # Muette, une mise a jour ratee ne laisse rien a lire : c'est justement
+    # ce que l'outil consigne. On le montre plutot que de dire « pas revenue ».
+    journal = app.donnees / "maj" / "journal-maj.txt"
+    if journal.is_file():
+        print("  --- journal de l'outil ---")
+        for ligne in journal.read_text(encoding="utf-8", errors="replace"
+                                       ).splitlines()[-40:]:
+            print("  | " + ligne)
+    return None
 
 
 def executer():
@@ -246,7 +346,108 @@ def executer():
         v("… en nommant les deux versions",
           "9.9.9" in (message or "") and VERSION in (message or ""), message)
 
-        titre("6. L'application sait se fermer depuis l'écran")
+        # L'état mixte a été provoqué dans le fichier : on le referme, sinon
+        # tout ce qui suit se lirait à travers ce faux numéro de version.
+        app.ecrit_version(VERSION)
+
+        titre("6. Les versions installées restent disponibles sur le poste")
+        # Un paquet reçu par messagerie n'existe qu'une fois. S'il n'est pas
+        # gardé, la version qu'il installe devient la seule possible.
+        biblio = app.appel("/api/maj/versions")
+        presentes = {x["version"]: x for x in biblio.get("versions", [])}
+        v("la version installée est rangée sur le poste", VERSION in presentes,
+          sorted(presentes))
+        v("… et signalée comme celle en cours",
+          presentes.get(VERSION, {}).get("installee") is True,
+          presentes.get(VERSION))
+        v("celle d'avant la mise à jour a été gardée elle aussi",
+          VERSION_ANCIENNE in presentes, sorted(presentes))
+        v("… et proposée comme un retour",
+          presentes.get(VERSION_ANCIENNE, {}).get("sens") == "retour",
+          presentes.get(VERSION_ANCIENNE))
+
+        titre("7. Revenir en arrière, quand la version sait lire la base")
+        recul = paquet_modifie(archive, paquets, "1.0.0")
+        contenu_recul = base64.b64encode(recul.read_bytes()).decode()
+        analyse = app.appel("/api/maj/analyse", {"contenu": contenu_recul})
+        situation = analyse.get("situation", {})
+        v("le paquet antérieur n'est plus refusé d'emblée",
+          situation.get("action") == "revenir", situation)
+        v("… la comptabilité n'a pas à bouger",
+          analyse.get("donnees_compatibles") is True, analyse.get("schema"))
+        v("… et le retour demande une confirmation",
+          situation.get("confirmation") == "REVENIR", situation)
+        refus = app.erreur_sur("/api/maj/appliquer", {"contenu": contenu_recul})
+        v("sans ce mot, rien ne se passe", "REVENIR" in (refus or ""), refus)
+        v("… et la version en place n'a pas bougé",
+          app.appel("/api/etat")["version"] == VERSION)
+
+        app.appel("/api/maj/appliquer",
+                  {"contenu": contenu_recul, "confirmation": "REVENIR"})
+        etat = attend_version(app, "1.0.0")
+        v("l'application revient en 1.0.0", etat is not None,
+          "toujours pas revenue après trois minutes")
+        recul_lignes = app.sql("SELECT COUNT(*) n, COALESCE(SUM(debit),0) d "
+                               "FROM lignes")[0]
+        v("aucune écriture n'a été perdue au passage",
+          recul_lignes["n"] == avant["n"] and recul_lignes["d"] == avant["d"],
+          f"{recul_lignes} au lieu de {avant}")
+
+        titre("8. Revenir plus loin, quand la base a pris de l'avance")
+        # Le cas réel : la base a été migrée, la version visée ne connaît pas
+        # sa structure. Le programme seul ne suffit pas — les données doivent
+        # revenir avec, et ce qui a été saisi depuis est perdu. Ça se dit.
+        ecritures_avant = app.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"]
+        schema_base = app.sql("SELECT valeur FROM meta WHERE cle = "
+                              "'version_schema'")[0]["valeur"]
+        vieux_schema = int(schema_base) - 1
+        sauvegarde = sauvegarde_fabriquee(app, "0.8.0", vieux_schema)
+        vieux = paquet_modifie(archive, paquets, "0.9.0", schema=vieux_schema)
+        contenu_vieux = base64.b64encode(vieux.read_bytes()).decode()
+        analyse = app.appel("/api/maj/analyse", {"contenu": contenu_vieux})
+        situation = analyse.get("situation", {})
+        v("l'application voit que la base est trop récente pour ce paquet",
+          analyse.get("donnees_compatibles") is False,
+          f"schéma paquet {analyse.get('schema')} / base {analyse.get('schema_base')}")
+        v("… et propose de remettre les données d'alors",
+          situation.get("action") == "revenir_avec_donnees", situation)
+        noms = [x["nom"] for x in analyse.get("sauvegardes", [])]
+        v("… en listant les sauvegardes qu'elle saura relire",
+          sauvegarde.name in noms, noms)
+        refus = app.erreur_sur("/api/maj/appliquer",
+                               {"contenu": contenu_vieux, "confirmation": "REVENIR"})
+        v("sans choisir de sauvegarde, le retour est refusé",
+          "sauvegarde" in (refus or "").lower(), refus)
+
+        app.appel("/api/maj/appliquer", {"contenu": contenu_vieux,
+                                         "confirmation": "REVENIR",
+                                         "sauvegarde": sauvegarde.name})
+        etat = attend_version(app, "0.9.0")
+        v("l'application revient en 0.9.0", etat is not None,
+          "toujours pas revenue après trois minutes")
+        marque = app.sql("SELECT valeur FROM meta WHERE cle = 'essai_retour'")
+        v("les données sont bien celles de la sauvegarde choisie",
+          marque and marque[0]["valeur"] == "oui", marque)
+        restant = app.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"]
+        v("… donc les écritures saisies depuis ne sont plus là",
+          restant == ecritures_avant - 3, f"{restant} au lieu de "
+          f"{ecritures_avant - 3}")
+        filets = [f["nom"] for f in app.appel("/api/sauvegardes")["sauvegardes"]]
+        v("l'état d'avant le retour reste récupérable",
+          any("avant_retour" in n for n in filets), filets)
+
+        titre("9. Et repartir en avant, comme si de rien n'était")
+        app.appel("/api/maj/appliquer", {"contenu": contenu})
+        etat = attend_version(app, VERSION)
+        v(f"l'application repart en {VERSION}", etat is not None,
+          "toujours pas revenue après trois minutes")
+        v("… en remontant la base au schéma courant",
+          app.sql("SELECT valeur FROM meta WHERE cle = 'version_schema'")[0]
+          ["valeur"] == schema_base, "schéma non remonté")
+        v("… sans perdre les données remises en place",
+          app.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == restant)
+
+        titre("10. L'application sait se fermer depuis l'écran")
         app.appel("/api/systeme/arreter", {})
         time.sleep(2.5)
         v("le bouton du bandeau la ferme bien", not app.repond())

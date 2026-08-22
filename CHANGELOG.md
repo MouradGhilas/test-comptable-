@@ -3,6 +3,46 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.7.8
+
+- **On peut revenir à une version précédente.** Une mise à jour qui déplaît
+  n'était plus défaisable : le fichier de l'ancienne version n'existait
+  nulle part, et l'application refusait de toute façon d'installer plus
+  ancien qu'elle. Désormais **chaque version installée est conservée sur le
+  poste** — Paramètres → Mise à jour en dresse la liste — et on y revient
+  d'un bouton, sans redemander le fichier à personne.
+- **Deux retours, dits clairement.** Si la version visée sait lire votre
+  base, **seul le programme recule** : rien de ce que vous avez saisi n'est
+  perdu. Si elle est antérieure à la structure de la base, le programme seul
+  ne suffit pas : il faut remettre les données de l'époque, donc perdre ce
+  qui a été saisi depuis. L'écran le dit avant, fait choisir la sauvegarde,
+  et **garde l'état actuel** pour que le mouvement reste réversible.
+- **Réinstaller la version en place** est possible : c'est la réponse à une
+  mise à jour restée à mi-chemin, où l'application affiche des écrans neufs
+  sur un moteur ancien.
+- **L'outil de mise à jour travaillait sur le mauvais dossier de données**
+  quand l'application tournait sur un dossier choisi à la main (`--donnees`,
+  une clé USB) : la sauvegarde préalable, la migration et la vérification
+  visaient le dossier par défaut. Il reçoit maintenant le bon chemin.
+
+- **L'import crée ce dont il a besoin, au lieu de le réclamer.** Un journal
+  d'écritures qui cite un sous-compte, un tiers ou un journal absent était
+  rejeté ligne par ligne, avec autant d'anomalies que de lignes — il fallait
+  monter le plan comptable, puis les tiers, puis les journaux, et
+  recommencer. Ces trois-là ne sont qu'un nom : ils sont **créés avec
+  l'import**.
+- **Annoncé avant, listé après, repris si vous annulez.** L'écran de
+  contrôle dit « 3 comptes, 12 tiers et 1 journal seront créés au passage »
+  et les énumère ; le compte rendu final les redit ; et annuler la reprise
+  les retire avec elle, sauf ceux qui servent déjà ailleurs.
+- Un compte créé **hérite de son compte de rattachement** : 40101 prend la
+  nature, la rubrique et le caractère lettrable de 4011. Un tiers est rangé
+  d'après son compte — 411 client, 401 fournisseur, 4671 mandant, 421
+  salarié — et reçoit son compte collectif.
+- **Ce qui porte une décision continue d'être réclamé** : un programme, un
+  lot, un bail, un bien ont une surface, un prix, une durée. On ne les
+  invente pas au milieu d'une reprise.
+
 ## 1.7.7
 
 - **Le rapprochement bancaire se fait à partir du fichier de la banque.**

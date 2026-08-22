@@ -752,3 +752,12 @@ tr.ecart-recoupement td { background: var(--danger-fond); }
 .bandeau-redemarrage > div { flex: 1; min-width: 260px; }
 .bandeau-redemarrage button { background: #fff; color: var(--danger);
                               border: 0; font-weight: 600; }
+
+/* Comment le fichier a été lu : replié par défaut, mais à un clic — c'est
+   souvent la réponse à « pourquoi ça ne marche pas ». */
+.lecture-fichier { margin: 10px 0; border: 1px solid var(--bordure);
+                   border-radius: var(--rayon); padding: 8px 12px;
+                   background: var(--fond-doux); }
+.lecture-fichier summary { cursor: pointer; font-size: 12.5px;
+                           color: var(--primaire-clair); font-weight: 600; }
+.lecture-fichier table { margin-top: 9px; }

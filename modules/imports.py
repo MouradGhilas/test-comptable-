@@ -160,6 +160,13 @@ LIBELLES_REFERENCE = {
     "contrat_vsp": "contrat VSP", "compte": "compte",
 }
 
+#: Ce qu'un import crée de lui-même quand le fichier le désigne sans qu'il
+#: existe. Volontairement court : un tiers et un compte ne sont qu'un nom et
+#: un numéro, alors qu'un programme, un lot ou un bail portent des décisions
+#: — surface, prix, durée, indexation — qu'on ne devine pas et qu'on ne doit
+#: pas inventer au milieu d'une reprise.
+CREABLES = {"tiers", "compte"}
+
 
 # ---------------------------------------------------------------------------
 # Modèles
@@ -1002,19 +1009,184 @@ def _tiers_id(societe_id: int, nom: str):
 
 
 # ---------------------------------------------------------------------------
+# Ce dont l'import a besoin, il le crée
+# ---------------------------------------------------------------------------
+#
+# Exiger que le plan comptable, les tiers et les journaux existent avant
+# d'importer un journal d'écritures, c'est demander de reprendre son dossier
+# trois fois, dans le bon ordre, en corrigeant à chaque tour. Ce qui manque
+# et qui n'est qu'un nom se crée donc tout seul.
+#
+# Deux garde-fous, parce que créer à l'aveugle serait pire que refuser :
+#
+#   * seuls les éléments qui ne portent aucune décision sont créés — un
+#     compte, un tiers, un journal. Un programme immobilier, un bail, un lot
+#     engagent une structure : ceux-là restent à créer sciemment ;
+#   * tout ce qui est créé est annoncé AVANT, listé APRÈS, et rattaché à
+#     l'import — « Annuler cette reprise » les emporte avec le reste.
+
+#: Compte collectif à donner au tiers créé, selon sa nature.
+COMPTES_PAR_TYPE = {"client": "411", "fournisseur": "401",
+                    "mandant": "4671", "salarie": "421", "autre": "411"}
+
+#: Compte collectif -> nature du tiers qui s'y rattache.
+TYPES_PAR_COLLECTIF = (
+    ("467", "mandant"), ("411", "client"), ("41", "client"),
+    ("401", "fournisseur"), ("40", "fournisseur"), ("42", "salarie"),
+)
+
+#: Code de journal -> son type, quand il se devine.
+TYPES_JOURNAL = {"VE": "ventes", "AC": "achats", "BQ": "banque", "CA": "caisse",
+                 "PA": "paie", "AN": "anouveaux", "OD": "od"}
+
+
+def type_de_tiers(compte: str) -> str:
+    for prefixe, type_tiers in TYPES_PAR_COLLECTIF:
+        if str(compte or "").startswith(prefixe):
+            return type_tiers
+    return "autre"
+
+
+def _compte_parent(societe_id: int, numero: str) -> dict | None:
+    """Le compte existant le plus proche au-dessus : 4011 -> 401 -> 40.
+
+    Un sous-compte hérite des caractéristiques du sien : sa nature, sa
+    rubrique de bilan, son collectif. C'est ainsi qu'un plan comptable se
+    détaille, et cela évite de demander ce que l'on sait déjà.
+    """
+    for longueur in range(len(numero) - 1, 0, -1):
+        parent = db.ligne(
+            "SELECT * FROM comptes WHERE numero = ? "
+            "AND (societe_id = ? OR societe_id IS NULL) LIMIT 1",
+            (numero[:longueur], societe_id))
+        if parent:
+            return parent
+    return None
+
+
+def compte_a_creer(societe_id: int, numero: str) -> dict:
+    """Ce qu'on écrirait dans le plan pour ce compte-là."""
+    parent = _compte_parent(societe_id, numero)
+    return {
+        "numero": numero,
+        "intitule": (parent["intitule"] if parent else f"Compte {numero}"),
+        "classe": int(numero[0]),
+        "nature": parent["nature"] if parent else "mixte",
+        "rubrique": parent["rubrique"] if parent else None,
+        "collectif": parent["collectif"] if parent else None,
+        "lettrable": parent["lettrable"] if parent else 0,
+        "actif": 1,
+        "parent": parent["numero"] if parent else None,
+    }
+
+
+class Manquants:
+    """Ce que le fichier désigne et que le dossier ne connaît pas encore.
+
+    Recense pendant l'analyse, crée à la validation. Les deux moments sont
+    séparés à dessein : on montre d'abord, on écrit ensuite.
+    """
+
+    def __init__(self, societe_id: int):
+        self.societe_id = societe_id
+        self.comptes: dict = {}
+        self.tiers: dict = {}
+        self.journaux: dict = {}
+
+    def compte(self, numero: str) -> None:
+        if numero and numero not in self.comptes:
+            self.comptes[numero] = compte_a_creer(self.societe_id, numero)
+
+    def tiers_nomme(self, nom: str, compte: str = "") -> None:
+        cle = str(nom or "").strip().lower()
+        if cle and cle not in self.tiers:
+            self.tiers[cle] = {"raison_sociale": str(nom).strip(),
+                               "type": type_de_tiers(compte)}
+
+    def journal(self, code: str) -> None:
+        propre = str(code or "").strip().upper()
+        if propre and propre not in self.journaux:
+            self.journaux[propre] = {
+                "code": propre,
+                "libelle": {"VE": "Ventes", "AC": "Achats", "BQ": "Banque",
+                            "CA": "Caisse", "PA": "Paie",
+                            "AN": "À-nouveaux"}.get(propre, str(code).strip()),
+                "type": TYPES_JOURNAL.get(propre, "od"),
+            }
+
+    def resume(self) -> dict:
+        return {"comptes": list(self.comptes.values()),
+                "tiers": list(self.tiers.values()),
+                "journaux": list(self.journaux.values())}
+
+    def __bool__(self) -> bool:
+        return bool(self.comptes or self.tiers or self.journaux)
+
+
+def cree_manquants(societe_id: int, a_creer: dict, utilisateur=None) -> dict:
+    """Crée ce qui manquait. À appeler dans une transaction.
+
+    Renvoie les identifiants créés, table par table, pour que l'annulation
+    de l'import sache quoi reprendre.
+    """
+    crees: dict = {}
+    for compte in (a_creer or {}).get("comptes", []):
+        if db.ligne("SELECT id FROM comptes WHERE societe_id = ? AND numero = ?",
+                    (societe_id, compte["numero"])):
+            continue
+        donnees = {c: v for c, v in compte.items() if c != "parent"}
+        donnees["societe_id"] = societe_id
+        crees.setdefault("comptes", []).append(db.insere("comptes", donnees))
+
+    for tiers in (a_creer or {}).get("tiers", []):
+        if resout_reference("tiers", societe_id, tiers["raison_sociale"]):
+            continue
+        cle = f"tiers_{tiers['type']}"
+        code = db.numero_suivant(
+            societe_id, cle if cle in db.FORMATS_DEFAUT else "tiers_autre")
+        crees.setdefault("tiers", []).append(db.insere("tiers", {
+            "societe_id": societe_id, "code": code, "type": tiers["type"],
+            "raison_sociale": tiers["raison_sociale"],
+            # Le compte collectif suit le type : c'est là que ses écritures
+            # iront se ranger.
+            "compte_comptable": COMPTES_PAR_TYPE.get(tiers["type"], "411"),
+            "actif": 1, "cree_le": util.maintenant(),
+        }))
+
+    for journal in (a_creer or {}).get("journaux", []):
+        if db.ligne("SELECT id FROM journaux WHERE societe_id = ? AND code = ?",
+                    (societe_id, journal["code"])):
+            continue
+        crees.setdefault("journaux", []).append(db.insere("journaux", {
+            "societe_id": societe_id, "code": journal["code"],
+            "libelle": journal["libelle"], "type": journal["type"], "actif": 1,
+        }))
+    if crees and utilisateur is not None:
+        db.trace("creation_import", "reprise", None,
+                 {t: len(i) for t, i in crees.items()}, utilisateur)
+    return crees
+
+
+# ---------------------------------------------------------------------------
 # Contrôle générique d'une table
 # ---------------------------------------------------------------------------
 
 def analyse_generique(societe_id, rangs, association, modele, cle_modele):
     """Contrôle et prépare les lignes d'une table décrite de façon déclarative."""
-    prets, anomalies, apercu = [], [], []
+    prets, anomalies, apercu, ignorees = [], [], [], []
     cle_unique = modele.get("cle_unique")
     table = modele["table"]
-    deja_vus = set()
+    # Deux situations que l'on confondait, et qui n'appellent pas la même
+    # réponse : l'élément est déjà enregistré — il n'y a rien à faire, ce
+    # n'est pas une erreur — ou il figure deux fois dans le fichier, et là
+    # il faut le corriger. On garde la ligne du premier passage pour le dire.
+    deja_en_base = set()
     if cle_unique:
-        deja_vus = {str(r[cle_unique]).lower() for r in db.lignes(
+        deja_en_base = {str(r[cle_unique]).lower() for r in db.lignes(
             f"SELECT {cle_unique} FROM {table} WHERE societe_id = ?", (societe_id,))
             if r[cle_unique] is not None}
+    vus_dans_le_fichier: dict = {}
+    manquants = Manquants(societe_id)
 
     for decalage, rang in enumerate(rangs):
         numero_ligne = decalage + 2          # +1 en-tête, +1 pour compter de 1
@@ -1046,6 +1218,17 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
                 parent_id = resolus.get(colonne.parent)
                 identifiant = resout_reference(colonne.reference, societe_id,
                                                valeur, parent_id)
+                if identifiant is None and colonne.reference in CREABLES:
+                    # Un tiers ou un compte désigné par son nom n'engage
+                    # aucune décision : il se crée. Un programme, un lot, un
+                    # bail, si — ceux-là restent à saisir en connaissance de
+                    # cause, et l'import continue de les réclamer.
+                    if colonne.reference == "tiers":
+                        manquants.tiers_nomme(valeur)
+                    else:
+                        manquants.compte(str(valeur).strip())
+                        enregistrement[colonne.champ] = str(valeur).strip()
+                    continue
                 if identifiant is None:
                     libelle = LIBELLES_REFERENCE[colonne.reference]
                     erreurs.append(f"{libelle} « {valeur} » introuvable")
@@ -1059,13 +1242,24 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
                 erreurs.append(f"« {colonne.nom} » : valeur « {valeur} » "
                                "incompréhensible")
 
-        if cle_unique and not erreurs:
-            reference = str(enregistrement.get(cle_unique, "")).lower()
-            if reference and reference in deja_vus:
-                erreurs.append(f"« {brut.get(_nom_de_champ(modele, cle_unique))} » "
-                               "existe déjà")
-            elif reference:
-                deja_vus.add(reference)
+        reference = (str(enregistrement.get(cle_unique, "")).lower()
+                     if cle_unique and not erreurs else "")
+        affichee = (brut.get(_nom_de_champ(modele, cle_unique))
+                    if cle_unique else "")
+        if reference and reference in deja_en_base:
+            # Rien à faire n'est pas une erreur : l'import reprend l'existant,
+            # il ne le réécrit pas. Bloquer tout le fichier pour cela serait
+            # absurde — un plan comptable repris est déjà là aux neuf dixièmes.
+            ignorees.append({
+                "ligne": numero_ligne,
+                "message": f"« {affichee} » est déjà enregistré : rien à faire"})
+            apercu.append({"ligne": numero_ligne, "valeurs": brut, "erreurs": []})
+            continue
+        if reference and reference in vus_dans_le_fichier:
+            erreurs.append(f"« {affichee} » apparaît déjà à la ligne "
+                           f"{vus_dans_le_fichier[reference]} de ce fichier")
+        elif reference:
+            vus_dans_le_fichier[reference] = numero_ligne
 
         erreurs += _controles_specifiques(societe_id, cle_modele, brut,
                                           enregistrement)
@@ -1076,8 +1270,43 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
         if not erreurs:
             prets.append(enregistrement)
 
-    return {"prets": prets, "anomalies": anomalies, "apercu": apercu,
-            "nb_valides": len(prets), "nb_rejetes": len(apercu) - len(prets)}
+    resultat = {"prets": prets, "anomalies": anomalies, "apercu": apercu,
+                "ignorees": ignorees, "nb_ignorees": len(ignorees),
+                "nb_valides": len(prets), "a_creer": manquants.resume(),
+                "nb_rejetes": len(apercu) - len(prets) - len(ignorees)}
+    diagnostic = _fichier_suspect(modele, cle_unique, vus_dans_le_fichier,
+                                  ignorees, len(apercu))
+    if diagnostic:
+        resultat["avertissement"] = diagnostic
+    return resultat
+
+
+def _fichier_suspect(modele, cle_unique, vus, ignorees, nb_lignes) -> str | None:
+    """Le fichier ressemble-t-il à ce que ce modèle attend ?
+
+    Une colonne d'identifiant qui porte la même valeur sur toutes les lignes
+    ne peut pas être un identifiant : c'est presque toujours le signe qu'on
+    s'est trompé de type de données. Le dire vaut mieux que d'aligner cent
+    fois la même anomalie.
+    """
+    if not cle_unique or nb_lignes < 3:
+        return None
+    distinctes = len(vus) + len({i["message"] for i in ignorees})
+    if distinctes > 1:
+        return None
+    colonne = _nom_de_champ_lisible(modele, cle_unique)
+    return (f"La colonne « {colonne} » porte la même valeur sur les "
+            f"{nb_lignes} lignes. Ce fichier n'est probablement pas un(e) "
+            f"« {modele['libelle']} » : vérifiez le type de données choisi "
+            f"en haut de l'écran. Une liste de clients ou de fournisseurs, "
+            f"par exemple, s'importe par le modèle « Tiers ».")
+
+
+def _nom_de_champ_lisible(modele: dict, champ: str) -> str:
+    for colonne in modele["colonnes"]:
+        if colonne.champ == champ:
+            return colonne.nom
+    return champ
 
 
 def _nom_de_champ(modele: dict, champ: str) -> str:
@@ -1240,6 +1469,7 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
     comptes_connus = {str(c["numero"]) for c in db.lignes(
         "SELECT numero FROM comptes WHERE societe_id = ?", (societe_id,))}
     journaux_resolus: dict[str, tuple[str | None, str | None]] = {}
+    manquants = Manquants(societe_id)
 
     # Dernières valeurs rencontrées, reprises quand la cellule est vide.
     reprise = {"cle": "", "date": "", "journal": "", "libelle": "", "piece": "",
@@ -1279,16 +1509,23 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
             cle = f"auto-{date}-{libelle}-{journal_saisi}"
         if not compte:
             erreurs.append("compte manquant")
+        elif not compte.isdigit():
+            # Un numéro de compte est fait de chiffres : là, c'est la colonne
+            # qui est mal lue, pas le plan qui est incomplet.
+            erreurs.append(f"« {compte} » n'est pas un numéro de compte")
         elif compte not in comptes_connus:
-            suggestions = comptes_proches(comptes_connus, compte)
-            precision = (f" — le plus proche dans votre plan : "
-                         f"{', '.join(suggestions)}" if suggestions else "")
-            erreurs.append(
-                f"le compte {compte} n'existe pas dans le plan comptable"
-                f"{precision}. Créez-le par le modèle « Plan comptable », ou "
-                "corrigez le fichier.")
+            # Le plan comptable se complète tout seul : refuser une écriture
+            # parce qu'il manque un sous-compte obligerait à reprendre le
+            # dossier deux fois.
+            manquants.compte(compte)
+            comptes_connus.add(compte)
         if erreur_journal:
-            erreurs.append(erreur_journal)
+            if "n'existe pas" in erreur_journal and journal_saisi:
+                manquants.journal(journal_saisi)
+                journal = journal_saisi.strip().upper()
+                journaux_resolus[journal_saisi] = (journal, None)
+            else:
+                erreurs.append(erreur_journal)
         if montant_debit and montant_credit:
             erreurs.append("débit et crédit renseignés sur la même ligne")
         if not montant_debit and not montant_credit:
@@ -1329,7 +1566,11 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
             "debit": montant_debit,
             "credit": montant_credit,
             "tiers_id": _tiers_id(societe_id, _valeur(rang, association, "Tiers")),
+            "tiers_nom": _valeur(rang, association, "Tiers"),
         })
+        nom_tiers = _valeur(rang, association, "Tiers")
+        if nom_tiers and not _tiers_id(societe_id, nom_tiers):
+            manquants.tiers_nomme(nom_tiers, compte)
 
     prets = []
     for cle in ordre:
@@ -1362,14 +1603,18 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
 
     return {"prets": prets, "anomalies": anomalies, "apercu": apercu,
             "nb_valides": len(prets), "nb_rejetes": len(ordre) - len(prets),
-            "lignes_ignorees": ignorees}
+            "lignes_ignorees": ignorees, "a_creer": manquants.resume()}
 
 
 def analyse_balance(societe_id, rangs, association, date_reprise):
-    """Contrôle une balance de reprise : comptes connus et totaux égaux."""
+    """Contrôle une balance de reprise : totaux égaux, comptes complétés.
+
+    Le plan comptable se complète tout seul : une balance reprise d'un autre
+    logiciel porte forcément des sous-comptes que le plan livré n'a pas."""
     anomalies, lignes, apercu, ignorees = [], [], [], []
     comptes_connus = {str(c["numero"]) for c in db.lignes(
         "SELECT numero FROM comptes WHERE societe_id = ?", (societe_id,))}
+    manquants = Manquants(societe_id)
     total_debit = total_credit = 0
     vus = set()
 
@@ -1389,14 +1634,15 @@ def analyse_balance(societe_id, rangs, association, date_reprise):
         erreurs = []
         if not compte:
             erreurs.append("compte manquant")
+        elif not str(compte).isdigit():
+            erreurs.append(f"« {compte} » n'est pas un numéro de compte")
         elif compte not in comptes_connus:
-            suggestions = comptes_proches(comptes_connus, compte)
-            precision = (f" — le plus proche dans votre plan : "
-                         f"{', '.join(suggestions)}" if suggestions else "")
-            erreurs.append(
-                f"le compte {compte} n'existe pas dans le plan comptable"
-                f"{precision}. Créez-le par le modèle « Plan comptable », ou "
-                "corrigez le fichier.")
+            # Une balance reprise d'un autre logiciel porte forcément des
+            # sous-comptes que le plan livré n'a pas. Les réclamer un par un
+            # revenait à faire reprendre le dossier deux fois.
+            manquants.compte(compte)
+            comptes_connus.add(compte)
+            vus.add(compte)
         elif compte in vus:
             erreurs.append(f"le compte {compte} apparaît deux fois")
         else:
@@ -1423,6 +1669,9 @@ def analyse_balance(societe_id, rangs, association, date_reprise):
             "libelle": _valeur(rang, association, "Intitulé") or "Report à nouveau",
             "tiers_id": _tiers_id(societe_id, _valeur(rang, association, "Tiers")),
         })
+        nom_tiers = _valeur(rang, association, "Tiers")
+        if nom_tiers and not _tiers_id(societe_id, nom_tiers):
+            manquants.tiers_nomme(nom_tiers, compte)
 
     if lignes and total_debit != total_credit:
         message = (f"balance déséquilibrée : total débit "
@@ -1437,7 +1686,7 @@ def analyse_balance(societe_id, rangs, association, date_reprise):
     return {"prets": prets, "anomalies": anomalies, "apercu": apercu,
             "nb_valides": len(lignes), "total": total_debit,
             "nb_rejetes": len([a for a in apercu if a["erreurs"]]),
-            "lignes_ignorees": ignorees}
+            "lignes_ignorees": ignorees, "a_creer": manquants.resume()}
 
 
 def analyse_factures(societe_id, rangs, association, defaut_perimetre, sens):
@@ -1445,6 +1694,7 @@ def analyse_factures(societe_id, rangs, association, defaut_perimetre, sens):
     groupes: dict[str, dict] = {}
     ordre: list[str] = []
     anomalies = []
+    manquants = Manquants(societe_id)
     existantes = {str(f["numero"]) for f in db.lignes(
         "SELECT numero FROM factures WHERE societe_id = ? AND sens = ?",
         (societe_id, sens))}
@@ -1479,8 +1729,10 @@ def analyse_factures(societe_id, rangs, association, defaut_perimetre, sens):
             if not tiers:
                 erreurs.append("tiers manquant")
             elif tiers_id is None:
-                erreurs.append(f"le tiers « {tiers} » est introuvable : "
-                               "importez d'abord vos tiers")
+                # Un client qu'on facture est un client : le fichier le dit,
+                # inutile de le faire saisir ailleurs d'abord.
+                manquants.tiers_nomme(
+                    tiers, "411" if sens == "vente" else "401")
             mode = _sans_accent(_valeur(rang, association, "Mode de règlement"))
             if mode and mode not in MODES_REGLEMENT:
                 erreurs.append(f"mode de règlement « {mode} » inconnu "
@@ -1534,7 +1786,8 @@ def analyse_factures(societe_id, rangs, association, defaut_perimetre, sens):
     } for g in (groupes[c] for c in ordre)]
 
     return {"prets": prets, "anomalies": anomalies, "apercu": apercu,
-            "nb_valides": len(prets), "nb_rejetes": len(ordre) - len(prets)}
+            "nb_valides": len(prets), "nb_rejetes": len(ordre) - len(prets),
+            "a_creer": manquants.resume()}
 
 
 SENS_REGLEMENT = {"encaissement", "decaissement"}
@@ -1650,7 +1903,13 @@ def _analyse(ctx, octets: bytes, cle_modele: str) -> dict:
     resultat.update({
         "modele": cle_modele,
         "libelle": modele["libelle"],
-        "colonnes_reconnues": sorted(association),
+        # Non pas la liste des colonnes reconnues, mais la façon dont le
+        # fichier a été lu : c'est souvent la réponse à « pourquoi ça ne
+        # marche pas ». Une colonne lue de travers se voit immédiatement.
+        "colonnes_reconnues": [
+            {"attendu": nom, "trouve": str(entetes[index]).strip()}
+            for nom, index in sorted(association.items())
+            if index < len(entetes)],
         "colonnes_ignorees": [e for i, e in enumerate(entetes)
                               if i not in set(association.values()) and str(e).strip()],
         "societe_id": societe_id,
@@ -1681,7 +1940,8 @@ def api_valide(ctx):
     if cle not in MODELES:
         raise ErreurApplicative("Modèle inconnu.", 404)
 
-    resultat = _analyse(ctx, _decode_fichier(ctx), cle)
+    octets = _decode_fichier(ctx)
+    resultat = _analyse(ctx, octets, cle)
     if resultat["anomalies"] and not ctx.booleen("ignorer_anomalies"):
         raise ErreurApplicative(
             f"{len(resultat['anomalies'])} anomalie(s) : rien n'a été importé. "
@@ -1689,8 +1949,14 @@ def api_valide(ctx):
             details=resultat["anomalies"][:50])
 
     societe_id = resultat["societe_id"]
+    a_creer = resultat.get("a_creer") or {}
     prets = resultat["prets"]
-    if not prets:
+    if not prets and not _quelque_chose_a_creer(a_creer):
+        if resultat.get("nb_ignorees"):
+            raise ErreurApplicative(
+                f"{resultat['nb_ignorees']} ligne(s) sur {resultat['nb_ignorees']} "
+                "étaient déjà enregistrées : il n'y avait rien à reprendre. "
+                "Rien n'a été modifié.")
         raise ErreurApplicative("Aucune ligne exploitable dans ce fichier.")
 
     # Un seul bloc : ou tout passe, ou rien n'est écrit.
@@ -1709,6 +1975,25 @@ def api_valide(ctx):
         })
         compteurs_avant = _photo_compteurs(societe_id)
 
+        # Ce que le fichier désigne et que le dossier ne connaît pas encore
+        # est créé ici, avant le reste. Puis le fichier est relu : les
+        # renvois qui pendaient — un compte, un tiers, un journal — trouvent
+        # cette fois leur destinataire.
+        prealables = cree_manquants(societe_id, a_creer, ctx.nom_utilisateur)
+        if prealables:
+            resultat = _analyse(ctx, octets, cle)
+            prets = resultat["prets"]
+            if _quelque_chose_a_creer(resultat.get("a_creer")):
+                raise ErreurApplicative(
+                    "Certains éléments désignés par le fichier n'ont pas pu "
+                    "être créés. Rien n'a été importé.")
+            if resultat["anomalies"] and not ctx.booleen("ignorer_anomalies"):
+                raise ErreurApplicative(
+                    f"{len(resultat['anomalies'])} anomalie(s) : rien n'a été "
+                    "importé.", details=resultat["anomalies"][:50])
+        if not prets:
+            raise ErreurApplicative("Aucune ligne exploitable dans ce fichier.")
+
         if cle == "ecritures":
             bilan = _importe_ecritures(ctx, societe_id, prets)
         elif cle == "balance_ouverture":
@@ -1721,6 +2006,12 @@ def api_valide(ctx):
             bilan = _importe_generique(societe_id, MODELES[cle], prets)
 
         crees = bilan["nb"]
+        # Les éléments créés en préalable appartiennent à cet import : annuler
+        # la reprise doit les reprendre eux aussi, sans quoi le dossier
+        # garderait des comptes et des tiers dont plus rien ne dit d'où ils
+        # viennent.
+        for table, identifiants in prealables.items():
+            bilan.setdefault("objets", {}).setdefault(table, []).extend(identifiants)
         _rattache_a_import(import_id, bilan)
         db.modifie("imports", import_id, {
             "nb_crees": crees,
@@ -1735,8 +2026,16 @@ def api_valide(ctx):
                  {"crees": crees, "rejetes": resultat["nb_rejetes"]},
                  ctx.nom_utilisateur)
 
-    return {"crees": crees, "rejetes": resultat["nb_rejetes"], "import_id": import_id,
-            "anomalies": resultat["anomalies"], "libelle": resultat["libelle"]}
+    return {"crees": crees, "rejetes": resultat["nb_rejetes"],
+            "ignorees": resultat.get("nb_ignorees", 0),
+            "import_id": import_id, "anomalies": resultat["anomalies"],
+            "prealables": {t: len(i) for t, i in prealables.items()},
+            "libelle": resultat["libelle"]}
+
+
+def _quelque_chose_a_creer(a_creer) -> bool:
+    return any((a_creer or {}).get(quoi) for quoi in
+               ("comptes", "tiers", "journaux"))
 
 
 def _photo_compteurs(societe_id: int) -> dict:

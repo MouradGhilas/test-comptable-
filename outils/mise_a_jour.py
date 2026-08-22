@@ -13,6 +13,8 @@ Déroulé :
 
 Utilisation :
     python3 outils/mise_a_jour.py version.zip          depuis une archive
+    python3 outils/mise_a_jour.py ancienne.zip \\
+            --restaurer donnees/sauvegardes/xxx.zip        retour en arrière
     python3 outils/mise_a_jour.py https://.../maj.zip  depuis un lien
     python3 outils/mise_a_jour.py                      cherche une archive
                                                        dans donnees/maj/
@@ -22,6 +24,7 @@ Utilisation :
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import sys
 import tempfile
@@ -249,6 +252,99 @@ def racine_dans_archive(zf: zipfile.ZipFile) -> str:
     )
 
 
+def dossier_donnees() -> Path:
+    try:
+        from noyau.config import config
+        return Path(config.dossier_donnees)
+    except Exception:                                        # noqa: BLE001
+        return RACINE / "donnees"
+
+
+def archive_version(version: str) -> Path | None:
+    """Range le programme en place dans la bibliothèque des versions.
+
+    Un paquet reçu par messagerie n'existe qu'une fois. S'il n'est pas
+    conservé, la version qu'il installe devient la seule possible : revenir
+    en arrière supposerait de le redemander à quelqu'un. On garde donc une
+    copie de ce qui était là avant de le remplacer.
+    """
+    dossier = dossier_donnees() / "versions"
+    propre = "".join(c for c in str(version) if c.isalnum() or c in "._-") or "inconnue"
+    cible = dossier / f"cabinet-immo-{propre}.zip"
+    if cible.exists() and cible.stat().st_size > 0:
+        return cible
+    try:
+        dossier.mkdir(parents=True, exist_ok=True)
+        temporaire = cible.with_suffix(".zip.partiel")
+        with zipfile.ZipFile(temporaire, "w", zipfile.ZIP_DEFLATED) as archive:
+            for nom in ELEMENTS_PROGRAMME:
+                source = RACINE / nom
+                if not source.exists():
+                    continue
+                if source.is_file():
+                    archive.write(source, nom)
+                    continue
+                for fichier in source.rglob("*"):
+                    if not fichier.is_file() or "__pycache__" in fichier.parts:
+                        continue
+                    archive.write(fichier,
+                                  str(fichier.relative_to(RACINE)).replace("\\", "/"))
+        temporaire.replace(cible)
+        return cible
+    except OSError:
+        return None
+
+
+def restaure_donnees(archive: Path) -> None:
+    """Remet la comptabilité telle qu'une sauvegarde l'a figée.
+
+    Nécessaire pour revenir à une version antérieure au schéma de la base :
+    le programme sait reculer, la base non — elle ne défait pas ses
+    migrations. Écrit ici plutôt qu'appelé dans `modules/` : à cet instant
+    précis, les fichiers du programme sont en train d'être remplacés.
+    """
+    from noyau.config import config
+    config.prepare_dossiers()
+    with zipfile.ZipFile(archive) as zf:
+        noms = zf.namelist()
+        if "comptabilite.db" not in noms:
+            raise RuntimeError(
+                "cette sauvegarde ne contient pas de base de données")
+        with zf.open("comptabilite.db") as source, \
+                open(config.base_de_donnees, "wb") as destination:
+            shutil.copyfileobj(source, destination)
+        for interne in noms:
+            if interne.startswith("pieces_justificatives/") and not interne.endswith("/"):
+                cible = config.dossier_donnees / interne
+                cible.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(interne) as source, open(cible, "wb") as destination:
+                    shutil.copyfileobj(source, destination)
+    # Le journal d'écriture de l'ancienne base n'a plus rien à voir avec celle
+    # qu'on vient de poser : le laisser reviendrait à mélanger les deux.
+    for suffixe in ("-wal", "-shm"):
+        Path(str(config.base_de_donnees) + suffixe).unlink(missing_ok=True)
+
+
+def version_de_archive(archive: Path) -> str:
+    """Le numéro de version que porte le paquet, sans rien installer."""
+    try:
+        with zipfile.ZipFile(archive) as zf:
+            prefixe = racine_dans_archive(zf)
+            source = zf.read(prefixe + "noyau/config.py").decode("utf-8")
+    except Exception:                                        # noqa: BLE001
+        return ""
+    trouve = re.search(r'^VERSION\s*=\s*["\']([^"\']+)["\']', source, re.M)
+    return trouve.group(1) if trouve else ""
+
+
+def en_tuple(texte: str) -> tuple:
+    morceaux = []
+    for bout in str(texte or "").split("."):
+        chiffres = "".join(c for c in bout if c.isdigit())
+        morceaux.append(int(chiffres) if chiffres else 0)
+    return tuple(morceaux)
+
+
 def sauvegarde_code() -> Path:
     """Met le code actuel de côté pour permettre un retour en arrière."""
     cible = dossier_sauvegarde_code()
@@ -386,8 +482,15 @@ def principal() -> int:
                            help="revenir à la version précédente")
     analyseur.add_argument("--sans-sauvegarde", action="store_true",
                            help="ne pas créer de sauvegarde préalable (déconseillé)")
+    analyseur.add_argument("--restaurer", metavar="SAUVEGARDE",
+                           help="remettre aussi les données de cette sauvegarde "
+                                "(retour à une version antérieure au schéma "
+                                "de la base)")
     analyseur.add_argument("--vers", metavar="DOSSIER",
                            help="installation à mettre à jour (défaut : celle-ci)")
+    analyseur.add_argument("--donnees", metavar="DOSSIER",
+                           help="dossier de données de cette installation "
+                                "(défaut : celui de la configuration)")
     analyseur.add_argument("--auto", action="store_true",
                            help="ne rien demander : en cas de doute, renoncer")
     analyseur.add_argument("--attendre", type=float, default=0, metavar="SECONDES",
@@ -404,6 +507,16 @@ def principal() -> int:
                            help="options de lancement à rejouer (port, dossier "
                                 "de données…), au format JSON")
     arguments = analyseur.parse_args()
+
+    # L'application peut tourner sur un dossier de données choisi à la main
+    # (`--donnees`, une clé USB, un second dossier d'essai). L'outil, lancé à
+    # part, ne le devinait pas : il sauvegardait, migrait et vérifiait le
+    # dossier par défaut — c'est-à-dire pas celui de l'utilisateur. Posé ici,
+    # avant tout accès à la configuration.
+    if arguments.donnees:
+        import os as _os
+        _os.environ["CABINET_IMMO_DONNEES"] = str(
+            Path(arguments.donnees).expanduser().resolve())
 
     if arguments.attendre_pid:
         note_etat("fermeture", "L'application se ferme.", ok=None,
@@ -433,8 +546,13 @@ def principal() -> int:
     ancienne_version = version_installee()
     note_etat(version_avant=ancienne_version)
     archive = trouve_archive(arguments.archive)
+    version_visee = version_de_archive(archive)
+    retour = bool(version_visee) and en_tuple(version_visee) < en_tuple(ancienne_version)
+    if retour:
+        print(f"  Retour en arrière : {ancienne_version} → {version_visee}")
 
     # 1. Sauvegarde des données -------------------------------------------
+    filet = None
     if not arguments.sans_sauvegarde:
         titre("1. Sauvegarde des données")
         note_etat("sauvegarde", "Sauvegarde des données avant toute chose.")
@@ -442,9 +560,9 @@ def principal() -> int:
             from modules.fichiers import cree_sauvegarde
             from noyau import base as db
             db.initialise()
-            chemin = cree_sauvegarde("avant_mise_a_jour")
+            filet = cree_sauvegarde("avant_retour" if retour else "avant_mise_a_jour")
             db.ferme()
-            succes(f"Sauvegarde créée : {chemin.name}")
+            succes(f"Sauvegarde créée : {filet.name}")
         except Exception as err:                             # noqa: BLE001
             echec(f"Sauvegarde impossible : {err}")
             if arguments.auto:
@@ -456,12 +574,57 @@ def principal() -> int:
             if reponse not in ("o", "oui", "y"):
                 return 1
 
+    # 1 bis. Retour des données -------------------------------------------
+    #
+    # Une version antérieure au schéma de la base ne sait pas l'ouvrir : elle
+    # refuse même de démarrer, et la mise à jour se solderait par un retour
+    # automatique à celle qu'on voulait quitter. Les données reviennent donc
+    # avec le programme — c'est demandé explicitement, jamais deviné.
+    donnees_remises = False
+    if arguments.restaurer:
+        titre("1 bis. Retour des données à l'état de cette version")
+        note_etat("sauvegarde", "Retour des données à l'état d'alors.")
+        source = Path(arguments.restaurer).expanduser()
+        try:
+            if not source.is_file():
+                raise RuntimeError(f"sauvegarde introuvable : {source}")
+            restaure_donnees(source)
+            donnees_remises = True
+            succes(f"Données remises dans l'état de {source.name}")
+        except Exception as err:                             # noqa: BLE001
+            echec(f"Restauration impossible : {err}")
+            return abandonne(arguments, "sauvegarde",
+                f"Impossible de remettre les données ({err}). Rien n'a été "
+                f"touché : vous êtes toujours en version {ancienne_version}.")
+
     # 2. Copie du code actuel ---------------------------------------------
     titre("2. Mise de côté de la version actuelle")
     note_etat("installation", "Mise de côté de la version actuelle.")
     sauvegarde_code()
+    rangee = archive_version(ancienne_version)
     succes(f"Version {ancienne_version} conservée "
            f"(revenir en arrière : mise_a_jour.py --annuler)")
+    if rangee:
+        succes(f"Version {ancienne_version} rangée dans la bibliothèque "
+               f"({rangee.name}) : on pourra y revenir depuis l'application")
+
+    def remet_les_donnees() -> str:
+        """Après un échec, la comptabilité doit repartir comme elle était.
+
+        Sans cela, un retour raté laisserait le programme d'origine devant
+        des données vieillies : le pire des deux mondes.
+        """
+        if not donnees_remises or not filet:
+            return ""
+        try:
+            restaure_donnees(Path(filet))
+            succes("Données remises telles qu'elles étaient avant l'opération.")
+            return " Vos données ont été remises comme elles étaient."
+        except Exception as err:                             # noqa: BLE001
+            echec(f"Les données n'ont pas pu être remises : {err}")
+            return (f" ATTENTION : les données sont restées dans l'état de "
+                    f"{Path(arguments.restaurer).name} ; restaurez "
+                    f"{Path(filet).name} depuis l'écran Sauvegardes.")
 
     # 3. Remplacement du code ---------------------------------------------
     titre("3. Installation de la nouvelle version")
@@ -477,7 +640,8 @@ def principal() -> int:
         succes("Version précédente restaurée.")
         return abandonne(arguments, "installation",
             f"Installation impossible ({err}). La version {ancienne_version} "
-            "a été remise en place et vos données sont intactes.")
+            "a été remise en place et vos données sont intactes."
+            + remet_les_donnees())
 
     # 4. Migration de la base ---------------------------------------------
     titre("4. Mise à niveau de la base de données")
@@ -498,10 +662,18 @@ def principal() -> int:
         echec(f"Migration impossible : {err}")
         restaure_code()
         succes("Version précédente restaurée. Vos données sont intactes.")
+        # Le cas courant, quand on recule : la base a été migrée par une
+        # version plus récente et l'ancienne ne sait pas la lire. Le dire.
+        explication = (
+            f" La version {version_visee} est antérieure à la structure "
+            "actuelle de votre base : pour y revenir, il faut aussi remettre "
+            "les données de l'époque. L'écran « Mise à jour » le propose et "
+            "vous laisse choisir la sauvegarde."
+            if retour and not donnees_remises else "")
         return abandonne(arguments, "migration",
             f"Mise à niveau de la base impossible ({err}). La version "
             f"{ancienne_version} a été remise en place et vos données sont "
-            "intactes.")
+            "intactes." + explication + remet_les_donnees())
 
     # 5. Vérification ------------------------------------------------------
     titre("5. Vérification")
@@ -520,27 +692,36 @@ def principal() -> int:
             restaure_code()
             return abandonne(arguments, "verification",
                 "Contrôle de la comptabilité négatif après mise à jour. La "
-                f"version {ancienne_version} a été remise en place.")
+                f"version {ancienne_version} a été remise en place."
+                + remet_les_donnees())
         succes(f"Base saine — {ecritures} écriture(s), comptabilité équilibrée")
     except Exception as err:                                 # noqa: BLE001
         echec(f"Vérification impossible : {err}")
         restaure_code()
         return abandonne(arguments, "verification",
             f"Vérification impossible ({err}). La version {ancienne_version} "
-            "a été remise en place.")
+            "a été remise en place." + remet_les_donnees())
 
     nouvelle_version = version_installee()
+    intitule = "Retour terminé" if retour else "Mise à jour terminée"
+    sort_des_donnees = (
+        f"Vos données ont été remises dans l'état de {Path(arguments.restaurer).name}."
+        if donnees_remises else "Vos données n'ont pas été touchées.")
     print()
     print("=" * 68)
-    print(f"  Mise à jour terminée : version {ancienne_version} → {nouvelle_version}")
-    print("  Vos données n'ont pas été touchées.")
+    print(f"  {intitule} : version {ancienne_version} → {nouvelle_version}")
+    print(f"  {sort_des_donnees}")
+    if donnees_remises and filet:
+        print(f"  L'état d'avant reste disponible : {Path(filet).name}")
     if not arguments.relancer:
         print("  Relancez l'application (raccourci « Cabinet Immo »).")
     print("=" * 68)
 
     note_etat("relance", version_apres=nouvelle_version, ok=True, message=(
-        f"Mise à jour terminée : version {ancienne_version} → "
-        f"{nouvelle_version}. Vos données n'ont pas été touchées."))
+        f"{intitule} : version {ancienne_version} → {nouvelle_version}. "
+        + sort_des_donnees
+        + (f" L'état d'avant reste disponible : {Path(filet).name}."
+           if donnees_remises and filet else "")))
 
     if arguments.relancer:
         relance_application(arguments.relancer_options)

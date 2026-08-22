@@ -242,8 +242,20 @@ filtres affichés, périmètre compris.
 
 * L'import se fait **en deux temps** : contrôle complet sans écriture, puis
   validation. Chaque anomalie est rapportée avec son **numéro de ligne**, et le
-  message dit quoi faire — un compte absent propose les plus proches du plan,
-  un journal inconnu liste ceux qui existent.
+  message dit quoi faire.
+* **Ce qui n'est qu'un nom se crée tout seul.** Un sous-compte, un tiers, un
+  journal cités par le fichier et absents du dossier ne sont plus une anomalie :
+  ils sont créés avec l'import. Exiger l'inverse revenait à faire reprendre le
+  dossier trois fois, dans le bon ordre, en corrigeant à chaque tour. Ce qui
+  est créé est **annoncé avant** (« 3 comptes et 12 tiers seront créés au
+  passage », avec la liste), **redit après**, et **rattaché à la reprise** :
+  l'annuler les reprend, sauf ceux qui servent déjà ailleurs. Un compte hérite
+  de son compte de rattachement — nature, rubrique, caractère lettrable ; un
+  tiers est rangé d'après le sien (411 client, 401 fournisseur, 4671 mandant,
+  421 salarié).
+* **Ce qui porte une décision continue d'être réclamé** : un programme, un lot,
+  un bail, un bien ont une surface, un prix, une durée, qui ne s'inventent pas
+  au milieu d'une reprise.
 * Le fichier est lu **comme un journal se lit** : une cellule vide reprend la
   valeur de la ligne du dessus, de sorte que la date, le journal et le numéro
   ne s'écrivent qu'une fois par écriture. Le journal est reconnu par son code
@@ -392,8 +404,19 @@ Le chemin normal passe par l'application : **Paramètres → Mise à jour**,
 le fichier reçu est déposé, contrôlé, puis installé en un clic. L'application se
 ferme, se met à jour et se rouvre toute seule, **en rejouant ses options de
 lancement** (port, dossier de données) pour ne pas rouvrir sur une autre
-comptabilité. Le paquet est refusé s'il n'est pas une version de Cabinet Immo,
-s'il est incomplet ou s'il n'est pas plus récent que la version installée.
+comptabilité. Le paquet est refusé s'il n'est pas une version de Cabinet Immo
+ou s'il est incomplet.
+
+**On peut aussi reculer.** Chaque version installée est conservée sur le poste
+(`donnees/versions/`), et l'écran en dresse la liste : on y revient d'un bouton,
+sans redemander le fichier à personne. Deux situations, distinguées parce
+qu'elles n'ont pas le même prix :
+
+| Situation | Ce qui se passe |
+|---|---|
+| La version visée sait lire la base telle qu'elle est | **Seul le programme recule.** Rien de ce qui a été saisi n'est perdu. Une confirmation suffit |
+| Elle est antérieure au schéma de la base | Le programme seul ne suffit pas : la base ne défait pas ses migrations. Il faut **remettre les données de l'époque** — l'écran fait choisir la sauvegarde, chiffre ce qui sera perdu, et garde l'état actuel pour que le mouvement reste réversible |
+| Même version que celle installée | **Réinstallation** : la réponse à une mise à jour restée à mi-chemin |
 
 En ligne de commande :
 
@@ -438,8 +461,8 @@ Pour un usage à plusieurs postes sur le réseau local :
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
 python3 outils/test_http.py          # 63 contrôles du serveur et de l'interface
-python3 outils/test_comptable.py     # 273 contrôles de conformité comptable
-python3 outils/test_mise_a_jour.py   # 17 contrôles du chemin de mise à jour
+python3 outils/test_comptable.py     # 311 contrôles de conformité comptable
+python3 outils/test_mise_a_jour.py   # 39 contrôles du chemin de mise à jour
 python3 app.py --verifier            # intégrité de vos données
 ```
 
@@ -450,7 +473,7 @@ sont constatés au bon moment et que la clôture se déroule correctement.
 Le test de conformité comptable, lui, ne regarde pas l'interface : il attaque
 l'application par ses interfaces de programmation et vérifie les règles qui,
 si elles cèdent, produisent des comptes **faux sans que rien ne le signale**.
-Dix familles, lançables séparément
+Onze familles, lançables séparément
 (`python3 outils/test_comptable.py perimetre`) :
 
 | Suite | Ce qu'elle vérifie |
@@ -461,6 +484,7 @@ Dix familles, lançables séparément
 | `perimetre` | l'étanchéité entre le déclaré et le hors déclaration |
 | `cycles` | les cycles métier en mouvement : numérotation, saisies simultanées, une avance sur plan qui devient produit à la livraison, un loyer encaissé qui repart chez son propriétaire |
 | `reprises` | annuler un import déjà validé sans laisser de trou dans la numérotation ni effacer ce qui sert déjà |
+| `creation` | l'import crée ce dont il a besoin — et seulement cela : ce qui porte une décision reste réclamé |
 | `sante` | les contrôles de santé du dossier, chacun mis à l'épreuve sur une anomalie provoquée pour lui |
 | `annuelles` | la DAS et l'état des clients, et surtout leurs recoupements |
 | `relances` | ce qui est dû et depuis quand, et la lettre à ses trois niveaux |
@@ -500,7 +524,7 @@ modules/
 ├── documents.py            éditions imprimables
 ├── fichiers.py             pièces jointes, sauvegarde, restauration
 ├── rapports.py             résumés Telegram et courriel
-└── imports.py              reprise de données depuis Excel (modèles + contrôle)
+└── imports.py              reprise depuis Excel (modèles, contrôle, création du manquant)
 reference/
 ├── plan_comptable_scf.json nomenclature SCF et modèles d'échéancier
 └── parametres_fiscaux.json taux et barèmes par année
@@ -508,8 +532,8 @@ web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
 ├── test_http.py            63 contrôles serveur et interface
-├── test_comptable.py       273 contrôles de conformité comptable
-├── test_mise_a_jour.py     17 contrôles du chemin de mise à jour
+├── test_comptable.py       311 contrôles de conformité comptable
+├── test_mise_a_jour.py     39 contrôles du chemin de mise à jour
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur
 ├── installer.py            même installation, sans fichier bloqué par les messageries
@@ -576,6 +600,13 @@ entre les deux ordinateurs — rien n'est exposé sur Internet. Voir le
 **Une mise à jour peut-elle effacer mes données ?** Non. Le dossier `donnees/`
 n'est jamais touché, une sauvegarde est prise avant chaque mise à jour, et
 l'outil revient automatiquement en arrière si un contrôle échoue.
+
+**Et si une nouvelle version ne me convient pas ?** On revient à la
+précédente : Paramètres → Mise à jour liste les versions présentes sur le
+poste. Tant que la version visée sait lire la base, seul le programme recule
+et rien n'est perdu. Si elle est plus ancienne que la structure de la base, il
+faut aussi remettre les données de l'époque — l'écran le dit, fait choisir la
+sauvegarde, et garde l'état actuel.
 
 **Puis-je rouvrir un exercice clôturé ?** Oui, un administrateur le peut
 (Paramètres → Exercices). Vérifiez ensuite les écritures de clôture et

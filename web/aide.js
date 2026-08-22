@@ -387,6 +387,13 @@ const AIDES = {
       'Vos données vivent dans un dossier local. Les sauvegardes aussi : '
       + 'copiez-les régulièrement hors du poste, sinon une panne de disque '
       + 'emporte les deux.',
+      'Les versions déjà installées restent sur le poste : on peut '
+      + '<strong>revenir à l\'une d\'elles</strong> si une mise à jour '
+      + 'déplaît. Tant que la version visée sait lire votre base, seul le '
+      + 'programme recule et rien n\'est perdu. Si elle est plus ancienne '
+      + 'que la structure de la base, il faut remettre les données de '
+      + 'l\'époque avec : l\'écran le dit et vous fait choisir la '
+      + 'sauvegarde.',
     ],
   },
 };

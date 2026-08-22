@@ -2120,6 +2120,180 @@ def suite_banque(dos):
       dos.refuse("/api/rapprochements/99999/releve", {"contenu": b64(releve)}))
 
 
+def suite_creation(dos):
+    """L'import cree ce dont il a besoin, et le dit.
+
+    Exiger que le plan comptable, les tiers et les journaux existent avant
+    d'importer un journal d'ecritures, c'est demander de reprendre son
+    dossier trois fois, dans le bon ordre, en corrigeant a chaque tour.
+    Ce qui n'est qu'un nom se cree donc tout seul -- annonce avant, liste
+    apres, et repris si la reprise est annulee. Ce qui porte une decision
+    -- un programme, un lot, un bail -- continue d'etre reclame.
+    """
+    CSV = """N° écriture;Date;Journal;Libellé;Compte;Tiers;Débit;Crédit;Périmètre;N° de pièce
+1;15/03/{a};VT;Vente de biens;41101;ETS BENALI;119000;;Déclaré;FV-100
+1;;;;701;;;100000;;
+1;;;;4457;;;19000;;
+2;16/03/{a};VT;Achat fournitures;60701;;24000;;Déclaré;FA-100
+2;;;;40101;SARL FOURNIMEX;;24000;;
+"""
+
+    dos.appel("/api/installation", {
+        "identifiant": "c", "mot_de_passe": "motdepasse123", "nom_complet": "X",
+        "raison_sociale": "SARL CREATION", "nif": "000116001234567",
+        "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    annee = int(dos.appel(f"/api/exercices?societe={sid}")
+                ["exercices"][0]["date_debut"][:4])
+    fichier = CSV.format(a=annee)
+
+    def existe(table, colonne, valeur):
+        return bool(dos.sql(f"SELECT id FROM {table} WHERE societe_id = ? "
+                            f"AND {colonne} = ?", (sid, valeur)))
+
+    # ==================================================================
+    titre("1. Ce qui manque est annonce, pas reclame")
+    # ==================================================================
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "ecritures", "contenu": b64(fichier)})
+    v("aucune anomalie : plus rien n'est a preparer d'avance",
+      not a["anomalies"], a["anomalies"][:5])
+    v("les cinq lignes sont pretes", a["nb_valides"] == 2, a["nb_valides"])
+    creer = a.get("a_creer") or {}
+    numeros = {c["numero"] for c in creer.get("comptes", [])}
+    v("les sous-comptes absents sont annonces",
+      {"41101", "40101", "60701"} <= numeros, sorted(numeros))
+    v("… et pas ceux qui existent deja",
+      "701" not in numeros and "4457" not in numeros, sorted(numeros))
+    noms = {t["raison_sociale"] for t in creer.get("tiers", [])}
+    v("les tiers nommes le sont aussi",
+      {"ETS BENALI", "SARL FOURNIMEX"} == noms, sorted(noms))
+    v("le journal inconnu aussi",
+      [j["code"] for j in creer.get("journaux", [])] == ["VT"],
+      creer.get("journaux"))
+    v("rien n'a encore ete cree", not existe("comptes", "numero", "41101"))
+
+    # ==================================================================
+    titre("2. La validation les cree, avec ce qu'il faut autour")
+    # ==================================================================
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "ecritures", "contenu": b64(fichier),
+        "fichier": "journal-mars.csv"})
+    v("les deux ecritures sont enregistrees", r["crees"] == 2, r)
+    v("le compte rendu dit ce qui a ete cree au passage",
+      r.get("prealables", {}).get("comptes") == 3
+      and r["prealables"].get("tiers") == 2
+      and r["prealables"].get("journaux") == 1, r.get("prealables"))
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+
+    compte = dos.sql("SELECT * FROM comptes WHERE societe_id = ? AND "
+                     "numero = '40101'", (sid,))
+    v("le sous-compte cree existe", bool(compte))
+    parent = dos.sql("SELECT * FROM comptes WHERE societe_id = ? AND "
+                     "numero = '4011'", (sid,))[0]
+    v("… il herite de la nature de son compte de rattachement",
+      compte and compte[0]["nature"] == parent["nature"],
+      compte and compte[0]["nature"])
+    v("… et de son caractere lettrable",
+      compte and compte[0]["lettrable"] == parent["lettrable"])
+    v("… sa classe est celle de son numero",
+      compte and compte[0]["classe"] == 4, compte and compte[0]["classe"])
+
+    tiers = dos.sql("SELECT * FROM tiers WHERE societe_id = ? AND "
+                    "raison_sociale = 'SARL FOURNIMEX'", (sid,))
+    v("le tiers cree existe", bool(tiers))
+    v("… range en fournisseur d'apres son compte",
+      tiers and tiers[0]["type"] == "fournisseur", tiers and tiers[0]["type"])
+    v("… avec son compte collectif",
+      tiers and tiers[0]["compte_comptable"] == "401",
+      tiers and tiers[0]["compte_comptable"])
+    client = dos.sql("SELECT * FROM tiers WHERE societe_id = ? AND "
+                     "raison_sociale = 'ETS BENALI'", (sid,))
+    v("celui porte par un compte 411 est range en client",
+      client and client[0]["type"] == "client", client and client[0]["type"])
+    v("… et chacun a son propre code",
+      client and tiers and client[0]["code"] != tiers[0]["code"])
+
+    journal = dos.sql("SELECT * FROM journaux WHERE societe_id = ? AND "
+                      "code = 'VT'", (sid,))
+    v("le journal cree existe", bool(journal))
+    v("… et les ecritures y sont bien passees",
+      dos.sql("SELECT COUNT(*) n FROM ecritures e JOIN journaux j "
+              "ON j.id = e.journal_id WHERE j.code = 'VT'")[0]["n"] == 2)
+
+    # ==================================================================
+    titre("3. Un second passage ne recree rien")
+    # ==================================================================
+    avant = dos.sql("SELECT COUNT(*) n FROM comptes")[0]["n"]
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "ecritures", "contenu": b64(fichier)})
+    v("plus rien a creer au second passage",
+      not (a.get("a_creer") or {}).get("comptes"), a.get("a_creer"))
+    v("le plan comptable n'a pas grossi",
+      dos.sql("SELECT COUNT(*) n FROM comptes")[0]["n"] == avant)
+
+    # ==================================================================
+    titre("4. Annuler la reprise reprend aussi ce qu'elle a cree")
+    # ==================================================================
+    import_id = dos.appel(f"/api/imports?societe={sid}")["imports"][0]["id"]
+    plan = dos.appel(f"/api/imports/{import_id}/plan")
+    v("le plan annonce les objets a retirer",
+      ((plan.get("porte") or {}).get("objets") or {}).get("comptes") == 3,
+      plan.get("porte"))
+    dos.appel(f"/api/imports/{import_id}/annuler",
+              {"societe_id": sid, "mode": "suppression",
+               "confirmation": "SUPPRIMER"})
+    v("les ecritures sont parties",
+      dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == 0)
+    v("le sous-compte cree est parti avec",
+      not existe("comptes", "numero", "40101"))
+    v("le tiers cree aussi", not existe("tiers", "raison_sociale", "ETS BENALI"))
+    v("le journal cree aussi", not existe("journaux", "code", "VT"))
+    v("… mais pas les comptes qui existaient avant",
+      existe("comptes", "numero", "4011") and existe("comptes", "numero", "701"))
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("5. Ce qui porte une decision continue d'etre reclame")
+    # ==================================================================
+    # Un lot, c'est une surface, un prix, un etage. L'inventer au milieu
+    # d'une reprise serait pire que de le reclamer.
+    LOTS = """Programme;N° lot;Type;Surface;Prix de vente
+PROG-INEXISTANT;A-12;appartement;85;12000000
+"""
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "lots", "contenu": b64(LOTS)})
+    v("un programme absent reste une anomalie", bool(a["anomalies"]),
+      a["anomalies"])
+    v("… et le message nomme ce qui manque",
+      "PROG-INEXISTANT" in str(a["anomalies"]), a["anomalies"])
+    v("rien n'est propose a la creation",
+      not (a.get("a_creer") or {}).get("comptes"), a.get("a_creer"))
+
+    # ==================================================================
+    titre("6. La balance de reprise se complete elle aussi")
+    # ==================================================================
+    BALANCE = """Compte;Intitulé;Débit;Crédit
+41102;Clients divers;450000;
+68101;Dotations aux amortissements;;450000
+"""
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "balance_ouverture",
+        "contenu": b64(BALANCE), "date_reprise": f"{annee}-01-01"})
+    v("une balance a sous-comptes ne bloque plus", not a["anomalies"],
+      a["anomalies"])
+    v("… les comptes absents sont annonces",
+      {"41102", "68101"} <= {c["numero"] for c in
+                           (a.get("a_creer") or {}).get("comptes", [])},
+      a.get("a_creer"))
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "balance_ouverture",
+        "contenu": b64(BALANCE), "date_reprise": f"{annee}-01-01"})
+    v("la balance passe", r["crees"] >= 1, r)
+    v("… et les comptes sont la", existe("comptes", "numero", "68101"))
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+
+
 SUITES = [
     ("conformite", "Conformite comptable -- une annee tenue", suite_conformite, True),
     ("limites", "Ce que le logiciel doit refuser", suite_limites, False),
@@ -2127,6 +2301,7 @@ SUITES = [
     ("perimetre", "Etancheite declare / hors declaration", suite_perimetre, False),
     ("cycles", "Cycles metier en mouvement et numerotation", suite_cycles, True),
     ("reprises", "Annuler un import deja valide", suite_reprises, False),
+    ("creation", "L'import cree ce dont il a besoin", suite_creation, False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),
