@@ -135,6 +135,64 @@ def exige_compte(societe_id: int, numero: str) -> dict:
 # Écriture comptable — point d'entrée unique
 # ---------------------------------------------------------------------------
 
+def prepare_lignes(societe_id: int, lignes: list, libelle: str) -> tuple:
+    """Normalise et contrôle les lignes d'une écriture.
+
+    Extrait de `enregistre_ecriture` pour que la modification d'une écriture
+    passe exactement par les mêmes contrôles que sa création : équilibre,
+    existence des comptes, sens unique par ligne. Deux chemins d'écriture
+    divergent toujours au bout de quelques versions ; il n'y en a qu'un.
+    """
+    propres = []
+    total_debit = total_credit = 0
+    for index, brute in enumerate(lignes):
+        compte = str(brute.get("compte") or "").strip()
+        if not compte:
+            raise ErreurApplicative(f"Ligne {index + 1} : compte manquant.")
+        exige_compte(societe_id, compte)
+        debit = int(brute.get("debit") or 0)
+        credit = int(brute.get("credit") or 0)
+        if debit < 0 or credit < 0:
+            raise ErreurApplicative(
+                f"Ligne {index + 1} : les montants négatifs sont interdits. "
+                "Inversez le sens débit/crédit."
+            )
+        if debit and credit:
+            raise ErreurApplicative(
+                f"Ligne {index + 1} : une ligne ne peut pas être à la fois au débit "
+                "et au crédit."
+            )
+        if not debit and not credit:
+            continue                       # ligne vide : ignorée silencieusement
+        total_debit += debit
+        total_credit += credit
+        propres.append({
+            "ordre": len(propres),
+            "compte": compte,
+            "tiers_id": brute.get("tiers_id"),
+            "libelle": (brute.get("libelle") or libelle)[:250],
+            "debit": debit,
+            "credit": credit,
+            "echeance": util.date_iso(brute.get("echeance")),
+            "lettrage": brute.get("lettrage"),
+            "programme_id": brute.get("programme_id"),
+            "lot_id": brute.get("lot_id"),
+            "bien_id": brute.get("bien_id"),
+            "poste_budget": brute.get("poste_budget"),
+        })
+
+    if len(propres) < 2:
+        raise ErreurApplicative("Une écriture comptable comporte au moins deux lignes.")
+    if total_debit != total_credit:
+        ecart = total_debit - total_credit
+        raise ErreurApplicative(
+            "Écriture déséquilibrée : débit "
+            f"{util.formate_montant(total_debit)} ≠ crédit {util.formate_montant(total_credit)} "
+            f"(écart de {util.formate_montant(abs(ecart))})."
+        )
+    return propres, total_debit
+
+
 def enregistre_ecriture(
     societe_id: int,
     journal_code: str,
@@ -183,56 +241,10 @@ def enregistre_ecriture(
             "declare")
     perimetre = normalise_perimetre(perimetre)
 
-    # -- normalisation et contrôles des lignes -----------------------------
-    propres = []
-    total_debit = total_credit = 0
-    for index, brute in enumerate(lignes):
-        compte = str(brute.get("compte") or "").strip()
-        if not compte:
-            raise ErreurApplicative(f"Ligne {index + 1} : compte manquant.")
-        exige_compte(societe_id, compte)
-        debit = int(brute.get("debit") or 0)
-        credit = int(brute.get("credit") or 0)
-        if debit < 0 or credit < 0:
-            raise ErreurApplicative(
-                f"Ligne {index + 1} : les montants négatifs sont interdits. "
-                "Inversez le sens débit/crédit."
-            )
-        if debit and credit:
-            raise ErreurApplicative(
-                f"Ligne {index + 1} : une ligne ne peut pas être à la fois au débit "
-                "et au crédit."
-            )
-        if not debit and not credit:
-            continue                       # ligne vide : ignorée silencieusement
-        total_debit += debit
-        total_credit += credit
-        propres.append({
-            "ordre": len(propres),
-            "compte": compte,
-            "tiers_id": brute.get("tiers_id"),
-            "libelle": (brute.get("libelle") or libelle)[:250],
-            "debit": debit,
-            "credit": credit,
-            "echeance": util.date_iso(brute.get("echeance")),
-            "lettrage": brute.get("lettrage"),
-            "programme_id": brute.get("programme_id"),
-            "lot_id": brute.get("lot_id"),
-            "bien_id": brute.get("bien_id"),
-            "poste_budget": brute.get("poste_budget"),
-        })
-
-    if len(propres) < 2:
-        raise ErreurApplicative("Une écriture comptable comporte au moins deux lignes.")
-    if total_debit != total_credit:
-        ecart = total_debit - total_credit
-        raise ErreurApplicative(
-            "Écriture déséquilibrée : débit "
-            f"{util.formate_montant(total_debit)} ≠ crédit {util.formate_montant(total_credit)} "
-            f"(écart de {util.formate_montant(abs(ecart))})."
-        )
+    propres, total_debit = prepare_lignes(societe_id, lignes, libelle)
 
     numero = db.numero_suivant(societe_id, f"ecriture_{jrn['code']}", int(date[:4]))
+
 
     ecriture_id = db.insere("ecritures", {
         "societe_id": societe_id,
@@ -857,19 +869,74 @@ def api_cree_ecriture(ctx):
     return {"id": identifiant}
 
 
+def _rapprochements_clos(ecriture_id: int) -> list:
+    """Les rapprochements bancaires clôturés qui pointent cette écriture.
+
+    Un relevé arrêté et clôturé est un état signé : en retirer une ligne sans
+    le dire changerait un document déjà produit. C'est le seul cas où une
+    modification est refusée plutôt qu'accompagnée.
+    """
+    return db.lignes(
+        "SELECT DISTINCT r.id, r.date_arrete FROM rapprochement_lignes rl "
+        "JOIN rapprochements r ON r.id = rl.rapprochement_id "
+        "JOIN lignes l ON l.id = rl.ligne_id "
+        "WHERE l.ecriture_id = ? AND r.cloture = 1", (ecriture_id,))
+
+
+def _defait_lettrages(ecriture_id: int) -> list:
+    """Délettre les lignes de l'écriture, et leurs contreparties avec elles.
+
+    Modifier une écriture lettrée casserait le rapprochement des deux côtés.
+    Plutôt que d'interdire, on défait proprement et on le dit : c'est une
+    conséquence, pas une faute.
+    """
+    codes = [l["lettrage"] for l in db.lignes(
+        "SELECT DISTINCT lettrage FROM lignes WHERE ecriture_id = ? "
+        "AND lettrage IS NOT NULL AND lettrage <> ''", (ecriture_id,))]
+    for code in codes:
+        db.execute("UPDATE lignes SET lettrage = NULL WHERE lettrage = ? AND "
+                   "ecriture_id IN (SELECT id FROM ecritures WHERE societe_id = "
+                   "(SELECT societe_id FROM ecritures WHERE id = ?))",
+                   (code, ecriture_id))
+    return codes
+
+
 @route("PUT", "/api/ecritures/<id>")
 def api_modifie_ecriture(ctx):
-    """Modification = suppression + recréation, uniquement si non validée."""
+    """Modifie une écriture **en place** : même identifiant, même numéro.
+
+    Une écriture se corrige. La reprendre par suppression et recréation lui
+    faisait changer de numéro — donc un trou dans le journal —, orphelinait
+    ses justificatifs et perdait son lettrage. Ici, l'écriture reste
+    elle-même : seuls son contenu et ses lignes changent, et la modification
+    est tracée.
+
+    Une écriture validée n'est pas figée pour autant : on la repasse en
+    brouillon pour la corriger, ce qui se demande explicitement et se voit
+    dans le journal des opérations. Ce qui reste refusé, c'est de toucher à
+    un exercice clos ou à un rapprochement bancaire déjà clôturé — là, un
+    document a été produit.
+    """
     ctx.interdit_lecture_seule()
     identifiant = int(ctx.params["id"])
     ancienne = db.ligne("SELECT * FROM ecritures WHERE id = ?", (identifiant,))
     if not ancienne:
         raise ErreurApplicative("Écriture introuvable.", 404)
-    if ancienne["validee"]:
-        raise ErreurApplicative(
-            "Écriture validée : elle n'est plus modifiable. Utilisez l'extourne."
-        )
     exige_exercice_ouvert(exercice(ancienne["exercice_id"]))
+
+    if ancienne["validee"] and not ctx.booleen("devalider"):
+        raise ErreurApplicative(
+            f"L'écriture {ancienne['numero']} est validée. Confirmez pour la "
+            "repasser en brouillon et la corriger — l'opération est tracée. "
+            "Vous pouvez aussi la laisser telle quelle et passer une extourne.")
+
+    clos = _rapprochements_clos(identifiant)
+    if clos:
+        dates = ", ".join(util.date_fr(r["date_arrete"]) for r in clos)
+        raise ErreurApplicative(
+            f"Cette écriture est pointée dans un rapprochement bancaire "
+            f"clôturé ({dates}). Rouvrez ce rapprochement, ou passez une "
+            "extourne : sans cela, un relevé déjà arrêté changerait de contenu.")
 
     lignes_pretes = [{
         "compte": l.get("compte"),
@@ -883,24 +950,62 @@ def api_modifie_ecriture(ctx):
         "bien_id": l.get("bien_id") or None,
     } for l in (ctx.champ("lignes") or [])]
 
+    societe_id = ancienne["societe_id"]
+    date = util.date_iso(ctx.champ_requis("date"))
+    if not date:
+        raise ErreurApplicative("Date d'écriture invalide.")
+    libelle = str(ctx.champ_requis("libelle")).strip()
+    ex = exercice_pour_date(societe_id, date)
+    exige_exercice_ouvert(ex)
+    if not (ex["date_debut"] <= date <= ex["date_fin"]):
+        raise ErreurApplicative(
+            f"La date {util.date_fr(date)} est hors de l'exercice {ex['libelle']}.")
+    jrn = journal_par_code(societe_id, ctx.champ_requis("journal"))
+    perimetre = normalise_perimetre(ctx.champ("perimetre")
+                                    or ancienne["perimetre"])
+    propres, total = prepare_lignes(societe_id, lignes_pretes, libelle)
+
     with db.transaction():
-        db.supprime("ecritures", identifiant)
-        nouvel_id = enregistre_ecriture(
-            ancienne["societe_id"],
-            ctx.champ_requis("journal"),
-            ctx.champ_requis("date"),
-            ctx.champ_requis("libelle"),
-            lignes_pretes,
-            piece=util.nettoie(ctx.champ("piece")),
-            reference=util.nettoie(ctx.champ("reference")),
-            module="manuel",
-            utilisateur=ctx.nom_utilisateur,
-            valider=bool(ctx.booleen("valider", False)),
-            perimetre=ctx.champ("perimetre"),
-        )
-        db.trace("modification", "ecriture", nouvel_id,
-                 f"remplace #{identifiant}", ctx.nom_utilisateur)
-    return {"id": nouvel_id}
+        lettrages = _defait_lettrages(identifiant)
+        db.execute("DELETE FROM lignes WHERE ecriture_id = ?", (identifiant,))
+        # Le numéro suit le journal : il ne change que si le journal change,
+        # et l'ancien numéro n'est alors pas réattribué — un journal ne se
+        # renumérote pas après coup.
+        numero = ancienne["numero"]
+        if jrn["id"] != ancienne["journal_id"]:
+            numero = db.numero_suivant(societe_id, f"ecriture_{jrn['code']}",
+                                       int(date[:4]))
+        db.modifie("ecritures", identifiant, {
+            "journal_id": jrn["id"], "exercice_id": ex["id"], "date": date,
+            "numero": numero, "libelle": libelle[:250],
+            "piece": util.nettoie(ctx.champ("piece")),
+            "reference": util.nettoie(ctx.champ("reference")),
+            "perimetre": perimetre,
+            "validee": 1 if ctx.booleen("valider") else 0,
+            "modifie_le": util.maintenant(),
+        })
+        for ligne_propre in propres:
+            ligne_propre["ecriture_id"] = identifiant
+            db.insere("lignes", ligne_propre)
+        db.trace("modification", "ecriture", identifiant,
+                 {"numero": numero, "libelle": libelle, "montant": total,
+                  "devalidee": bool(ancienne["validee"]),
+                  "lettrages_defaits": lettrages}, ctx.nom_utilisateur)
+
+    consequences = []
+    if ancienne["validee"] and not ctx.booleen("valider"):
+        consequences.append("elle est repassée en brouillon")
+    if lettrages:
+        consequences.append(
+            f"le lettrage {', '.join(lettrages)} a été défait des deux côtés")
+    if numero != ancienne["numero"]:
+        consequences.append(
+            f"elle a changé de journal et porte maintenant le n° {numero}")
+    return {"id": identifiant, "numero": numero,
+            "lettrages_defaits": lettrages,
+            "message": f"Écriture {numero} modifiée"
+                       + (" — " + ", ".join(consequences) if consequences else "")
+                       + "."}
 
 
 @route("POST", "/api/ecritures/<id>/valider")

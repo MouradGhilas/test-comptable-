@@ -58,7 +58,10 @@ App.pages['comptabilite/ecritures'] = {
       ], d.ecritures, {
         clic: true, icone: '📒',
         messageVide: 'Aucune écriture. Utilisez « + Écriture » ou laissez les modules métier les générer.',
-        attributsLigne: (e) => `onclick="detailEcriture(${e.id})"`,
+        // Un clic ouvre l'écriture, un double-clic la corrige directement :
+        // c'est le geste attendu par quelqu'un qui tient un journal.
+        attributsLigne: (e) => `onclick="detailEcriture(${e.id})" `
+          + `ondblclick="modifieEcriture(${e.id})" title="Double-clic : modifier"`,
         // Un journal se lit par mois : sans repère, trois cents lignes
         // obligent à relire chaque date pour savoir où l'on en est.
         coupure: (e) => fperiode(String(e.date || '').slice(0, 7)),
@@ -120,6 +123,10 @@ async function detailEcriture(id) {
       <div id="zone-justificatifs">${blocJustificatifs('ecriture', id, e.pieces || [])}</div>`,
     boutons: [
       { libelle: 'Fermer' },
+      {
+        libelle: 'Modifier', classe: 'primaire',
+        action: () => { modifieEcriture(id); return false; },
+      },
       {
         libelle: 'Dupliquer',
         action: () => { dupliqueEcriture(e); return false; },
@@ -496,24 +503,24 @@ async function saisieEcriture(prefill = {}) {
     large: true,
     boutons: [
       { libelle: 'Annuler' },
-      {
+      ...(prefill.id ? [] : [{
         libelle: 'Garder comme modèle',
         action: () => { gardeModeleEcriture(conteneur, litLignes); return false; },
+      }]),
+      {
+        libelle: prefill.id ? 'Enregistrer en brouillon' : 'Enregistrer en brouillon',
+        action: () => enregistreEcriture(conteneur, litLignes, false, prefill),
       },
       {
-        libelle: 'Enregistrer en brouillon',
-        action: () => enregistreEcriture(conteneur, litLignes, false),
-      },
-      {
-        libelle: 'Valider', classe: 'primaire',
-        action: () => enregistreEcriture(conteneur, litLignes, true),
+        libelle: prefill.id ? 'Enregistrer et valider' : 'Valider', classe: 'primaire',
+        action: () => enregistreEcriture(conteneur, litLignes, true, prefill),
       },
     ],
   });
 }
 
-async function enregistreEcriture(conteneur, litLignes, valider) {
-  const reponse = await envoie('/api/ecritures', {
+async function enregistreEcriture(conteneur, litLignes, valider, prefill = {}) {
+  const donnees = {
     journal: $('#e-journal', conteneur).value,
     date: $('#e-date', conteneur).value,
     piece: $('#e-piece', conteneur).value,
@@ -521,15 +528,69 @@ async function enregistreEcriture(conteneur, litLignes, valider) {
     perimetre: $('#e-perimetre', conteneur).value,
     lignes: litLignes(),
     valider,
-  });
+  };
+  // Modifier une écriture, c'est la même saisie : on écrit au même endroit,
+  // sous le même numéro, plutôt que d'en créer une seconde.
+  const reponse = prefill.id
+    ? await envoie(`/api/ecritures/${prefill.id}`,
+                   { ...donnees, devalider: true }, 'PUT')
+    : await envoie('/api/ecritures', donnees);
   if (reponse && reponse.totaux) {
     const t = reponse.totaux;
     notifie(`Opération de ${fm(t.total)} enregistrée : ${fm(t.declare)} déclaré, `
           + `${fm(t.hors_declaration)} hors déclaration.`, 'succes', 6000);
   } else {
-    notifie('Écriture enregistrée.', 'succes');
+    notifie(reponse?.message || 'Écriture enregistrée.', 'succes',
+            reponse?.message ? 7000 : 4000);
   }
   afficheRoute();
+}
+
+/**
+ * Corriger une écriture déjà enregistrée.
+ *
+ * Elle se rouvre dans la grille de saisie, telle qu'elle est, et se
+ * réenregistre sous le même numéro. Une écriture validée n'est pas figée
+ * pour autant : on le dit, on la repasse en brouillon, et l'opération est
+ * tracée. Ce que le logiciel ne fera pas dans son dos, c'est toucher à un
+ * exercice clos ou à un rapprochement bancaire déjà arrêté.
+ */
+async function modifieEcriture(id) {
+  let e;
+  try { e = await api(`/api/ecritures/${id}`); }
+  catch (err) { notifie(err.message, 'danger'); return; }
+  // Ce que la correction entraîne, dit avant, sans faire la leçon.
+  const suites = [];
+  if (e.validee) {
+    suites.push('Elle est validée : la corriger la repasse en brouillon, et '
+      + 'l\'opération est inscrite au journal des opérations.');
+  }
+  if (e.source_type && e.source_type !== 'extourne') {
+    suites.push(`Elle a été produite automatiquement (${ech(e.source_type)}) : `
+      + 'la corriger ici ne change pas le document dont elle vient.');
+  }
+  if (e.operation_ref) {
+    suites.push('Elle est la moitié d\'une opération saisie en totalité : '
+      + 'l\'autre part, elle, ne bouge pas.');
+  }
+  if (suites.length && !await confirme(
+      `Modifier l'écriture ${e.numero} ?`,
+      suites.join(' ') + ' Vous pouvez aussi la laisser telle quelle et passer '
+      + 'une extourne.', 'Modifier')) return;
+  fermeModale();
+  saisieEcriture({
+    id,
+    titre: `Modifier l'écriture ${e.numero}`,
+    journal: e.journal,
+    date: e.date,
+    piece: e.piece || '',
+    libelle: e.libelle,
+    perimetre: e.perimetre,
+    lignes: (e.lignes || []).map((l) => ({
+      compte: l.compte, tiers_id: l.tiers_id, libelle: l.libelle,
+      debit: l.debit, credit: l.credit,
+    })),
+  });
 }
 
 /* --------------------------------------------------------- Grand livre -- */

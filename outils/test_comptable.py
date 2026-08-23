@@ -2576,6 +2576,153 @@ FV-900;18/05/{a};ETS BENALI;Prestation;1;100000;19
     v("… et reste equilibree", dos.equilibre_global())
 
 
+def suite_correction(dos):
+    """Corriger une ecriture deja enregistree.
+
+    Une video du poste du comptable a montre le fond du probleme : la fiche
+    d'une ecriture n'offrait que « Fermer, Dupliquer, Extourner ». Faute de
+    pouvoir corriger, il extournait -- et son journal accumulait des
+    « Extourne de l'extourne de... ». Une ecriture se corrige. En place :
+    meme identifiant, meme numero, memes justificatifs, et une trace.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "c", "mot_de_passe": "motdepasse123", "nom_complet": "X",
+        "raison_sociale": "SARL CORRECTION", "nif": "000116001234567",
+        "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    annee = int(dos.appel(f"/api/exercices?societe={sid}")
+                ["exercices"][0]["date_debut"][:4])
+
+    def cree(valider=True, **kw):
+        corps = {"societe_id": sid, "journal": "OD", "date": f"{annee}-03-15",
+                 "libelle": "Achat fournitures", "piece": "FA-01",
+                 "valider": valider,
+                 "lignes": [{"compte": "607", "debit": "12000", "credit": "0"},
+                            {"compte": "401", "debit": "0", "credit": "12000"}]}
+        corps.update(kw)
+        return dos.appel("/api/ecritures", corps)["id"]
+
+    def corrige(eid, **kw):
+        corps = {"journal": "OD", "date": f"{annee}-03-15",
+                 "libelle": "Achat fournitures", "piece": "FA-01",
+                 "lignes": [{"compte": "607", "debit": "15000", "credit": "0"},
+                            {"compte": "401", "debit": "0", "credit": "15000"}]}
+        corps.update(kw)
+        return dos.appel(f"/api/ecritures/{eid}", corps, methode="PUT")
+
+    # ==================================================================
+    titre("1. Une ecriture validee n'est pas figee, elle se confirme")
+    # ==================================================================
+    eid = cree()
+    avant = dos.appel(f"/api/ecritures/{eid}")
+    v("elle est bien validee", avant["validee"] == 1, avant["validee"])
+    message = dos.refuse(f"/api/ecritures/{eid}", {
+        "journal": "OD", "date": f"{annee}-03-15", "libelle": "X",
+        "lignes": [{"compte": "607", "debit": "15000", "credit": "0"},
+                   {"compte": "401", "debit": "0", "credit": "15000"}]},
+        methode="PUT")
+    v("sans confirmation, elle n'est pas touchee", bool(message), message)
+    v("… et le message propose les deux voies",
+      "extourne" in (message or "").lower() and "brouillon" in (message or ""),
+      message)
+    v("… rien n'a bouge",
+      dos.appel(f"/api/ecritures/{eid}")["libelle"] == "Achat fournitures")
+
+    # ==================================================================
+    titre("2. Corrigee en place : meme identifiant, meme numero")
+    # ==================================================================
+    r = corrige(eid, devalider=True, libelle="Achat fournitures (corrige)",
+                date=f"{annee}-03-16")
+    v("l'identifiant ne change pas", r["id"] == eid, r)
+    v("… le numero non plus", r["numero"] == avant["numero"], r)
+    apres = dos.appel(f"/api/ecritures/{eid}")
+    v("le libelle est corrige",
+      apres["libelle"] == "Achat fournitures (corrige)", apres["libelle"])
+    v("la date aussi", apres["date"] == f"{annee}-03-16", apres["date"])
+    v("le montant aussi",
+      sum(l["debit"] for l in apres["lignes"]) == 1500000,
+      sum(l["debit"] for l in apres["lignes"]))
+    v("… elle est repassee en brouillon", apres["validee"] == 0, apres["validee"])
+    v("il n'y a toujours qu'une ecriture",
+      dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == 1)
+    v("… et aucun numero consomme pour rien",
+      dos.sql("SELECT valeur FROM compteurs WHERE cle = 'ecriture_OD'"
+              )[0]["valeur"] == 1)
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+    v("la modification est tracee",
+      dos.sql("SELECT COUNT(*) n FROM audit WHERE action = 'modification' "
+              "AND entite = 'ecriture'")[0]["n"] == 1)
+
+    # ==================================================================
+    titre("3. Un brouillon se corrige sans rien demander")
+    # ==================================================================
+    eid2 = cree(valider=False, libelle="Brouillon", piece="FA-02")
+    r = corrige(eid2, libelle="Brouillon corrige")
+    v("aucune confirmation n'est reclamee", r["id"] == eid2, r)
+    v("… et il reste en brouillon",
+      dos.appel(f"/api/ecritures/{eid2}")["validee"] == 0)
+
+    # ==================================================================
+    titre("4. Les justificatifs suivent l'ecriture")
+    # ==================================================================
+    # Une correction qui supprimait puis recreait l'ecriture laissait ses
+    # pieces jointes accrochees a un identifiant disparu.
+    dos.ecrit("INSERT INTO pieces_jointes (societe_id, entite, entite_id, "
+              "nom_fichier, chemin, taille, type_mime, cree_le) VALUES "
+              "(?, 'ecriture', ?, 'facture.pdf', 'x.pdf', 10, "
+              "'application/pdf', '2026-01-01 00:00:00')", (sid, eid))
+    corrige(eid, libelle="Encore corrige")
+    v("le justificatif est toujours rattache",
+      len(dos.appel(f"/api/ecritures/{eid}")["pieces"]) == 1,
+      dos.appel(f"/api/ecritures/{eid}")["pieces"])
+
+    # ==================================================================
+    titre("5. Un lettrage est defait proprement, et c'est dit")
+    # ==================================================================
+    reglement = cree(valider=False, libelle="Reglement fournisseur",
+                     lignes=[{"compte": "401", "debit": "15000", "credit": "0"},
+                             {"compte": "512", "debit": "0", "credit": "15000"}])
+    lignes_401 = dos.sql("SELECT id FROM lignes WHERE compte = '401'")
+    for l in lignes_401:
+        dos.ecrit("UPDATE lignes SET lettrage = 'A' WHERE id = ?", (l["id"],))
+    r = corrige(eid, libelle="Correction apres lettrage")
+    v("le lettrage est signale comme defait",
+      r["lettrages_defaits"] == ["A"], r)
+    v("… des deux cotes",
+      dos.sql("SELECT COUNT(*) n FROM lignes WHERE lettrage = 'A'")[0]["n"] == 0)
+    v("… et le message le dit", "lettrage" in r["message"], r["message"])
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("6. Ce qui a produit un document reste protege")
+    # ==================================================================
+    # Un rapprochement bancaire cloture est un etat arrete : en retirer une
+    # ligne sans le dire changerait un document deja produit.
+    tres = dos.appel("/api/tresorerie", {
+        "societe_id": sid, "code": "BNA", "libelle": "BNA", "type": "banque",
+        "compte": "512"})
+    rap = dos.appel("/api/rapprochements", {
+        "societe_id": sid, "tresorerie_id": tres.get("id"),
+        "date_arrete": f"{annee}-03-31", "solde_releve": "0"})
+    ligne_512 = dos.sql("SELECT l.id FROM lignes l JOIN ecritures e ON "
+                        "e.id = l.ecriture_id WHERE l.compte = '512' LIMIT 1")
+    if rap.get("id") and ligne_512:
+        dos.ecrit("INSERT INTO rapprochement_lignes (rapprochement_id, ligne_id, "
+                  "pointee) VALUES (?, ?, 1)", (rap["id"], ligne_512[0]["id"]))
+        dos.ecrit("UPDATE rapprochements SET cloture = 1 WHERE id = ?", (rap["id"],))
+        message = dos.refuse(f"/api/ecritures/{reglement}", {
+            "journal": "OD", "date": f"{annee}-03-15", "libelle": "X",
+            "lignes": [{"compte": "401", "debit": "16000", "credit": "0"},
+                       {"compte": "512", "debit": "0", "credit": "16000"}]},
+            methode="PUT")
+        v("une ecriture pointee dans un rapprochement clos est protegee",
+          bool(message), message)
+        v("… et le message dit quoi faire",
+          "rapprochement" in (message or "").lower(), message)
+    v("la comptabilite reste equilibree en fin de parcours",
+      dos.equilibre_global())
+
+
 SUITES = [
     ("conformite", "Conformite comptable -- une annee tenue", suite_conformite, True),
     ("limites", "Ce que le logiciel doit refuser", suite_limites, False),
@@ -2585,6 +2732,7 @@ SUITES = [
     ("reprises", "Annuler un import deja valide", suite_reprises, False),
     ("creation", "L'import cree ce dont il a besoin", suite_creation, False),
     ("attente", "Rien n'est refuse, rien n'est perdu", suite_attente, False),
+    ("correction", "Corriger une ecriture deja enregistree", suite_correction, False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),

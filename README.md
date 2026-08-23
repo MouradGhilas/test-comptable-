@@ -96,8 +96,18 @@ python3 app.py --sauvegarder                       # sauvegarde sans ouvrir l'ap
 | Exports | Excel natif : balance, grand livre, livre-journal, liasse, livres de TVA |
 
 Toute opération métier génère son écriture comptable automatiquement, avec
-traçabilité de son origine. Une écriture validée n'est plus modifiable :
-on la corrige par extourne, ce qui préserve la piste d'audit.
+traçabilité de son origine.
+
+**Une écriture se corrige.** Double-clic sur une ligne du journal : elle
+s'ouvre dans la grille de saisie et se réenregistre **en place** — même
+identifiant, même numéro, mêmes justificatifs. Une écriture validée n'est pas
+figée pour autant : on confirme, elle repasse en brouillon, et l'opération est
+inscrite au journal des opérations. Ce que la correction entraîne est dit
+avant : lettrage défait des deux côtés, document d'origine qui, lui, ne change
+pas. Restent protégés un exercice clos et une écriture pointée dans un
+rapprochement bancaire **clôturé** — un relevé arrêté ne change pas de contenu
+dans le dos de celui qui l'a signé. L'extourne demeure, pour qui préfère
+laisser l'écriture telle quelle.
 
 ### Santé du dossier
 
@@ -116,8 +126,8 @@ l'écran de clôture.
 
 Un **?** dans la barre du haut, sur chaque écran, explique en français simple la
 règle comptable qui s'y applique — pourquoi les loyers transitent par 4671,
-pourquoi une avance VSP n'est pas du chiffre d'affaires, pourquoi une écriture
-validée se corrige par extourne. Aucun taux n'y figure : ils vivent dans
+pourquoi une avance VSP n'est pas du chiffre d'affaires, ce que l'application
+fait de vos chiffres sur cet écran-là. Aucun taux n'y figure : ils vivent dans
 Paramètres → Fiscalité, où ils se vérifient.
 
 ### Retrouver quelque chose
@@ -486,7 +496,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
 python3 outils/test_http.py          # 63 contrôles du serveur et de l'interface
-python3 outils/test_comptable.py     # 371 contrôles de conformité comptable
+python3 outils/test_comptable.py     # 395 contrôles de conformité comptable
 python3 outils/test_mise_a_jour.py   # 39 contrôles du chemin de mise à jour
 python3 app.py --verifier            # intégrité de vos données
 ```
@@ -498,7 +508,7 @@ sont constatés au bon moment et que la clôture se déroule correctement.
 Le test de conformité comptable, lui, ne regarde pas l'interface : il attaque
 l'application par ses interfaces de programmation et vérifie les règles qui,
 si elles cèdent, produisent des comptes **faux sans que rien ne le signale**.
-Douze familles, lançables séparément
+Treize familles, lançables séparément
 (`python3 outils/test_comptable.py perimetre`) :
 
 | Suite | Ce qu'elle vérifie |
@@ -511,6 +521,7 @@ Douze familles, lançables séparément
 | `reprises` | annuler un import déjà validé sans laisser de trou dans la numérotation ni effacer ce qui sert déjà |
 | `creation` | l'import crée ce qu'il cite, et le complète quand le vrai fichier arrive |
 | `attente` | rien n'est refusé, rien n'est perdu : ce qui ne passe pas attend, se corrige sur place et repart tout seul |
+| `correction` | corriger une écriture en place — même numéro, mêmes justificatifs, lettrage défait proprement, rapprochement clôturé protégé |
 | `sante` | les contrôles de santé du dossier, chacun mis à l'épreuve sur une anomalie provoquée pour lui |
 | `annuelles` | la DAS et l'état des clients, et surtout leurs recoupements |
 | `relances` | ce qui est dû et depuis quand, et la lettre à ses trois niveaux |
@@ -558,7 +569,7 @@ web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
 ├── test_http.py            63 contrôles serveur et interface
-├── test_comptable.py       371 contrôles de conformité comptable
+├── test_comptable.py       395 contrôles de conformité comptable
 ├── test_mise_a_jour.py     39 contrôles du chemin de mise à jour
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur

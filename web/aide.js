@@ -33,11 +33,15 @@ const AIDES = {
     points: [
       'Une écriture doit s\'équilibrer : total des débits égal au total des '
       + 'crédits. Le logiciel refuse le contraire, sans exception.',
-      'Une écriture <strong>validée</strong> ne se modifie plus. On la corrige '
-      + 'par une <strong>extourne</strong> — une écriture inverse qui l\'annule '
-      + 'sans l\'effacer. C\'est ce qui rend la comptabilité opposable.',
-      'Une écriture en <strong>brouillon</strong> compte déjà dans vos états '
-      + 'mais reste modifiable : relisez-la, puis validez-la.',
+      '<strong>Double-clic sur une ligne</strong> pour corriger l\'écriture. '
+      + 'Elle se réenregistre en place : même numéro, mêmes justificatifs. '
+      + 'Validée, elle se corrige aussi — après confirmation, et la '
+      + 'modification est inscrite au journal des opérations.',
+      'L\'<strong>extourne</strong> reste là pour qui préfère laisser '
+      + 'l\'écriture telle quelle : une écriture inverse l\'annule sans '
+      + 'l\'effacer. C\'est le geste à préférer sur un exercice déjà déclaré.',
+      'Une écriture en <strong>brouillon</strong> compte déjà dans vos états. '
+      + 'La valider dit simplement que vous l\'avez relue.',
       'Le numéro est attribué par journal et par année, dans l\'ordre de '
       + 'saisie. Il ne doit pas y avoir de trou dans la suite.',
     ],

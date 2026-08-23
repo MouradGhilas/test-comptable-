@@ -3,6 +3,31 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.8.1
+
+- **Une écriture se corrige.** La fiche d'une écriture n'offrait que
+  *Fermer · Dupliquer · Extourner* : il n'y avait **aucun bouton
+  Modifier**. Ce n'était pas une règle comptable, c'était un oubli — le
+  moteur savait le faire depuis le début, l'écran ne l'a jamais proposé.
+  Faute de mieux, on extournait : d'où les journaux qui accumulent des
+  « Extourne de l'extourne de… ».
+- **Double-clic sur une ligne du journal** : l'écriture s'ouvre directement
+  en correction. Un simple clic ouvre la fiche, qui porte désormais un
+  bouton **Modifier**.
+- **La correction se fait en place** : même identifiant, **même numéro**,
+  mêmes justificatifs. L'ancienne route supprimait puis recréait l'écriture
+  — elle changeait donc de numéro (un trou dans le journal), perdait ses
+  pièces jointes et son lettrage.
+- **Une écriture validée n'est pas figée.** On la corrige après confirmation,
+  elle repasse en brouillon (ou reste validée si vous enregistrez et
+  validez), et l'opération est inscrite au journal des opérations.
+- **Ce que la correction entraîne est dit avant** : lettrage défait des deux
+  côtés, écriture produite par un document qui, lui, ne change pas, moitié
+  d'une opération saisie en totalité.
+- **Ce qui reste protégé** : un exercice clos, et une écriture pointée dans
+  un **rapprochement bancaire déjà clôturé** — un relevé arrêté ne change
+  pas de contenu dans le dos de celui qui l'a signé.
+
 ## 1.8.0
 
 **L'application ne refuse plus rien, et ne perd plus rien.** Jusqu'ici elle
