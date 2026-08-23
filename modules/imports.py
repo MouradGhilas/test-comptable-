@@ -1469,6 +1469,18 @@ def _controles_specifiques(societe_id, cle_modele, brut, enregistrement) -> list
                 "AND numero = ? COLLATE NOCASE",
                 (societe_id, programme_id, numero)):
             erreurs.append(f"le lot {numero} existe déjà dans ce programme")
+    elif cle_modele == "salaries":
+        # La colonne « Primes » du fichier est un simple montant ; la fiche du
+        # salarié, elle, porte une liste détaillée (libellé, soumis CNAS,
+        # soumis IRG). Sans cette mise en forme, l'import déposait un nombre
+        # là où le reste de l'application attend du JSON.
+        montant = enregistrement.pop("primes", None)
+        if montant:
+            enregistrement["primes"] = json.dumps(
+                [{"libelle": "Primes", "montant": int(montant),
+                  "soumis_cnas": True, "soumis_irg": True}], ensure_ascii=False)
+        else:
+            enregistrement["primes"] = json.dumps([])
     elif cle_modele == "quittances":
         # Un total absent se déduit du loyer et des charges.
         if not enregistrement.get("total"):

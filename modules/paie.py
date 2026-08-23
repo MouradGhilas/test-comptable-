@@ -52,6 +52,74 @@ def impot_progressif(base: int, tranches: list[dict]) -> int:
     return impot
 
 
+def normalise_primes(brutes) -> list:
+    """Met des primes saisies sous leur forme unique : montants en centimes.
+
+    Accepte ce que l'interface envoie (une liste de lignes), ce qu'un import
+    Excel dépose (un seul montant, en dinars) et l'absence de prime. Un seul
+    passage de conversion, à l'entrée : ensuite, un montant de prime est un
+    entier de centimes, comme partout ailleurs dans l'application.
+    """
+    if brutes in (None, "", []):
+        return []
+    if isinstance(brutes, str):
+        try:
+            brutes = json.loads(brutes)
+        except ValueError:
+            brutes = util.centimes(brutes) and [{"libelle": "Primes",
+                                                 "montant": brutes}] or []
+    if isinstance(brutes, (int, float)):
+        brutes = [{"libelle": "Primes", "montant": brutes}]
+    if isinstance(brutes, dict):
+        brutes = [brutes]
+    propres = []
+    for brute in brutes:
+        if not isinstance(brute, dict):
+            brute = {"libelle": "Primes", "montant": brute}
+        montant = util.centimes(brute.get("montant"))
+        if not montant:
+            continue
+        propres.append({
+            "libelle": util.nettoie(brute.get("libelle")) or "Prime",
+            "montant": montant,
+            "soumis_cnas": bool(brute.get("soumis_cnas", True)),
+            "soumis_irg": bool(brute.get("soumis_irg", True)),
+        })
+    return propres
+
+
+def primes_du_salarie(salarie) -> list:
+    """Les primes de la fiche, déjà en centimes — relues sans rien convertir.
+
+    Tolère ce qu'un import a pu y déposer avant que la colonne ne soit
+    normalisée : un nombre seul plutôt qu'une liste.
+    """
+    brut = salarie["primes"] if salarie else None
+    if not brut:
+        return []
+    try:
+        valeur = json.loads(brut) if isinstance(brut, str) else brut
+    except ValueError:
+        return []
+    if isinstance(valeur, (int, float)):
+        valeur = [{"libelle": "Primes", "montant": int(valeur)}]
+    if isinstance(valeur, dict):
+        valeur = [valeur]
+    propres = []
+    for prime in valeur or []:
+        if not isinstance(prime, dict):
+            continue
+        montant = int(prime.get("montant") or 0)
+        if not montant:
+            continue
+        propres.append({
+            "libelle": prime.get("libelle") or "Prime", "montant": montant,
+            "soumis_cnas": bool(prime.get("soumis_cnas", True)),
+            "soumis_irg": bool(prime.get("soumis_irg", True)),
+        })
+    return propres
+
+
 def calcule_bulletin(societe_id: int, salarie: dict, periode: str,
                      saisie: dict | None = None) -> dict:
     """Calcule un bulletin sans l'enregistrer."""
@@ -63,14 +131,19 @@ def calcule_bulletin(societe_id: int, salarie: dict, periode: str,
     if jours != 30000:
         salaire_base = util.part_proportionnelle(salaire_base, jours, 30000)
 
-    primes_saisies = saisie.get("primes")
-    if primes_saisies is None:
-        primes_saisies = json.loads(salarie["primes"]) if salarie["primes"] else []
+    # Deux provenances, deux conventions, et c'est là que ça se jouait : ce
+    # qui vient d'une saisie est en dinars tels que tapés, ce qui vient de la
+    # fiche du salarié est déjà en centimes. Les confondre multipliait toutes
+    # les primes par cent — dans le bulletin, la base CNAS et l'IRG.
+    if saisie.get("primes") is not None:
+        primes_saisies = normalise_primes(saisie.get("primes"))
+    else:
+        primes_saisies = primes_du_salarie(salarie)
 
     primes_soumises = primes_non_soumises = 0
     detail_primes = []
     for prime in primes_saisies:
-        montant = util.centimes(prime.get("montant"))
+        montant = int(prime.get("montant") or 0)
         if not montant:
             continue
         soumis_cnas = bool(prime.get("soumis_cnas", True))
@@ -142,7 +215,7 @@ def api_salaries(ctx):
         + "ORDER BY nom, prenom", (ctx.arg_int("societe"),)
     )
     for s in salaries:
-        s["primes"] = json.loads(s["primes"]) if s["primes"] else []
+        s["primes"] = primes_du_salarie(s)
     return {"salaries": salaries}
 
 
@@ -151,11 +224,26 @@ def api_cree_salarie(ctx):
     ctx.interdit_lecture_seule()
     societe_id = ctx.entier("societe_id")
     with db.transaction():
-        matricule = util.nettoie(ctx.champ("matricule")) or db.numero_suivant(
-            societe_id, "tiers_salarie")
-        if db.ligne("SELECT id FROM salaries WHERE societe_id = ? AND matricule = ?",
-                    (societe_id, matricule)):
-            raise ErreurApplicative(f"Le matricule « {matricule} » existe déjà.")
+        matricule = util.nettoie(ctx.champ("matricule"))
+        if matricule:
+            if db.ligne("SELECT id FROM salaries WHERE societe_id = ? AND "
+                        "matricule = ?", (societe_id, matricule)):
+                raise ErreurApplicative(
+                    f"Le matricule « {matricule} » existe déjà.")
+        else:
+            # Le compteur ignore les salariés arrivés par un import ou par une
+            # reprise : il proposait alors un matricule déjà pris, et le
+            # bouton « Enregistrer » restait sans effet. On avance jusqu'au
+            # premier libre plutôt que de renvoyer l'utilisateur à sa saisie.
+            for _ in range(1000):
+                matricule = db.numero_suivant(societe_id, "tiers_salarie")
+                if not db.ligne("SELECT id FROM salaries WHERE societe_id = ? "
+                                "AND matricule = ?", (societe_id, matricule)):
+                    break
+            else:
+                raise ErreurApplicative(
+                    "Impossible d'attribuer un matricule libre. Saisissez-le "
+                    "vous-même.")
         identifiant = db.insere("salaries", {
             "societe_id": societe_id, "matricule": matricule,
             "nom": ctx.champ_requis("nom"), "prenom": ctx.champ_requis("prenom"),
@@ -166,7 +254,8 @@ def api_cree_salarie(ctx):
             "date_embauche": ctx.date("date_embauche"),
             "type_contrat": ctx.champ("type_contrat", "CDI"),
             "salaire_base": ctx.montant("salaire_base"),
-            "primes": json.dumps(ctx.champ("primes") or [], ensure_ascii=False),
+            "primes": json.dumps(normalise_primes(ctx.champ("primes")),
+                                 ensure_ascii=False),
             "situation_familiale": util.nettoie(ctx.champ("situation_familiale")),
             "nb_enfants": ctx.entier("nb_enfants", 0) or 0,
             "rib": util.nettoie(ctx.champ("rib")),
@@ -189,7 +278,8 @@ def api_modifie_salarie(ctx):
             "date_sortie": ctx.date("date_sortie"),
             "type_contrat": ctx.champ("type_contrat", "CDI"),
             "salaire_base": ctx.montant("salaire_base"),
-            "primes": json.dumps(ctx.champ("primes") or [], ensure_ascii=False),
+            "primes": json.dumps(normalise_primes(ctx.champ("primes")),
+                                 ensure_ascii=False),
             "situation_familiale": util.nettoie(ctx.champ("situation_familiale")),
             "nb_enfants": ctx.entier("nb_enfants", 0) or 0,
             "rib": util.nettoie(ctx.champ("rib")),

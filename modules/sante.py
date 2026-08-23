@@ -334,9 +334,84 @@ def _fiches_a_completer(societe_id, ex, anomalies):
             nombre=total, detail=detail, route_ecran="/parametres"))
 
 
+#: Au-delà, une prime n'est plus une prime : c'est une saisie qui a dérapé.
+#: Trois fois le salaire de base laisse largement place aux treizièmes mois,
+#: aux primes de bilan et aux rappels.
+FACTEUR_PRIME_SUSPECTE = 3
+
+
+def _primes_invraisemblables(societe_id, ex, anomalies):
+    """Une prime hors de proportion avec le salaire de base.
+
+    Une version antérieure multipliait les primes par cent à chaque
+    réenregistrement d'une fiche : les bulletins, la base CNAS et l'IRG
+    suivaient. Le défaut est corrigé, mais une fiche déjà abîmée ne se
+    répare pas toute seule — rien ne distingue une prime de 20 000 DA d'une
+    prime de 200 DA centuplée. Elle se voit ici.
+    """
+    from modules import paie as mod_paie
+    touches = []
+    for salarie in db.lignes(
+            "SELECT * FROM salaries WHERE societe_id = ? AND actif = 1",
+            (societe_id,)):
+        primes = sum(p["montant"] for p in mod_paie.primes_du_salarie(salarie))
+        base = salarie["salaire_base"] or 0
+        if primes and base and primes > base * FACTEUR_PRIME_SUSPECTE:
+            touches.append(
+                f"{salarie['nom']} {salarie['prenom']} : "
+                f"{util.formate_montant(primes)} de primes pour "
+                f"{util.formate_montant(base)} de salaire de base")
+    if touches:
+        anomalies.append(_anomalie(
+            "primes_invraisemblables", "alerte",
+            f"{len(touches)} salarié(s) dont les primes dépassent "
+            f"{FACTEUR_PRIME_SUSPECTE} fois le salaire de base",
+            "Une prime de cet ordre est possible — un treizième mois, une "
+            "prime de bilan — mais elle mérite un coup d'œil : elle entre "
+            "dans le brut, dans la base CNAS et dans l'IRG. Ouvrez la fiche "
+            "du salarié et vérifiez le montant.",
+            nombre=len(touches), detail=touches, route_ecran="/paie/salaries"))
+
+
+def _bulletins_a_refaire(societe_id, ex, anomalies):
+    """Des bulletins dont les primes écrasent le salaire de base.
+
+    Une version antérieure multipliait les primes par cent au moment du
+    calcul. Les fiches sont réparables, mais un bulletin déjà établi garde
+    ses chiffres : il faut le refaire. On ne le refait pas d'office — un
+    bulletin comptabilisé a produit des écritures et, peut-être, un
+    virement. On le montre.
+    """
+    touches = db.lignes(
+        "SELECT b.id, b.periode, b.statut, b.salaire_base, "
+        "       b.primes_soumises + b.primes_non_soumises AS primes, "
+        "       s.nom, s.prenom "
+        "FROM bulletins b JOIN salaries s ON s.id = b.salarie_id "
+        "WHERE b.societe_id = ? AND b.salaire_base > 0 "
+        "AND b.primes_soumises + b.primes_non_soumises > b.salaire_base * ? "
+        "ORDER BY b.periode", (societe_id, FACTEUR_PRIME_SUSPECTE))
+    if not touches:
+        return
+    anomalies.append(_anomalie(
+        "bulletins_a_refaire", "alerte",
+        f"{len(touches)} bulletin(s) dont les primes dépassent "
+        f"{FACTEUR_PRIME_SUSPECTE} fois le salaire de base",
+        "Vérifiez la fiche du salarié, puis refaites ces bulletins : un "
+        "bulletin en brouillon se recalcule en le rouvrant et en "
+        "l'enregistrant. Un bulletin déjà comptabilisé a produit ses "
+        "écritures — il faut les extourner avant de le refaire.",
+        nombre=len(touches),
+        detail=[f"{b['nom']} {b['prenom']} — {util.libelle_periode(b['periode'])} : "
+                f"{util.formate_montant(b['primes'])} de primes pour "
+                f"{util.formate_montant(b['salaire_base'])} de base"
+                f" ({b['statut']})" for b in touches[:20]],
+        route_ecran="/paie/bulletins"))
+
+
 CONTROLES = [_equilibre, _numerotation, _caisse, _factures_sans_ecriture,
              _tiers_inverses, _tva_declaree, _brouillons, _justificatifs,
-             _lettrage, _fiches_a_completer, _sauvegarde]
+             _lettrage, _fiches_a_completer, _primes_invraisemblables,
+             _bulletins_a_refaire, _sauvegarde]
 
 POIDS = {"critique": 0, "alerte": 1, "info": 2}
 

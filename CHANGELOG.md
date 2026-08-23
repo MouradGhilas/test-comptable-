@@ -3,6 +3,31 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.8.2
+
+- **Les primes valaient cent fois trop.** « Je mets 200 DA, il fait 20 000. »
+  Le défaut ne s'arrêtait pas à l'affichage : la prime était **multipliée par
+  cent dans le bulletin, dans la base CNAS et dans l'IRG**. Une prime de
+  5 000 DA sur un salaire de 50 000 donnait un brut de 550 000 au lieu de
+  55 000. La cause : deux conventions pour un même champ — l'écran envoyait
+  des centimes, le serveur reconvertissait. Il n'en reste qu'une, la même que
+  partout ailleurs : on tape des dinars, le serveur convertit, une seule fois.
+- **À vérifier après la mise à jour.** Les fiches de vos salariés peuvent
+  porter un montant faux, et les bulletins déjà établis avec une prime sont à
+  refaire. Rien n'est corrigé d'office : rien ne distingue une prime de
+  20 000 DA d'une prime de 200 DA centuplée, et un bulletin comptabilisé a
+  produit ses écritures. **Deux nouveaux contrôles dans Santé du dossier** les
+  listent : les salariés dont les primes dépassent trois fois le salaire de
+  base, et les bulletins dans le même cas.
+- **Importer des salariés avec une prime** déposait un nombre là où
+  l'application attend une liste : l'écran des salariés et le calcul du
+  bulletin s'en trouvaient cassés. L'import produit désormais une prime en
+  bonne et due forme.
+- **Le matricule proposé** ne tenait pas compte des salariés arrivés par un
+  import ou par le jeu d'essai : il proposait un matricule déjà pris et le
+  bouton « Enregistrer » restait sans effet. Il avance maintenant jusqu'au
+  premier libre.
+
 ## 1.8.1
 
 - **Une écriture se corrige.** La fiche d'une écriture n'offrait que

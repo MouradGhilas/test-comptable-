@@ -111,12 +111,13 @@ laisser l'écriture telle quelle.
 
 ### Santé du dossier
 
-Dix contrôles tournent au fil de l'eau, dans la rubrique **Clôture** : équilibre
-de la comptabilité, trous dans la numérotation d'un journal, caisse passée en
-négatif, factures validées sans écriture, clients créditeurs ou fournisseurs
-débiteurs, G50 déposées qui ne correspondent plus aux comptes, brouillons,
-écritures sans justificatif, lettrage ancien, dernière copie de sauvegarde hors
-du poste. Chaque anomalie dit ce qui ne va pas, **pourquoi ça compte**, et mène
+Treize contrôles tournent au fil de l'eau, dans la rubrique **Clôture** :
+équilibre de la comptabilité, trous dans la numérotation d'un journal, caisse
+passée en négatif, factures validées sans écriture, clients créditeurs ou
+fournisseurs débiteurs, G50 déposées qui ne correspondent plus aux comptes,
+brouillons, écritures sans justificatif, lettrage ancien, fiches créées par un
+import et restées à compléter, primes hors de proportion avec le salaire de
+base, bulletins dans le même cas, dernière copie de sauvegarde hors du poste. Chaque anomalie dit ce qui ne va pas, **pourquoi ça compte**, et mène
 à l'écran où la corriger.
 
 Ils n'empêchent rien : les contrôles qui *bloquent* une clôture restent sur
@@ -496,7 +497,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
 python3 outils/test_http.py          # 63 contrôles du serveur et de l'interface
-python3 outils/test_comptable.py     # 395 contrôles de conformité comptable
+python3 outils/test_comptable.py     # 415 contrôles de conformité comptable
 python3 outils/test_mise_a_jour.py   # 39 contrôles du chemin de mise à jour
 python3 app.py --verifier            # intégrité de vos données
 ```
@@ -508,7 +509,7 @@ sont constatés au bon moment et que la clôture se déroule correctement.
 Le test de conformité comptable, lui, ne regarde pas l'interface : il attaque
 l'application par ses interfaces de programmation et vérifie les règles qui,
 si elles cèdent, produisent des comptes **faux sans que rien ne le signale**.
-Treize familles, lançables séparément
+Quatorze familles, lançables séparément
 (`python3 outils/test_comptable.py perimetre`) :
 
 | Suite | Ce qu'elle vérifie |
@@ -522,6 +523,7 @@ Treize familles, lançables séparément
 | `creation` | l'import crée ce qu'il cite, et le complète quand le vrai fichier arrive |
 | `attente` | rien n'est refusé, rien n'est perdu : ce qui ne passe pas attend, se corrige sur place et repart tout seul |
 | `correction` | corriger une écriture en place — même numéro, mêmes justificatifs, lettrage défait proprement, rapprochement clôturé protégé |
+| `paie` | une prime vaut ce qu'on a tapé — dans la fiche, dans le bulletin, dans la base CNAS et dans l'IRG, après autant d'allers-retours qu'on veut |
 | `sante` | les contrôles de santé du dossier, chacun mis à l'épreuve sur une anomalie provoquée pour lui |
 | `annuelles` | la DAS et l'état des clients, et surtout leurs recoupements |
 | `relances` | ce qui est dû et depuis quand, et la lettre à ses trois niveaux |
@@ -569,7 +571,7 @@ web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
 ├── test_http.py            63 contrôles serveur et interface
-├── test_comptable.py       395 contrôles de conformité comptable
+├── test_comptable.py       415 contrôles de conformité comptable
 ├── test_mise_a_jour.py     39 contrôles du chemin de mise à jour
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur

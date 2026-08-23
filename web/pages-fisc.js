@@ -508,7 +508,10 @@ async function vueSalaries(zone) {
     { titre: 'Contrat', cle: 'type_contrat' },
     { titre: 'Embauche', rendu: (s) => fdate(s.date_embauche) },
     { titre: 'Salaire de base', classe: 'num', rendu: (s) => fm(s.salaire_base) },
-    { titre: 'Primes', classe: 'num', rendu: (s) => fm(s.primes.reduce((t, p) => t + cts(p.montant), 0)) },
+    { titre: 'Primes', classe: 'num',
+      // Les montants arrivent en centimes : les repasser par cts() les
+      // multipliait par cent à chaque affichage.
+      rendu: (s) => fm((s.primes || []).reduce((t, p) => t + Number(p.montant || 0), 0)) },
     { titre: 'Actif', classe: 'centre', rendu: (s) => s.actif ? '✓' : '✗' },
     {
       titre: '', classe: 'num',
@@ -560,7 +563,7 @@ async function editeSalarie(id) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><input class="p-libelle" value="${ech(p.libelle || '')}"></td>
-      <td><input class="p-montant num" value="${p.montant ? pourChamp(cts(p.montant)) : ''}"></td>
+      <td><input class="p-montant num" value="${pourChamp(p.montant)}"></td>
       <td class="centre"><input type="checkbox" class="p-cnas" ${p.soumis_cnas !== false ? 'checked' : ''}></td>
       <td class="centre"><input type="checkbox" class="p-irg" ${p.soumis_irg !== false ? 'checked' : ''}></td>
       <td><button type="button" class="plat petit-bouton">✕</button></td>`;
@@ -580,10 +583,10 @@ async function editeSalarie(id) {
         const donnees = litFormulaire(r, CHAMPS_SALARIE);
         donnees.primes = $$('tr', corpsPrimes).map((tr) => ({
           libelle: $('.p-libelle', tr).value,
-          montant: cts($('.p-montant', tr).value),
+          montant: $('.p-montant', tr).value,
           soumis_cnas: $('.p-cnas', tr).checked,
           soumis_irg: $('.p-irg', tr).checked,
-        })).filter((p) => p.libelle && p.montant);
+        })).filter((p) => p.libelle && cts(p.montant));
         if (id) await envoie(`/api/salaries/${id}`, donnees, 'PUT');
         else await envoie('/api/salaries', donnees);
         notifie('Salarié enregistré.', 'succes');
@@ -619,7 +622,7 @@ async function simule() {
       salaire_base: $('#sim-base').value,
       periode: periodeCourante(),
       primes: [
-        { libelle: 'Primes soumises', montant: cts($('#sim-primes').value), soumis_cnas: true, soumis_irg: true },
+        { libelle: 'Primes soumises', montant: $('#sim-primes').value, soumis_cnas: true, soumis_irg: true },
         { libelle: 'Primes non soumises', montant: cts($('#sim-non-soumis').value), soumis_cnas: false, soumis_irg: false },
       ].filter((p) => p.montant),
     });

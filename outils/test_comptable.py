@@ -2723,6 +2723,147 @@ def suite_correction(dos):
       dos.equilibre_global())
 
 
+def suite_paie(dos):
+    """Les primes valent ce qu'on a tape, pas cent fois plus.
+
+    Une video du poste du comptable : « je mets 200 DA, il fait 20 000 ».
+    L'interface envoyait les primes en centimes, le serveur les reconvertissait
+    -- chaque prime etait multipliee par cent, dans le bulletin, la base CNAS
+    et l'IRG. Deux conventions pour un meme champ : il n'en reste qu'une, les
+    montants arrivent tels qu'ils sont tapes et le serveur convertit.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "c", "mot_de_passe": "motdepasse123", "nom_complet": "X",
+        "raison_sociale": "SARL PAIE", "nif": "000116001234567",
+        "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+
+    def salarie():
+        return dos.appel(f"/api/salaries?societe={sid}")["salaries"][0]
+
+    # ==================================================================
+    titre("1. Une prime saisie vaut ce qu'elle vaut")
+    # ==================================================================
+    dos.appel("/api/salaries", {
+        "societe_id": sid, "nom": "BENALI", "prenom": "Ali",
+        "salaire_base": "50 000,00", "type_contrat": "CDI",
+        "primes": [{"libelle": "Rendement", "montant": "5 000,00",
+                    "soumis_cnas": True, "soumis_irg": True},
+                   {"libelle": "Panier", "montant": "200",
+                    "soumis_cnas": False, "soumis_irg": False}]})
+    s = salarie()
+    v("le salaire de base est en centimes", s["salaire_base"] == 5000000,
+      s["salaire_base"])
+    montants = {p["libelle"]: p["montant"] for p in s["primes"]}
+    v("la prime de 5 000 DA vaut 5 000 DA",
+      montants.get("Rendement") == 500000, montants)
+    v("celle de 200 DA vaut 200 DA", montants.get("Panier") == 20000, montants)
+
+    # ==================================================================
+    titre("2. Le bulletin compte les bons montants")
+    # ==================================================================
+    b = dos.appel("/api/bulletins/simuler",
+                  {"societe_id": sid, "salarie_id": s["id"], "periode": "2026-03"})
+    v("le brut est 55 200 DA", b["salaire_brut"] == 5520000,
+      b["salaire_brut"] / 100)
+    v("… la prime soumise est comptee une fois",
+      b["primes_soumises"] == 500000, b["primes_soumises"] / 100)
+    v("… le panier reste hors CNAS",
+      b["primes_non_soumises"] == 20000, b["primes_non_soumises"] / 100)
+    v("la base CNAS exclut le panier", b["base_cnas"] == 5500000,
+      b["base_cnas"] / 100)
+    v("l'IRG reste dans un ordre de grandeur normal",
+      0 < b["irg"] < b["salaire_brut"] // 2, b["irg"] / 100)
+
+    # ==================================================================
+    titre("3. Rouvrir la fiche et l'enregistrer ne change rien")
+    # ==================================================================
+    # C'est ce qui abimait le dossier : chaque aller-retour multipliait
+    # les primes par cent.
+    for tour in range(3):
+        s = salarie()
+        dos.appel(f"/api/salaries/{s['id']}", {
+            "nom": s["nom"], "prenom": s["prenom"],
+            "salaire_base": f"{s['salaire_base'] / 100:.2f}".replace(".", ","),
+            "type_contrat": "CDI",
+            "primes": [{"libelle": p["libelle"],
+                        "montant": f"{p['montant'] / 100:.2f}".replace(".", ","),
+                        "soumis_cnas": p["soumis_cnas"],
+                        "soumis_irg": p["soumis_irg"]} for p in s["primes"]],
+        }, methode="PUT")
+    s = salarie()
+    montants = {p["libelle"]: p["montant"] for p in s["primes"]}
+    v("apres trois allers-retours, la prime n'a pas bouge",
+      montants.get("Rendement") == 500000, montants)
+    v("… ni le panier", montants.get("Panier") == 20000, montants)
+    v("… ni le salaire de base", s["salaire_base"] == 5000000, s["salaire_base"])
+
+    # ==================================================================
+    titre("4. Le simulateur compte comme le bulletin")
+    # ==================================================================
+    b2 = dos.appel("/api/bulletins/simuler", {
+        "societe_id": sid, "salaire_base": "50 000,00", "periode": "2026-03",
+        "primes": [{"libelle": "Primes soumises", "montant": "5 000,00",
+                    "soumis_cnas": True, "soumis_irg": True}]})
+    v("un brut de 55 000 DA", b2["salaire_brut"] == 5500000,
+      b2["salaire_brut"] / 100)
+
+    # ==================================================================
+    titre("5. Un import depose des primes exploitables")
+    # ==================================================================
+    SALARIES = """Matricule;Nom;Prénom;Poste;Salaire de base;Primes
+S0100;CHERIF;Sofiane;Agent;40000;3000
+"""
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "salaries", "contenu": b64(SALARIES)})
+    v("le salarie est importe", r["crees"] == 1, r)
+    importe = [x for x in dos.appel(f"/api/salaries?societe={sid}")["salaries"]
+               if x["nom"] == "CHERIF"]
+    v("… avec sa prime lisible",
+      importe and importe[0]["primes"]
+      and importe[0]["primes"][0]["montant"] == 300000,
+      importe and importe[0]["primes"])
+    b3 = dos.appel("/api/bulletins/simuler", {
+        "societe_id": sid, "salarie_id": importe[0]["id"], "periode": "2026-03"})
+    v("… et son bulletin se calcule", b3["salaire_brut"] == 4300000,
+      b3["salaire_brut"] / 100)
+
+    # ==================================================================
+    titre("6. Une prime hors de proportion se voit")
+    # ==================================================================
+    # Les fiches deja abimees par le defaut ne se reparent pas toutes
+    # seules : rien ne distingue 20 000 DA de 200 DA centuples. On les
+    # signale plutot que de deviner.
+    dos.ecrit("UPDATE salaries SET primes = ? WHERE nom = 'CHERIF'",
+              ('[{"libelle": "Primes", "montant": 30000000, '
+               '"soumis_cnas": true, "soumis_irg": true}]',))
+    exid = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]["id"]
+    sante = dos.appel(f"/api/sante?societe={sid}&exercice={exid}")
+    trouve = [a for a in sante["anomalies"] if a["cle"] == "primes_invraisemblables"]
+    v("le controle signale la fiche", bool(trouve), sante["anomalies"])
+    v("… en nommant le salarie",
+      trouve and "CHERIF" in str(trouve[0]["detail"]), trouve)
+    v("… sans crier a l'erreur comptable",
+      trouve and trouve[0]["niveau"] == "alerte", trouve)
+
+    # ==================================================================
+    titre("7. Les bulletins deja etablis avec le defaut sont montres")
+    # ==================================================================
+    # Une fiche se repare ; un bulletin deja calcule garde ses chiffres.
+    # On ne le refait pas d'office -- un bulletin comptabilise a produit des
+    # ecritures -- mais on ne le laisse pas passer inapercu.
+    dos.appel("/api/bulletins/generer", {"societe_id": sid, "periode": "2026-03"})
+    dos.ecrit("UPDATE bulletins SET primes_soumises = salaire_base * 100 "
+              "WHERE id = (SELECT MIN(id) FROM bulletins)")
+    if dos.sql("SELECT COUNT(*) n FROM bulletins")[0]["n"]:
+        sante = dos.appel(f"/api/sante?societe={sid}&exercice={exid}")
+        trouve = [a for a in sante["anomalies"] if a["cle"] == "bulletins_a_refaire"]
+        v("le controle signale les bulletins a refaire", bool(trouve),
+          [a["cle"] for a in sante["anomalies"]])
+        v("… en disant comment s'y prendre",
+          trouve and "brouillon" in trouve[0]["explication"], trouve)
+
+
 SUITES = [
     ("conformite", "Conformite comptable -- une annee tenue", suite_conformite, True),
     ("limites", "Ce que le logiciel doit refuser", suite_limites, False),
@@ -2733,6 +2874,7 @@ SUITES = [
     ("creation", "L'import cree ce dont il a besoin", suite_creation, False),
     ("attente", "Rien n'est refuse, rien n'est perdu", suite_attente, False),
     ("correction", "Corriger une ecriture deja enregistree", suite_correction, False),
+    ("paie", "Les primes valent ce qu'on a tape", suite_paie, False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),
