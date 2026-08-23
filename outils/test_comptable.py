@@ -2947,7 +2947,50 @@ def suite_transfert(dos):
         troisieme.ferme()
 
     # ==================================================================
-    titre("5. La restauration ordinaire marche toujours")
+    titre("5. Une sauvegarde venue d'ailleurs se depose depuis l'ecran")
+    # ==================================================================
+    # Le second poste a peut-etre deja un compte : la restauration ne savait
+    # alors choisir que parmi les sauvegardes deja sur la machine. Il fallait
+    # trouver soi-meme le dossier « donnees/sauvegardes/ ».
+    quatrieme = Dossier("poste4")
+    try:
+        quatrieme.appel("/api/installation", {
+            "identifiant": "autre", "mot_de_passe": "motdepasse123",
+            "nom_complet": "Autre", "raison_sociale": "SARL DEUXIEME POSTE",
+            "nif": "000116007777777", "commune": "Oran", "wilaya": "31 Oran"})
+        avant = len(quatrieme.appel("/api/sauvegardes")["sauvegardes"])
+        r = quatrieme.appel("/api/sauvegardes/deposer",
+                            {"contenu": contenu, "nom": sauvegarde["nom"]})
+        v("la sauvegarde apportee est acceptee", bool(r.get("nom")), r)
+        v("… en disant d'ou elle vient",
+          r.get("societes") == ["SARL EL BARAKA"], r)
+        v("… et elle rejoint la liste",
+          len(quatrieme.appel("/api/sauvegardes")["sauvegardes"]) == avant + 1)
+        v("… sans avoir rien remplace",
+          quatrieme.appel("/api/societes")["societes"][0]["raison_sociale"]
+          == "SARL DEUXIEME POSTE")
+        quatrieme.appel("/api/sauvegardes/restaurer",
+                        {"nom": r["nom"], "confirmation": "RESTAURER"})
+        # La restauration remet aussi les comptes du poste d'origine : la
+        # session ouverte avec l'ancien compte n'a plus cours.
+        v("il faut se reconnecter, avec les identifiants restaures",
+          bool(quatrieme.refuse("/api/societes")))
+        quatrieme.appel("/api/connexion",
+                        {"identifiant": "yacine", "mot_de_passe": "monmotdepasse"})
+        v("la restauration met le dossier d'origine en place",
+          quatrieme.appel("/api/societes")["societes"][0]["raison_sociale"]
+          == "SARL EL BARAKA")
+        v("… avec ses ecritures",
+          quatrieme.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == 1)
+        v("… et la comptabilite equilibree", quatrieme.equilibre_global())
+        message = quatrieme.refuse("/api/sauvegardes/deposer",
+                                   {"contenu": b64("pas une archive")})
+        v("un fichier quelconque est refuse", bool(message), message)
+    finally:
+        quatrieme.ferme()
+
+    # ==================================================================
+    titre("6. La restauration ordinaire marche toujours")
     # ==================================================================
     dos.appel("/api/ecritures", {
         "societe_id": sid, "journal": "OD", "date": f"{annee}-03-16",

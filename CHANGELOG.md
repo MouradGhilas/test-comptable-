@@ -20,6 +20,11 @@ et après une mise à jour.
   sont repris tels quels, et vous vous connectez avec vos identifiants
   habituels. L'écran rappelle lesquels, et prévient que les deux postes ont
   désormais chacun leur copie.
+- **Apporter une sauvegarde d'un autre poste** quand celui-ci a déjà un
+  dossier : l'écran Sauvegarde & données ne savait restaurer que les fichiers
+  déjà présents sur la machine — il fallait trouver soi-même le dossier
+  `donnees\sauvegardes\` et y glisser le fichier. Il se dépose maintenant
+  depuis l'écran, et rejoint la liste comme les autres.
 - Chaque requête refermait mal sa connexion à la base : elles s'accumulaient
   jusqu'au passage du ramasse-miettes. Sans conséquence visible, mais c'est
   ce qui rendait le remplacement du fichier de base hasardeux.

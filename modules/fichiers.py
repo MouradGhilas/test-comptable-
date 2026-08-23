@@ -213,6 +213,64 @@ def api_telecharge(ctx):
     return Reponse(chemin.read_bytes(), "application/zip", nom)
 
 
+@route("POST", "/api/sauvegardes/deposer")
+def api_depose_sauvegarde(ctx):
+    """Ranger ici une sauvegarde venue d'un autre poste.
+
+    La restauration ne savait choisir que parmi les sauvegardes déjà
+    présentes sur la machine : il fallait donc trouver soi-même le dossier
+    `donnees/sauvegardes/` et y glisser le fichier. On le dépose désormais
+    depuis l'écran, et il rejoint la liste comme les autres.
+    """
+    ctx.interdit_lecture_seule()
+    ctx.exige_role("admin")
+    contenu = ctx.champ_requis("contenu")
+    if contenu.startswith("data:") and "," in contenu[:120]:
+        contenu = contenu.split(",", 1)[1]
+    try:
+        octets = base64.b64decode(contenu, validate=True)
+    except (binascii.Error, ValueError) as err:
+        raise ErreurApplicative(f"Fichier illisible : {err}") from err
+
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(octets))
+    except zipfile.BadZipFile as err:
+        raise ErreurApplicative(
+            "Ce fichier n'est pas une sauvegarde de " + APPLICATION + ". "
+            "Cherchez un fichier nommé « sauvegarde_… .zip ». "
+            f"Détail : {err}") from err
+    noms = archive.namelist()
+    if "comptabilite.db" not in noms:
+        raise ErreurApplicative(
+            "Ce fichier ne contient pas de comptabilité : ce n'est pas une "
+            "sauvegarde de " + APPLICATION + ".")
+    manifeste = {}
+    if "manifeste.json" in noms:
+        try:
+            manifeste = json.loads(archive.read("manifeste.json").decode("utf-8"))
+        except ValueError:
+            manifeste = {}
+
+    config.prepare_dossiers()
+    nom = nom_sur(ctx.champ("nom") or "sauvegarde_recue.zip")
+    if not nom.lower().endswith(".zip"):
+        nom += ".zip"
+    cible = config.dossier_sauvegardes / nom
+    rang = 1
+    while cible.exists():
+        cible = config.dossier_sauvegardes / f"{nom[:-4]}_{rang}.zip"
+        rang += 1
+    cible.write_bytes(octets)
+    db.trace("depot_sauvegarde", "systeme", None, cible.name, ctx.nom_utilisateur)
+    return {
+        "nom": cible.name, "taille": cible.stat().st_size,
+        "faite_le": manifeste.get("date"), "version": manifeste.get("version"),
+        "societes": [s.get("raison_sociale") for s in manifeste.get("societes", [])],
+        "message": f"{cible.name} est maintenant sur ce poste. "
+                   "Utilisez « Restaurer » pour la mettre en place.",
+    }
+
+
 @route("POST", "/api/sauvegardes/restaurer")
 def api_restaure(ctx):
     """Restauration d'une archive. Une sauvegarde de sécurité est prise avant."""

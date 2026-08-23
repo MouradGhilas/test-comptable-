@@ -473,8 +473,9 @@ et une copie de la base est prise avant toute transformation.
 ### Sauvegardes
 
 * Une sauvegarde automatique est créée à chaque fermeture propre de l'application.
-* **Paramètres → Sauvegarde** permet d'en créer une à la demande, de la télécharger
-  et de restaurer une version antérieure.
+* **Paramètres → Sauvegarde** permet d'en créer une à la demande, de la
+  télécharger, d'**apporter celle d'un autre poste** et de restaurer une
+  version antérieure.
 * Les 30 dernières sauvegardes sont conservées.
 * **Copiez régulièrement le dossier `donnees/` sur un support externe.** Une
   sauvegarde qui reste sur le même disque que l'original ne protège de rien.
@@ -483,7 +484,9 @@ et une copie de la base est prise avant toute transformation.
 Sauvegarde & données → *Créer une sauvegarde*, puis *Télécharger*. Sur le
 poste neuf, au premier démarrage, l'écran propose **« J'ai déjà un dossier sur
 un autre poste »** : le fichier y est déposé, et tout est repris — comptabilité,
-pièces justificatives, comptes. On se connecte ensuite avec ses identifiants
+pièces justificatives, comptes. Si ce poste a déjà un dossier, le dépôt se fait
+depuis Paramètres → Sauvegarde & données (*J'apporte une sauvegarde d'un autre
+poste*), puis *Restaurer*. On se connecte ensuite avec ses identifiants
 habituels. Les deux postes ont alors chacun leur copie : travaillez sur un
 seul, et repassez par une sauvegarde pour changer, sinon les deux
 comptabilités divergent.
@@ -506,7 +509,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
 python3 outils/test_http.py          # 63 contrôles du serveur et de l'interface
-python3 outils/test_comptable.py     # 433 contrôles de conformité comptable
+python3 outils/test_comptable.py     # 442 contrôles de conformité comptable
 python3 outils/test_mise_a_jour.py   # 39 contrôles du chemin de mise à jour
 python3 app.py --verifier            # intégrité de vos données
 ```
@@ -581,7 +584,7 @@ web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
 ├── test_http.py            63 contrôles serveur et interface
-├── test_comptable.py       433 contrôles de conformité comptable
+├── test_comptable.py       442 contrôles de conformité comptable
 ├── test_mise_a_jour.py     39 contrôles du chemin de mise à jour
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur

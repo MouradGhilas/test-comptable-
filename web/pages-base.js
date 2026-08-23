@@ -2340,7 +2340,20 @@ async function ongletSauvegarde(zone) {
         rendu: (s) => `<button class="petit-bouton" onclick="telecharge('/api/sauvegardes/telecharger',{nom:'${ech(s.nom)}'})">Télécharger</button>
           <button class="petit-bouton danger" onclick="restaure('${ech(s.nom)}')">Restaurer</button>`,
       },
-    ], sauvegardes.sauvegardes, { messageVide: 'Aucune sauvegarde. Créez-en une dès maintenant.' }), '', true)}
+    ], sauvegardes.sauvegardes, { messageVide: 'Aucune sauvegarde. Créez-en une dès maintenant.' })
+      + `<details id="depot-sauvegarde">
+        <summary>J'apporte une sauvegarde d'un autre poste</summary>
+        <p class="petit">Déposez ici le fichier <code>sauvegarde_… .zip</code>
+          copié depuis l'autre poste : il rejoindra la liste ci-dessus, et
+          vous pourrez le restaurer comme les autres. Rien n'est remplacé
+          tant que vous n'avez pas cliqué sur <em>Restaurer</em>.</p>
+        <div class="rangee" style="align-items:flex-end; gap:12px">
+          <label class="champ" style="flex:1"><span>Fichier de sauvegarde (.zip)</span>
+            <input type="file" id="depot-fichier" accept=".zip"></label>
+          <button class="primaire" id="depot-lancer">Déposer sur ce poste</button>
+        </div>
+        <div id="depot-resultat"></div>
+      </details>`, '', true)}
 
     ${carte('Journal des incidents', `
       <p class="petit">Lancée depuis un raccourci, l'application n'affiche aucune
@@ -2352,6 +2365,31 @@ async function ongletSauvegarde(zone) {
 
   // Le chemin d'une clé USB contient souvent une apostrophe ou un antislash :
   // on branche le bouton plutôt que de glisser la valeur dans un onclick.
+  $('#depot-lancer', zone).onclick = async () => {
+    const fichier = $('#depot-fichier', zone).files[0];
+    const resultat = $('#depot-resultat', zone);
+    if (!fichier) { notifie('Choisissez d\'abord le fichier.', 'alerte'); return; }
+    const bouton = $('#depot-lancer', zone);
+    bouton.disabled = true;
+    bouton.textContent = 'Dépôt en cours…';
+    try {
+      const contenu = await litFichierBase64(fichier);
+      const r = await envoie('/api/sauvegardes/deposer',
+                             { contenu, nom: fichier.name });
+      resultat.innerHTML = `<div class="message succes">
+        <strong>${ech(r.message)}</strong>
+        ${r.faite_le ? `Sauvegarde du ${ech(r.faite_le)}` : ''}
+        ${r.societes?.length ? ` — ${ech(r.societes.filter(Boolean).join(', '))}` : ''}
+        ${r.version ? ` (version ${ech(r.version)})` : ''}.</div>`;
+      notifie(r.message, 'succes', 7000);
+      setTimeout(() => afficheRoute(), 1200);
+    } catch (err) {
+      resultat.innerHTML = `<div class="message danger">
+        <strong>Dépôt refusé</strong>${ech(err.message)}</div>`;
+      bouton.disabled = false;
+      bouton.textContent = 'Déposer sur ce poste';
+    }
+  };
   $('#copie-lancer', zone).onclick = copieSauvegardeExterne;
   $('#copie-destination', zone).addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') { ev.preventDefault(); copieSauvegardeExterne(); }
