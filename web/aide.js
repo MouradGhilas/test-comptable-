@@ -388,6 +388,11 @@ const AIDES = {
       'Les <strong>taux fiscaux livrés sont un point de départ, pas une '
       + 'référence légale</strong>. Comparez-les à la loi de finances de '
       + 'l\'année : ils ne se mettent jamais à jour tout seuls.',
+      'Pour <strong>travailler sur un autre poste</strong> : créez une '
+      + 'sauvegarde ici, téléchargez-la, et au premier démarrage du second '
+      + 'poste choisissez « J\'ai déjà un dossier sur un autre poste ». '
+      + 'Attention : les deux postes ont ensuite chacun leur copie — n\'en '
+      + 'tenez qu\'une à jour.',
       'Vos données vivent dans un dossier local. Les sauvegardes aussi : '
       + 'copiez-les régulièrement hors du poste, sinon une panne de disque '
       + 'emporte les deux.',

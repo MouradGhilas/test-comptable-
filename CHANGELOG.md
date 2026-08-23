@@ -3,6 +3,27 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.8.3
+
+- **La restauration d'une sauvegarde ne marchait pas.** Depuis toujours :
+  l'écran répondait « Erreur interne : disk I/O error » et rien n'était
+  restauré. Le journal d'écriture de l'ancienne base était retiré *après*
+  que la nouvelle ait pris sa place — SQLite retrouvait alors un journal qui
+  décrivait une autre base. C'est le filet de sécurité de tout le dossier :
+  il fonctionne, et un contrôle permanent le vérifie désormais à chaque
+  livraison.
+- **Un second poste peut reprendre le dossier du premier.** L'écran de
+  première utilisation ne proposait que de créer un compte et une entreprise
+  — alors qu'on a déjà les deux, et une sauvegarde en main. Il porte
+  maintenant **« J'ai déjà un dossier sur un autre poste »** : déposez la
+  sauvegarde, la comptabilité, les pièces justificatives et votre compte
+  sont repris tels quels, et vous vous connectez avec vos identifiants
+  habituels. L'écran rappelle lesquels, et prévient que les deux postes ont
+  désormais chacun leur copie.
+- Chaque requête refermait mal sa connexion à la base : elles s'accumulaient
+  jusqu'au passage du ramasse-miettes. Sans conséquence visible, mais c'est
+  ce qui rendait le remplacement du fichier de base hasardeux.
+
 ## 1.8.2
 
 - **Les primes valaient cent fois trop.** « Je mets 200 DA, il fait 20 000. »

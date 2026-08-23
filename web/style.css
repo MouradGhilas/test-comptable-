@@ -771,3 +771,14 @@ tr.ecart-recoupement td { background: var(--danger-fond); }
 .lot-attente h4 { margin: 0 0 6px; font-size: 13px; }
 .lot-attente input.cellule-attente { width: 100%; min-width: 84px; padding: 3px 6px;
                                      font-size: 12px; }
+
+/* Premier démarrage : reprendre un dossier venu d'un autre poste. Replié
+   par défaut — la plupart des installations sont neuves — mais visible pour
+   qui arrive avec sa sauvegarde en main. */
+#reprise-poste { border: 1px solid var(--bordure); border-radius: var(--rayon);
+                 padding: 10px 14px; margin-bottom: 16px;
+                 background: var(--fond-doux); }
+#reprise-poste > summary { cursor: pointer; font-weight: 600; font-size: 13px;
+                           color: var(--primaire-clair); }
+#reprise-poste p { color: var(--texte-doux); margin: 8px 0 10px; }
+#reprise-poste code { font-size: 11.5px; }

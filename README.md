@@ -479,6 +479,15 @@ et une copie de la base est prise avant toute transformation.
 * **Copiez régulièrement le dossier `donnees/` sur un support externe.** Une
   sauvegarde qui reste sur le même disque que l'original ne protège de rien.
 
+**Passer d'un poste à un autre.** Sur le poste d'origine : Paramètres →
+Sauvegarde & données → *Créer une sauvegarde*, puis *Télécharger*. Sur le
+poste neuf, au premier démarrage, l'écran propose **« J'ai déjà un dossier sur
+un autre poste »** : le fichier y est déposé, et tout est repris — comptabilité,
+pièces justificatives, comptes. On se connecte ensuite avec ses identifiants
+habituels. Les deux postes ont alors chacun leur copie : travaillez sur un
+seul, et repassez par une sauvegarde pour changer, sinon les deux
+comptabilités divergent.
+
 ### Sécurité
 
 * Le serveur écoute par défaut sur `127.0.0.1` : l'application n'est accessible
@@ -497,7 +506,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
 python3 outils/test_http.py          # 63 contrôles du serveur et de l'interface
-python3 outils/test_comptable.py     # 415 contrôles de conformité comptable
+python3 outils/test_comptable.py     # 433 contrôles de conformité comptable
 python3 outils/test_mise_a_jour.py   # 39 contrôles du chemin de mise à jour
 python3 app.py --verifier            # intégrité de vos données
 ```
@@ -509,7 +518,7 @@ sont constatés au bon moment et que la clôture se déroule correctement.
 Le test de conformité comptable, lui, ne regarde pas l'interface : il attaque
 l'application par ses interfaces de programmation et vérifie les règles qui,
 si elles cèdent, produisent des comptes **faux sans que rien ne le signale**.
-Quatorze familles, lançables séparément
+Quinze familles, lançables séparément
 (`python3 outils/test_comptable.py perimetre`) :
 
 | Suite | Ce qu'elle vérifie |
@@ -524,6 +533,7 @@ Quatorze familles, lançables séparément
 | `attente` | rien n'est refusé, rien n'est perdu : ce qui ne passe pas attend, se corrige sur place et repart tout seul |
 | `correction` | corriger une écriture en place — même numéro, mêmes justificatifs, lettrage défait proprement, rapprochement clôturé protégé |
 | `paie` | une prime vaut ce qu'on a tapé — dans la fiche, dans le bulletin, dans la base CNAS et dans l'IRG, après autant d'allers-retours qu'on veut |
+| `transfert` | reprendre son dossier sur un second poste, et restaurer une sauvegarde sur celui-ci |
 | `sante` | les contrôles de santé du dossier, chacun mis à l'épreuve sur une anomalie provoquée pour lui |
 | `annuelles` | la DAS et l'état des clients, et surtout leurs recoupements |
 | `relances` | ce qui est dû et depuis quand, et la lettre à ses trois niveaux |
@@ -571,7 +581,7 @@ web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
 ├── test_http.py            63 contrôles serveur et interface
-├── test_comptable.py       415 contrôles de conformité comptable
+├── test_comptable.py       433 contrôles de conformité comptable
 ├── test_mise_a_jour.py     39 contrôles du chemin de mise à jour
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur

@@ -305,6 +305,17 @@ class Gestionnaire(BaseHTTPRequestHandler):
     # -- traitement --------------------------------------------------------
     def _traite(self, methode):
         try:
+            self._sert(methode)
+        finally:
+            # Chaque requête est servie dans son propre fil, et chaque fil
+            # ouvre sa connexion SQLite. Sans cette fermeture, elles ne se
+            # refermaient qu'au ramasse-miettes : des dizaines de connexions
+            # ouvertes sur le fichier de base, et une restauration qui
+            # remplace ce fichier tombait sur « disk I/O error ».
+            db.ferme()
+
+    def _sert(self, methode):
+        try:
             url = urllib.parse.urlparse(self.path)
             chemin = urllib.parse.unquote(url.path)
             requete = urllib.parse.parse_qs(url.query)

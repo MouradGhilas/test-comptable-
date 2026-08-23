@@ -2864,6 +2864,108 @@ S0100;CHERIF;Sofiane;Agent;40000;3000
           trouve and "brouillon" in trouve[0]["explication"], trouve)
 
 
+def suite_transfert(dos):
+    """Reprendre son dossier sur un second poste.
+
+    Il a installe le logiciel sur un deuxieme PC : l'ecran lui a demande de
+    creer un compte et une entreprise, alors qu'il avait deja les deux et une
+    sauvegarde en main. Il n'existait aucun moyen de dire « j'ai deja un
+    dossier, le voici » -- il aurait fallu creer un compte pour pouvoir en
+    restaurer un autre.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "yacine", "mot_de_passe": "monmotdepasse",
+        "nom_complet": "Yacine", "raison_sociale": "SARL EL BARAKA",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    annee = int(dos.appel(f"/api/exercices?societe={sid}")
+                ["exercices"][0]["date_debut"][:4])
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "OD", "date": f"{annee}-03-15",
+        "libelle": "Travail du premier poste", "valider": True,
+        "lignes": [{"compte": "607", "debit": "12000", "credit": "0"},
+                   {"compte": "401", "debit": "0", "credit": "12000"}]})
+    sauvegarde = dos.appel("/api/sauvegardes", {"motif": "transfert"})
+    archive = dos.dossier / "sauvegardes" / sauvegarde["nom"]
+    contenu = base64.b64encode(archive.read_bytes()).decode()
+
+    # ==================================================================
+    titre("1. Un poste neuf peut reprendre un dossier existant")
+    # ==================================================================
+    second = Dossier("poste2")
+    try:
+        v("le second poste se declare vierge",
+          second.appel("/api/etat").get("installe") is False,
+          second.appel("/api/etat"))
+        r = second.appel("/api/installation/restaurer", {"contenu": contenu})
+        v("la sauvegarde est acceptee sans compte prealable", r.get("ok"), r)
+        v("… le dossier est nomme", r["societes"] == ["SARL EL BARAKA"], r)
+        v("… et l'identifiant a utiliser est rappele",
+          r["comptes"] == ["yacine"], r)
+        v("… avec la date de la sauvegarde", bool(r.get("faite_le")), r)
+
+        # ==============================================================
+        titre("2. Les identifiants du premier poste ouvrent le second")
+        # ==============================================================
+        c = second.appel("/api/connexion",
+                         {"identifiant": "yacine", "mot_de_passe": "monmotdepasse"})
+        v("la connexion passe", c.get("ok"), c)
+        soc = second.appel("/api/societes")["societes"]
+        v("le dossier est bien la",
+          [x["raison_sociale"] for x in soc] == ["SARL EL BARAKA"], soc)
+        ecr = second.appel(f"/api/ecritures?societe={soc[0]['id']}")
+        v("… avec le travail du premier poste",
+          [e["libelle"] for e in ecr.get("ecritures", [])]
+          == ["Travail du premier poste"], ecr.get("ecritures"))
+        v("la comptabilite est equilibree sur le second poste",
+          second.equilibre_global())
+
+        # ==============================================================
+        titre("3. La porte se referme derriere")
+        # ==============================================================
+        message = second.refuse("/api/installation/restaurer", {"contenu": contenu})
+        v("un second dossier ne s'ecrase pas sans confirmation", bool(message),
+          message)
+        v("… et le message dit par ou passer",
+          "Sauvegarde" in (message or ""), message)
+    finally:
+        second.ferme()
+
+    # ==================================================================
+    titre("4. Un fichier qui n'est pas une sauvegarde est refuse")
+    # ==================================================================
+    troisieme = Dossier("poste3")
+    try:
+        message = troisieme.refuse("/api/installation/restaurer",
+                                   {"contenu": b64("ceci n'est pas une archive")})
+        v("il est refuse", bool(message), message)
+        v("… en disant quoi chercher",
+          "sauvegarde" in (message or "").lower(), message)
+        v("le poste reste installable",
+          troisieme.appel("/api/etat").get("installe") is False)
+    finally:
+        troisieme.ferme()
+
+    # ==================================================================
+    titre("5. La restauration ordinaire marche toujours")
+    # ==================================================================
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "OD", "date": f"{annee}-03-16",
+        "libelle": "Saisie posterieure a la sauvegarde", "valider": True,
+        "lignes": [{"compte": "607", "debit": "5000", "credit": "0"},
+                   {"compte": "401", "debit": "0", "credit": "5000"}]})
+    v("deux ecritures avant restauration",
+      dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == 2)
+    dos.appel("/api/sauvegardes/restaurer",
+              {"nom": sauvegarde["nom"], "confirmation": "RESTAURER"})
+    v("la restauration ramene l'etat sauvegarde",
+      dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == 1,
+      dos.sql("SELECT numero, libelle FROM ecritures"))
+    v("… et l'application repond toujours",
+      bool(dos.appel("/api/etat").get("version")))
+    v("… la comptabilite reste equilibree", dos.equilibre_global())
+
+
 SUITES = [
     ("conformite", "Conformite comptable -- une annee tenue", suite_conformite, True),
     ("limites", "Ce que le logiciel doit refuser", suite_limites, False),
@@ -2875,6 +2977,7 @@ SUITES = [
     ("attente", "Rien n'est refuse, rien n'est perdu", suite_attente, False),
     ("correction", "Corriger une ecriture deja enregistree", suite_correction, False),
     ("paie", "Les primes valent ce qu'on a tape", suite_paie, False),
+    ("transfert", "Reprendre son dossier sur un second poste", suite_transfert, False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),

@@ -79,6 +79,23 @@ function afficheAuth(installe = true) {
       <div class="message info"><strong>Première utilisation</strong>
         Créez votre compte administrateur et le dossier comptable de votre entreprise.
         Tout reste sur ce poste.</div>
+
+      <details id="reprise-poste">
+        <summary>J'ai déjà un dossier sur un autre poste</summary>
+        <p class="petit">Déposez ici la sauvegarde faite sur l'autre poste
+          (un fichier <code>sauvegarde_….zip</code>, pris dans
+          Paramètres → Sauvegarde &amp; données). Votre comptabilité, vos
+          pièces justificatives et votre compte sont repris tels quels&nbsp;:
+          vous vous connecterez ensuite avec vos identifiants habituels.</p>
+        <div class="rangee" style="align-items:flex-end; gap:12px">
+          <label class="champ" style="flex:1"><span>Fichier de sauvegarde (.zip)</span>
+            <input type="file" id="reprise-fichier" accept=".zip"></label>
+          <button type="button" class="primaire" id="reprise-lancer">
+            Reprendre ce dossier</button>
+        </div>
+        <div id="reprise-resultat"></div>
+      </details>
+
       <form id="form-installation">
         <fieldset><legend>Votre compte</legend><div class="ligne-champs">
           <label class="champ"><span>Identifiant *</span><input name="identifiant" required autocomplete="username"></label>
@@ -109,6 +126,37 @@ function afficheAuth(installe = true) {
         <button class="primaire" style="width:100%;justify-content:center" type="submit">
           Créer le dossier et démarrer</button>
       </form>`;
+
+    $('#reprise-lancer').onclick = async () => {
+      const fichier = $('#reprise-fichier').files[0];
+      const zone = $('#reprise-resultat');
+      if (!fichier) { notifie('Choisissez d\'abord le fichier.', 'alerte'); return; }
+      const bouton = $('#reprise-lancer');
+      bouton.disabled = true;
+      bouton.textContent = 'Reprise en cours…';
+      zone.innerHTML = '<div class="vide">Lecture de la sauvegarde…</div>';
+      try {
+        const contenu = await litFichierBase64(fichier);
+        const r = await api('/api/installation/restaurer',
+                            { method: 'POST', corps: { contenu } });
+        zone.innerHTML = `<div class="message succes">
+          <strong>${ech(r.message)}</strong>
+          ${r.faite_le ? `Sauvegarde du ${ech(r.faite_le)}` : ''}
+          ${r.societes?.length ? `— ${ech(r.societes.join(', '))}` : ''}.
+          ${r.comptes?.length ? `Identifiant${r.comptes.length > 1 ? 's' : ''} :
+            <b>${ech(r.comptes.join(', '))}</b>.` : ''}
+          <div>Ce poste et l'autre ont maintenant chacun leur copie&nbsp;:
+            travaillez sur un seul, et repassez par une sauvegarde pour changer
+            de poste, sinon les deux comptabilités divergeront.</div>
+        </div>`;
+        setTimeout(() => afficheAuth(true), 4000);
+      } catch (err) {
+        zone.innerHTML = `<div class="message danger">
+          <strong>Reprise impossible</strong>${ech(err.message)}</div>`;
+        bouton.disabled = false;
+        bouton.textContent = 'Reprendre ce dossier';
+      }
+    };
 
     $('#form-installation').onsubmit = async (ev) => {
       ev.preventDefault();

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import gc
+import io
 import json
 import re
 import shutil
@@ -230,31 +232,123 @@ def api_restaure(ctx):
         )
 
     cree_sauvegarde("avant_restauration")
-    db.ferme()
-
-    with zipfile.ZipFile(archive) as zf:
-        noms = zf.namelist()
-        if "comptabilite.db" not in noms:
-            raise ErreurApplicative("Archive invalide : base de données absente.")
-        with zf.open("comptabilite.db") as source, \
-                open(config.base_de_donnees, "wb") as destination:
-            shutil.copyfileobj(source, destination)
-        for interne in noms:
-            if interne.startswith("pieces_justificatives/") and not interne.endswith("/"):
-                cible = config.dossier_donnees / interne
-                cible.parent.mkdir(parents=True, exist_ok=True)
-                with zf.open(interne) as source, open(cible, "wb") as destination:
-                    shutil.copyfileobj(source, destination)
-
-    # Le WAL de l'ancienne base n'a plus lieu d'être
-    for suffixe in ("-wal", "-shm"):
-        chemin = Path(str(config.base_de_donnees) + suffixe)
-        chemin.unlink(missing_ok=True)
-
+    _pose_la_base(archive.read_bytes())
     db.initialise()
     db.trace("restauration", "systeme", None, nom, ctx.nom_utilisateur)
     return {"ok": True,
             "message": "Restauration terminée. Reconnectez-vous pour recharger les données."}
+
+
+def _pose_la_base(octets: bytes) -> dict:
+    """Écrit la base et les pièces d'une archive de sauvegarde.
+
+    Partagé par la restauration ordinaire et par celle d'un poste neuf : le
+    geste est le même, seuls les garde-fous diffèrent.
+    """
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(octets))
+    except zipfile.BadZipFile as err:
+        raise ErreurApplicative(
+            "Ce fichier n'est pas une sauvegarde de " + APPLICATION + ". "
+            "Cherchez un fichier nommé « sauvegarde_… .zip », pris sur "
+            "l'autre poste dans Paramètres → Sauvegarde & données. "
+            f"Détail : {err}") from err
+    noms = archive.namelist()
+    if "comptabilite.db" not in noms:
+        raise ErreurApplicative(
+            "Ce fichier n'est pas une sauvegarde de " + APPLICATION
+            + " : la comptabilité n'y est pas. Cherchez un fichier nommé "
+              "« sauvegarde_… .zip ».")
+    manifeste = {}
+    if "manifeste.json" in noms:
+        try:
+            manifeste = json.loads(archive.read("manifeste.json").decode("utf-8"))
+        except ValueError:
+            manifeste = {}
+
+    config.prepare_dossiers()
+    db.ferme()
+    # Une connexion oubliée par un fil qui vient de finir garderait le
+    # fichier — et son journal WAL — sous les pieds de celui qu'on pose.
+    gc.collect()
+
+    # L'ordre compte, et c'est ce qui manquait : le journal WAL de l'ancienne
+    # base est retiré **avant** que la nouvelle ne prenne sa place. Écrire
+    # par-dessus en laissant traîner un WAL qui décrit une autre base donnait
+    # « disk I/O error » à la réouverture — la restauration d'une sauvegarde
+    # n'a jamais abouti depuis l'écran.
+    base = Path(config.base_de_donnees)
+    for suffixe in ("-wal", "-shm"):
+        Path(str(base) + suffixe).unlink(missing_ok=True)
+    # Effacer plutôt qu'écraser : un descripteur encore ouvert sur l'ancien
+    # fichier ne suit pas le nouveau, qui repart sur une entrée neuve.
+    base.unlink(missing_ok=True)
+    with archive.open("comptabilite.db") as source, open(base, "wb") as destination:
+        shutil.copyfileobj(source, destination)
+    for interne in noms:
+        if interne.startswith("pieces_justificatives/") and not interne.endswith("/"):
+            cible = config.dossier_donnees / interne
+            cible.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(interne) as source, open(cible, "wb") as destination:
+                shutil.copyfileobj(source, destination)
+    return manifeste
+
+
+@route("POST", "/api/installation/restaurer", public=True)
+def api_installe_depuis_sauvegarde(ctx):
+    """Reprendre un dossier existant sur un poste neuf.
+
+    Le second poste demandait de créer un compte et une entreprise, alors
+    que tout cela existait déjà sur le premier : il n'y avait aucun moyen de
+    dire « j'ai déjà un dossier, le voici ». On restaurait donc un compte
+    pour pouvoir en restaurer un autre.
+
+    N'est ouvert que tant qu'aucun utilisateur n'existe : sur une
+    installation en service, la restauration passe par l'écran Sauvegardes,
+    avec confirmation.
+    """
+    if db.valeur("SELECT COUNT(*) FROM utilisateurs", (), 0):
+        raise ErreurApplicative(
+            "Ce poste a déjà un dossier. Pour le remplacer par une "
+            "sauvegarde, connectez-vous puis passez par Paramètres → "
+            "Sauvegarde & données.", 409)
+
+    contenu = ctx.champ_requis("contenu")
+    if contenu.startswith("data:") and "," in contenu[:120]:
+        contenu = contenu.split(",", 1)[1]
+    try:
+        octets = base64.b64decode(contenu, validate=True)
+    except (binascii.Error, ValueError) as err:
+        raise ErreurApplicative(f"Fichier illisible : {err}") from err
+
+    manifeste = _pose_la_base(octets)
+    try:
+        db.initialise()
+    except Exception as err:                                  # noqa: BLE001
+        # La base posée ne s'ouvre pas : on la retire, sans quoi le poste
+        # resterait avec un dossier qu'il ne sait pas lire.
+        db.ferme()
+        Path(config.base_de_donnees).unlink(missing_ok=True)
+        raise ErreurApplicative(
+            "Cette sauvegarde n'a pas pu être ouverte sur ce poste. "
+            f"Détail : {err}. Si elle vient d'une version plus récente, "
+            "mettez d'abord ce poste à jour, puis recommencez.") from err
+
+    comptes = [u["identifiant"] for u in db.lignes(
+        "SELECT identifiant FROM utilisateurs WHERE actif = 1 ORDER BY id")]
+    societes = [s["raison_sociale"] for s in db.lignes(
+        "SELECT raison_sociale FROM societes ORDER BY id")]
+    db.trace("restauration", "installation", None,
+             {"depuis": manifeste.get("version"), "date": manifeste.get("date")})
+    return {
+        "ok": True,
+        "faite_le": manifeste.get("date"),
+        "version": manifeste.get("version"),
+        "societes": societes,
+        "comptes": comptes,
+        "message": "Dossier repris sur ce poste. Connectez-vous avec vos "
+                   "identifiants habituels — les mêmes que sur l'autre poste.",
+    }
 
 
 @route("GET", "/api/systeme/infos")

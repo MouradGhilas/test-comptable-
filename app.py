@@ -128,6 +128,10 @@ def principal():
 
     config.prepare_dossiers()
     db.initialise()
+    # Le fil principal n'a plus rien à demander à la base : sa connexion, si
+    # elle restait ouverte, empêcherait de remplacer le fichier lors d'une
+    # restauration. Elle se rouvrira d'elle-même en cas de besoin.
+    db.ferme()
 
     if arguments.verifier:
         integrite = db.valeur("PRAGMA integrity_check", (), "?")
