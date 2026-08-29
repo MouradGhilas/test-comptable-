@@ -2847,7 +2847,99 @@ S0100;CHERIF;Sofiane;Agent;40000;3000
       trouve and trouve[0]["niveau"] == "alerte", trouve)
 
     # ==================================================================
-    titre("7. Les bulletins deja etablis avec le defaut sont montres")
+    titre("7. Une retenue sur salaire, enfin saisissable")
+    # ==================================================================
+    # « Y a pas de case retenue. » Le calcul savait deduire depuis le debut
+    # -- l'ecran n'offrait aucun champ pour le dire.
+    dos.appel("/api/bulletins/generer", {"societe_id": sid, "periode": "2026-04"})
+    bul = [b for b in dos.appel(f"/api/bulletins?societe={sid}&periode=2026-04"
+                                )["bulletins"] if b["nom"] == "BENALI"][0]
+    net_avant = bul["net_a_payer"]
+    r = dos.appel(f"/api/bulletins/{bul['id']}", {
+        "jours_travailles": 30, "salaire_base": "50 000,00",
+        "primes": [{"libelle": "Rendement", "montant": "5 000,00",
+                    "soumis_cnas": True, "soumis_irg": True},
+                   {"libelle": "Panier", "montant": "200",
+                    "soumis_cnas": False, "soumis_irg": False}],
+        "retenues": [{"libelle": "Avance sur salaire", "montant": "10 000,00"},
+                     {"libelle": "Opposition", "montant": "2 000,00"}]},
+        methode="PUT")
+    v("les retenues sont prises en compte", r["autres_retenues"] == 1200000,
+      r["autres_retenues"])
+    v("… detaillees, pas en bloc",
+      [x["libelle"] for x in r["retenues"]]
+      == ["Avance sur salaire", "Opposition"], r["retenues"])
+    v("… le compte suit la nature de la retenue",
+      [x["compte"] for x in r["retenues"]] == ["425", "427"], r["retenues"])
+    v("le net baisse d'autant",
+      r["net_a_payer"] == net_avant - 1200000,
+      f"{r['net_a_payer'] / 100} au lieu de {(net_avant - 1200000) / 100}")
+    v("… mais ni la CNAS ni l'IRG ne bougent",
+      r["cnas_salarie"] == bul["cnas_salarie"] and r["irg"] == bul["irg"],
+      (r["cnas_salarie"], bul["cnas_salarie"], r["irg"], bul["irg"]))
+    v("le net reste le brut moins les retenues",
+      r["net_a_payer"] == r["salaire_brut"] - r["cnas_salarie"] - r["irg"]
+      - r["autres_retenues"])
+
+    impression, _ = dos.appel(f"/api/bulletins/{bul['id']}/impression", brut=True)
+    page = impression.decode("utf-8", "replace")
+    v("le bulletin imprime nomme chaque retenue",
+      "Avance sur salaire" in page and "Opposition" in page)
+    v("… et non « autres retenues »", "Autres retenues" not in page)
+
+    # ==================================================================
+    titre("8. L'ecriture de paie impute chaque retenue a son compte")
+    # ==================================================================
+    dos.appel("/api/bulletins/comptabiliser",
+              {"societe_id": sid, "periode": "2026-04"})
+    lignes = dos.sql(
+        "SELECT l.compte, l.debit, l.credit FROM lignes l "
+        "JOIN ecritures e ON e.id = l.ecriture_id "
+        "WHERE e.source_type = 'paie_periode' ORDER BY l.compte")
+    par_compte = {l["compte"]: l["credit"] for l in lignes}
+    v("l'avance est portee au 425", par_compte.get("425") == 1000000, par_compte)
+    v("l'opposition au 427", par_compte.get("427") == 200000, par_compte)
+    v("l'ecriture de paie est equilibree",
+      sum(l["debit"] for l in lignes) == sum(l["credit"] for l in lignes), lignes)
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("9. Une paie deja comptabilisee peut etre reprise")
+    # ==================================================================
+    # Une retenue qui remonte apres coup, un jour d'absence signale en
+    # retard : la paie du mois se refait. Sans marche arriere, la correction
+    # d'un bulletin ne servait a rien -- ils sont comptabilises des le
+    # lendemain.
+    avant_ecr = dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"]
+    message = dos.refuse("/api/bulletins/reprendre",
+                         {"societe_id": sid, "periode": "2026-04"})
+    v("la reprise se confirme", "REPRENDRE" in (message or ""), message)
+    r = dos.appel("/api/bulletins/reprendre",
+                  {"societe_id": sid, "periode": "2026-04",
+                   "confirmation": "REPRENDRE"})
+    v("les bulletins repassent en brouillon", r["bulletins"] >= 1, r)
+    v("… l'ecriture de paie est extournee, pas effacee",
+      len(r["extournees"]) >= 1
+      and dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] > avant_ecr, r)
+    v("… et tous les bulletins du mois sont modifiables",
+      all(b["statut"] == "brouillon" for b in dos.appel(
+          f"/api/bulletins?societe={sid}&periode=2026-04")["bulletins"]))
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+
+    # La retenue oubliee peut enfin etre ajoutee.
+    bul = [b for b in dos.appel(f"/api/bulletins?societe={sid}&periode=2026-04"
+                                )["bulletins"] if b["nom"] == "BENALI"][0]
+    r = dos.appel(f"/api/bulletins/{bul['id']}", {
+        "jours_travailles": 30, "salaire_base": "50 000,00",
+        "retenues": [{"libelle": "Avance sur salaire", "montant": "3 000,00"}]},
+        methode="PUT")
+    v("la retenue oubliee entre enfin", r["autres_retenues"] == 300000, r)
+    dos.appel("/api/bulletins/comptabiliser",
+              {"societe_id": sid, "periode": "2026-04"})
+    v("… et la paie se recomptabilise", dos.equilibre_global())
+
+    # ==================================================================
+    titre("10. Les bulletins deja etablis avec le defaut sont montres")
     # ==================================================================
     # Une fiche se repare ; un bulletin deja calcule garde ses chiffres.
     # On ne le refait pas d'office -- un bulletin comptabilise a produit des

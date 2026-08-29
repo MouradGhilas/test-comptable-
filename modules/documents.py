@@ -523,7 +523,14 @@ def api_bulletin(ctx):
         {'— abattement ' + montant(b['abattement_irg']) if b['abattement_irg'] else ''}</span></td>
         <td class="num"></td><td class="num"></td>
         <td class="num">{montant(b['irg'])}</td></tr>""")
-    if b["autres_retenues"]:
+    # Une retenue se nomme : « autres retenues : 5 000 » ne se remet pas à un
+    # salarié. Le détail vient du calcul ; à défaut, le total garde sa ligne.
+    retenues = detail.get("retenues")
+    if retenues:
+        for retenue in retenues:
+            rangs.append(f"""<tr><td>{e(retenue['libelle'])}</td><td></td><td></td>
+                <td class="num">{montant(retenue['montant'])}</td></tr>""")
+    elif b["autres_retenues"]:
         rangs.append(f"""<tr><td>Autres retenues</td><td></td><td></td>
             <td class="num">{montant(b['autres_retenues'])}</td></tr>""")
 

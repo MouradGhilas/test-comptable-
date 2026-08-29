@@ -88,6 +88,66 @@ def normalise_primes(brutes) -> list:
     return propres
 
 
+#: Ce qu'une retenue peut être, et le compte où elle se solde. Un acompte
+#: déjà versé s'impute au 425 — il éteint l'avance consentie ; une saisie ou
+#: une opposition au 427. Ce sont des propositions : le comptable garde la
+#: main sur le compte, c'est son métier.
+RETENUES_USUELLES = (
+    ("Avance sur salaire", "425"),
+    ("Acompte", "425"),
+    ("Remboursement de prêt", "425"),
+    ("Absence non rémunérée", "427"),
+    ("Opposition / saisie-arrêt", "427"),
+    ("Retenue diverse", "427"),
+)
+
+#: Le compte d'une retenue dont on n'a rien dit.
+COMPTE_RETENUE_DEFAUT = "427"
+
+
+def normalise_retenues(brutes) -> list:
+    """Les retenues d'un bulletin : un libellé, un montant, rien de plus.
+
+    Elles se déduisent du net après CNAS et IRG — une avance sur salaire, un
+    acompte, un remboursement de prêt ne changent ni l'assiette des
+    cotisations ni celle de l'impôt : le salarié les a bien gagnés, il en a
+    seulement déjà reçu une partie.
+    """
+    if brutes in (None, "", []):
+        return []
+    if isinstance(brutes, (int, float, str)):
+        # Un montant seul, sans libellé : c'est ce que l'ancienne colonne
+        # « autres retenues » portait. On le garde, en le nommant.
+        montant = util.centimes(brutes)
+        return ([{"libelle": "Retenues diverses", "montant": montant,
+                  "compte": COMPTE_RETENUE_DEFAUT}] if montant else [])
+    if isinstance(brutes, dict):
+        brutes = [brutes]
+    propres = []
+    for brute in brutes:
+        if not isinstance(brute, dict):
+            brute = {"montant": brute}
+        montant = util.centimes(brute.get("montant"))
+        if not montant:
+            continue
+        libelle = util.nettoie(brute.get("libelle")) or "Retenue"
+        propres.append({
+            "libelle": libelle, "montant": montant,
+            "compte": (util.nettoie(brute.get("compte"))
+                       or compte_retenue_propose(libelle)),
+        })
+    return propres
+
+
+def compte_retenue_propose(libelle: str) -> str:
+    """Le compte qui va d'habitude avec ce libellé — à titre de proposition."""
+    propre = util.sans_accents(str(libelle or "")).lower()
+    for nom, compte in RETENUES_USUELLES:
+        if util.sans_accents(nom).lower() in propre:
+            return compte
+    return COMPTE_RETENUE_DEFAUT
+
+
 def primes_du_salarie(salarie) -> list:
     """Les primes de la fiche, déjà en centimes — relues sans rien convertir.
 
@@ -184,7 +244,14 @@ def calcule_bulletin(societe_id: int, salarie: dict, periode: str,
                 abattement = min(abattement, maximum)
         irg = max(irg_brut - abattement, 0)
 
-    autres_retenues = util.centimes(saisie.get("autres_retenues", 0))
+    # Les retenues sont détaillées, ligne à ligne : un bulletin qui annonce
+    # « autres retenues : 5 000 » sans dire lesquelles ne se remet pas à un
+    # salarié. Le total reste dans sa colonne, pour les états et l'écriture.
+    if saisie.get("retenues") is not None:
+        retenues = normalise_retenues(saisie.get("retenues"))
+    else:
+        retenues = normalise_retenues(saisie.get("autres_retenues", 0))
+    autres_retenues = sum(r["montant"] for r in retenues)
     net = salaire_brut - cnas_salarie - irg - autres_retenues
     cout_employeur = salaire_brut + cnas_patronale
 
@@ -198,7 +265,7 @@ def calcule_bulletin(societe_id: int, salarie: dict, periode: str,
         "taux_cnas_salarie": taux_salarial, "cnas_salarie": cnas_salarie,
         "taux_cnas_patronale": taux_patronal, "cnas_patronale": cnas_patronale,
         "base_irg": base_irg, "irg_brut": irg_brut, "abattement_irg": abattement,
-        "irg": irg, "autres_retenues": autres_retenues,
+        "irg": irg, "retenues": retenues, "autres_retenues": autres_retenues,
         "net_a_payer": net, "cout_employeur": cout_employeur,
     }
 
@@ -322,6 +389,22 @@ def api_bulletins(ctx):
     }
 
 
+@route("GET", "/api/bulletins/<id>")
+def api_bulletin(ctx):
+    """Un bulletin et son détail de calcul — primes et retenues comprises."""
+    bulletin = db.ligne(
+        "SELECT b.*, s.nom, s.prenom, s.matricule, s.poste "
+        "FROM bulletins b JOIN salaries s ON s.id = b.salarie_id WHERE b.id = ?",
+        (int(ctx.params["id"]),))
+    if not bulletin:
+        raise ErreurApplicative("Bulletin introuvable.", 404)
+    try:
+        bulletin["detail"] = json.loads(bulletin["detail"] or "{}")
+    except ValueError:
+        bulletin["detail"] = {}
+    return bulletin
+
+
 @route("POST", "/api/bulletins/simuler")
 def api_simule(ctx):
     """Calcule un bulletin sans l'enregistrer (aide à la négociation salariale)."""
@@ -411,6 +494,29 @@ def api_modifie_bulletin(ctx):
     return calcul
 
 
+def retenues_par_compte(bulletins: list) -> dict:
+    """Les retenues du mois, regroupées par compte d'imputation.
+
+    Une avance déjà versée s'éteint au 425, une opposition se solde au 427 :
+    les additionner toutes sur un seul compte obligerait à reprendre
+    l'écriture à la main tous les mois.
+    """
+    par_compte: dict = {}
+    for bulletin in bulletins:
+        try:
+            detail = json.loads(bulletin["detail"] or "{}")
+        except ValueError:
+            detail = {}
+        lignes = detail.get("retenues") or []
+        if not lignes and bulletin["autres_retenues"]:
+            lignes = [{"compte": COMPTE_RETENUE_DEFAUT,
+                       "montant": bulletin["autres_retenues"]}]
+        for ligne in lignes:
+            compte = str(ligne.get("compte") or COMPTE_RETENUE_DEFAUT)
+            par_compte[compte] = par_compte.get(compte, 0) + int(ligne.get("montant") or 0)
+    return {c: m for c, m in par_compte.items() if m}
+
+
 @route("POST", "/api/bulletins/comptabiliser")
 def api_comptabilise_paie(ctx):
     """Écriture de paie du mois, tous salariés confondus.
@@ -420,7 +526,7 @@ def api_comptabilise_paie(ctx):
             421 Personnel — rému. dues       C  net à payer
             431 Sécurité sociale (CNAS)      C  part salariale + patronale
             4421 IRG / Salaires              C  retenue IRG
-            427 Oppositions                  C  autres retenues
+            425 / 427 Retenues               C  selon le compte de chaque retenue
     """
     ctx.interdit_lecture_seule()
     societe_id = ctx.entier("societe_id")
@@ -453,9 +559,10 @@ def api_comptabilise_paie(ctx):
     if irg:
         lignes.append({"compte": COMPTE_IRG, "debit": 0, "credit": irg,
                        "libelle": f"IRG/Salaires — {util.libelle_periode(periode)}"})
-    if autres:
-        lignes.append({"compte": "427", "debit": 0, "credit": autres,
-                       "libelle": "Retenues diverses"})
+    for compte, montant in sorted(retenues_par_compte(bulletins).items()):
+        lignes.append({"compte": compte, "debit": 0, "credit": montant,
+                       "libelle": f"Retenues sur salaires — "
+                                  f"{util.libelle_periode(periode)}"})
 
     programme_id = ctx.entier("programme_id")
     if programme_id:
@@ -510,6 +617,68 @@ def api_paye_salaires(ctx):
         db.execute("UPDATE bulletins SET statut = 'paye' WHERE societe_id = ? "
                    "AND periode = ? AND statut = 'comptabilise'", (societe_id, periode))
     return {"ecriture_id": ecriture_id, "montant": net}
+
+
+@route("POST", "/api/bulletins/reprendre")
+def api_reprend_paie(ctx):
+    """Rouvrir les bulletins d'un mois déjà comptabilisé.
+
+    Une retenue oubliée, un salarié parti en cours de mois, un jour
+    d'absence qui remonte après coup : la paie du mois se refait. Jusqu'ici
+    un bulletin comptabilisé était définitif et rien ne permettait d'y
+    revenir — l'écriture de paie n'avait pas de marche arrière.
+
+    Les écritures ne sont pas effacées : elles sont **extournées**, donc
+    toujours lisibles au journal. Les bulletins repassent en brouillon, se
+    corrigent, et se recomptabilisent.
+    """
+    ctx.interdit_lecture_seule()
+    ctx.exige_role("admin", "comptable")
+    societe_id = ctx.entier("societe_id")
+    periode = ctx.champ_requis("periode")
+    if ctx.champ("confirmation") != "REPRENDRE":
+        raise ErreurApplicative(
+            f"Reprendre la paie de {util.libelle_periode(periode)} extourne "
+            "ses écritures et repasse les bulletins en brouillon. Saisissez "
+            "REPRENDRE pour confirmer.")
+    bulletins = db.lignes(
+        "SELECT * FROM bulletins WHERE societe_id = ? AND periode = ? "
+        "AND statut <> 'brouillon'", (societe_id, periode))
+    if not bulletins:
+        raise ErreurApplicative(
+            f"Aucun bulletin comptabilisé pour {util.libelle_periode(periode)}.")
+
+    date = ctx.date("date", util.aujourdhui())
+    extournees = []
+    with db.transaction():
+        # L'écriture de paie, et celle du règlement s'il a eu lieu.
+        a_extourner = {b["ecriture_id"] for b in bulletins if b["ecriture_id"]}
+        for reglement in db.lignes(
+                "SELECT id FROM ecritures WHERE societe_id = ? AND "
+                "source_type = 'paiement_salaires' AND libelle LIKE ? "
+                "AND id NOT IN (SELECT COALESCE(source_id, -1) FROM ecritures "
+                "               WHERE source_type = 'extourne')",
+                (societe_id, f"%{util.libelle_periode(periode)}%")):
+            a_extourner.add(reglement["id"])
+        for identifiant in sorted(a_extourner):
+            nouvelle = compta.extourne_ecriture(identifiant, date,
+                                                ctx.nom_utilisateur)
+            extournees.append(db.valeur(
+                "SELECT numero FROM ecritures WHERE id = ?", (nouvelle,),
+                str(nouvelle)))
+        db.execute(
+            "UPDATE bulletins SET statut = 'brouillon', ecriture_id = NULL "
+            "WHERE societe_id = ? AND periode = ?", (societe_id, periode))
+        db.trace("reprise", "paie", None,
+                 {"periode": periode, "bulletins": len(bulletins),
+                  "extournees": extournees}, ctx.nom_utilisateur)
+    return {
+        "bulletins": len(bulletins), "extournees": extournees,
+        "message": f"{len(bulletins)} bulletin(s) repassés en brouillon. "
+                   + (f"Écriture(s) extournée(s) : {', '.join(extournees)}. "
+                      if extournees else "")
+                   + "Corrigez-les, puis recomptabilisez la paie.",
+    }
 
 
 @route("GET", "/api/export/paie")

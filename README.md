@@ -353,6 +353,15 @@ comptabilisée sans facture et manquerait à l'état.
 
 * Salariés, primes soumises et non soumises à cotisation
 * Bulletins : CNAS part salariale et patronale, IRG au barème progressif avec abattement
+* **Retenues sur salaire** : avance, acompte, remboursement de prêt, absence,
+  opposition. Chacune porte son libellé et son compte — 425 pour une avance
+  déjà versée, 427 pour une opposition, proposé d'après le libellé et
+  modifiable. Elles se déduisent du net **après** CNAS et IRG, figurent
+  nommément sur le bulletin, et l'écriture de paie ventile chacune sur son
+  compte.
+* **Un bulletin se corrige** — jours travaillés, primes du mois, retenues —
+  tant qu'il est en brouillon. Une paie déjà comptabilisée se **reprend** :
+  ses écritures sont extournées, les bulletins repassent en brouillon.
 * Écriture de paie, règlement des salaires, livre de paie exportable
 * Simulateur brut → net → coût employeur
 
@@ -508,8 +517,8 @@ Pour un usage à plusieurs postes sur le réseau local :
 
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
-python3 outils/test_http.py          # 63 contrôles du serveur et de l'interface
-python3 outils/test_comptable.py     # 442 contrôles de conformité comptable
+python3 outils/test_http.py          # 65 contrôles du serveur et de l'interface
+python3 outils/test_comptable.py     # 461 contrôles de conformité comptable
 python3 outils/test_mise_a_jour.py   # 39 contrôles du chemin de mise à jour
 python3 app.py --verifier            # intégrité de vos données
 ```
@@ -535,7 +544,7 @@ Quinze familles, lançables séparément
 | `creation` | l'import crée ce qu'il cite, et le complète quand le vrai fichier arrive |
 | `attente` | rien n'est refusé, rien n'est perdu : ce qui ne passe pas attend, se corrige sur place et repart tout seul |
 | `correction` | corriger une écriture en place — même numéro, mêmes justificatifs, lettrage défait proprement, rapprochement clôturé protégé |
-| `paie` | une prime vaut ce qu'on a tapé — dans la fiche, dans le bulletin, dans la base CNAS et dans l'IRG, après autant d'allers-retours qu'on veut |
+| `paie` | une prime vaut ce qu'on a tapé ; une retenue se saisit, se nomme, s'impute au bon compte, et une paie comptabilisée se reprend |
 | `transfert` | reprendre son dossier sur un second poste, et restaurer une sauvegarde sur celui-ci |
 | `sante` | les contrôles de santé du dossier, chacun mis à l'épreuve sur une anomalie provoquée pour lui |
 | `annuelles` | la DAS et l'état des clients, et surtout leurs recoupements |
@@ -584,7 +593,7 @@ web/                        interface (HTML, CSS et JavaScript sans dépendance)
 outils/
 ├── test_fonctionnel.py     96 contrôles métier
 ├── test_http.py            63 contrôles serveur et interface
-├── test_comptable.py       442 contrôles de conformité comptable
+├── test_comptable.py       461 contrôles de conformité comptable
 ├── test_mise_a_jour.py     39 contrôles du chemin de mise à jour
 ├── donnees_demonstration.py jeu d'essai complet
 ├── installer.ps1           installation Windows sans droits administrateur

@@ -63,6 +63,7 @@ def appel(chemin, corps=None, methode=None, brut=False):
             return {"erreur": contenu[:200].decode(errors="replace")}, err.code
 
 
+
 def executer():
     print("\n\033[1m1. État initial et sécurité\033[0m")
     etat, code = appel("/api/etat")
@@ -309,7 +310,25 @@ def executer():
 
     integrite, _ = appel("/api/systeme/verifier", {})
     verifie("Contrôle d'intégrité conforme", integrite.get("conforme"),
-            json.dumps(integrite)[:220])
+            str(integrite))
+
+    print("\n\033[1mInterface — pièges déjà rencontrés\033[0m")
+    # Une carte sans titre perdait ses boutons d'action : l'en-tête, qui les
+    # porte, ne s'affichait qu'en présence d'un titre. Trois écrans y ont
+    # laissé leur action principale — lettrer une sélection, reverser aux
+    # propriétaires, comptabiliser la paie — sans que rien ne le signale.
+    noyau_js = (RACINE / "web" / "noyau.js").read_text(encoding="utf-8")
+    corps_carte = noyau_js[noyau_js.index("function carte("):]
+    corps_carte = corps_carte[:corps_carte.index("\n}")]
+    verifie("Une carte sans titre affiche quand même ses actions",
+            "titre || actions" in corps_carte, corps_carte[:200])
+
+    # Les montants d'un même champ doivent suivre une seule convention : le
+    # navigateur envoie ce qui est tapé, le serveur convertit une fois. Une
+    # conversion des deux côtés multipliait les primes de paie par cent.
+    fisc_js = (RACINE / "web" / "pages-fisc.js").read_text(encoding="utf-8")
+    verifie("Les primes ne sont pas converties deux fois",
+            "cts($('.p-montant'" not in fisc_js.replace(" ", ""))
 
 
 if __name__ == "__main__":

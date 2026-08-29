@@ -524,9 +524,20 @@ function tableau(colonnes, lignes, options = {}) {
           <thead><tr>${entetes}</tr></thead><tbody>${corps}</tbody>${pied}</table></div>`;
 }
 
+/**
+ * Une carte : un titre, un contenu, et les actions qui vont avec.
+ *
+ * L'en-tête ne s'affichait qu'en présence d'un titre — et comme il porte
+ * aussi les boutons, une carte sans titre perdait ses actions en silence.
+ * Trois écrans y ont laissé leurs boutons principaux : lettrer une
+ * sélection, reverser aux propriétaires, comptabiliser la paie. Un titre
+ * vide est un choix de mise en page, pas une raison de masquer un bouton.
+ */
 function carte(titre, contenu, actions = '', serre = false) {
   return `<div class="carte">
-    ${titre ? `<div class="entete-carte"><h2>${ech(titre)}</h2><div class="rangee">${actions}</div></div>` : ''}
+    ${titre || actions ? `<div class="entete-carte">
+      ${titre ? `<h2>${ech(titre)}</h2>` : '<span></span>'}
+      <div class="rangee">${actions}</div></div>` : ''}
     <div class="corps ${serre ? 'serre' : ''}">${contenu}</div></div>`;
 }
 

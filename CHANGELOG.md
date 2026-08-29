@@ -3,6 +3,35 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.8.4
+
+- **Une retenue sur salaire se saisit enfin.** « Y a pas de case retenue » :
+  le calcul savait déduire depuis le début, l'écran n'offrait aucun champ
+  pour le dire. Chaque bulletin porte maintenant un bouton **Modifier** —
+  jours travaillés, primes du mois, et **retenues**, ligne par ligne avec
+  leur libellé.
+- **Chaque retenue est nommée et imputée.** Une avance sur salaire, un
+  acompte, un remboursement de prêt vont au **425** ; une opposition, une
+  absence, au **427**. Le compte est proposé d'après le libellé et reste
+  modifiable — l'écriture de paie ventile ensuite chaque retenue sur son
+  compte, au lieu de tout empiler sur un seul.
+- **Le bulletin imprimé les détaille**, au lieu d'une ligne « Autres
+  retenues » sans explication. Elles se déduisent du net **après** la CNAS et
+  l'IRG : elles ne changent ni les cotisations ni l'impôt.
+- **Une paie déjà comptabilisée peut être reprise.** Une retenue qui remonte
+  après coup, un jour d'absence signalé en retard : le bouton **Reprendre
+  cette paie** extourne les écritures du mois — elles restent lisibles au
+  journal — et repasse les bulletins en brouillon. Sans cela, pouvoir
+  corriger un bulletin n'aurait servi à rien : ils sont comptabilisés dès le
+  lendemain.
+
+- **Trois écrans avaient perdu leur bouton principal.** Une carte sans titre
+  n'affichait pas son en-tête — or c'est l'en-tête qui porte les actions.
+  Étaient donc invisibles, depuis toujours : **Lettrer la sélection** et
+  **Délettrer** (écran Lettrage), **Comptabiliser la paie** et **Enregistrer
+  le paiement** (écran Paie), **Reverser aux propriétaires la sélection**
+  (écran Loyers). Un contrôle permanent garde ce piège fermé.
+
 ## 1.8.3
 
 - **La restauration d'une sauvegarde ne marchait pas.** Depuis toujours :

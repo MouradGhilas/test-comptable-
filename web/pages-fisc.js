@@ -446,19 +446,189 @@ async function vueBulletins(zone, route) {
       { titre: 'Brut', classe: 'num', rendu: (b) => fm(b.salaire_brut) },
       { titre: 'CNAS 9 %', classe: 'num', rendu: (b) => fm(b.cnas_salarie) },
       { titre: 'IRG', classe: 'num', rendu: (b) => fm(b.irg) },
+      { titre: 'Retenues', classe: 'num', masquerSiVide: true,
+        rendu: (b) => b.autres_retenues ? fm(b.autres_retenues) : '' },
       { titre: 'Net à payer', classe: 'num', rendu: (b) => `<strong>${fm(b.net_a_payer)}</strong>` },
       { titre: 'CNAS patr.', classe: 'num', rendu: (b) => fm(b.cnas_patronale) },
       { titre: 'Statut', rendu: (b) => etiquette(b.statut) },
       {
         titre: '', classe: 'num',
-        rendu: (b) => `<button class="petit-bouton" onclick="window.open('/api/bulletins/${b.id}/impression','_blank')">Bulletin</button>`,
+        rendu: (b) => `<button class="petit-bouton" onclick="modifieBulletin(${b.id})">Modifier</button>
+          <button class="petit-bouton" onclick="window.open('/api/bulletins/${b.id}/impression','_blank')">Bulletin</button>`,
       },
     ], d.bulletins, {
       icone: '💼',
       messageVide: 'Aucun bulletin sur cette période. Cliquez sur « Générer les bulletins ».',
     }),
       `<button onclick="comptabilisePaie('${periode}')">Comptabiliser la paie</button>
-       <button onclick="payeSalaires('${periode}')">Enregistrer le paiement</button>`, true)}`;
+       <button onclick="payeSalaires('${periode}')">Enregistrer le paiement</button>
+       ${d.bulletins.some((b) => b.statut !== 'brouillon')
+         ? `<button onclick="reprendPaie('${periode}')">Reprendre cette paie</button>` : ''}`,
+      true)}`;
+}
+
+/**
+ * Retoucher un bulletin du mois : jours travaillés, primes, et surtout
+ * **retenues**.
+ *
+ * Une avance sur salaire, un acompte, un remboursement de prêt se déduisent
+ * du net une fois les cotisations et l'impôt calculés — le salarié a bien
+ * gagné son brut, il en a seulement déjà touché une partie. Le calcul le
+ * savait depuis le début ; l'écran n'offrait aucune case pour le dire.
+ */
+async function modifieBulletin(id) {
+  let b;
+  try { b = await api(`/api/bulletins/${id}`); }
+  catch (err) { notifie(err.message, 'danger'); return; }
+  if (b.statut !== 'brouillon') {
+    notifie('Ce bulletin est déjà comptabilisé : il n\'est plus modifiable. '
+          + 'Extournez son écriture de paie pour le reprendre.', 'alerte', 9000);
+    return;
+  }
+  const detail = b.detail || {};
+  const primes = detail.primes || [];
+  const retenues = detail.retenues || [];
+
+  const conteneur = document.createElement('div');
+  conteneur.innerHTML = `
+    <div class="message info">
+      <strong>${ech(b.nom)} ${ech(b.prenom)} — ${ech(b.periode)}</strong>
+      Ce qui est saisi ici ne vaut que pour ce mois : la fiche du salarié
+      n'est pas touchée.
+    </div>
+    <div class="ligne-champs">
+      <label class="champ"><span>Jours travaillés</span>
+        <input id="b-jours" class="num" inputmode="decimal"
+               value="${(b.jours_travailles / 1000).toFixed(0)}"></label>
+      <label class="champ"><span>Salaire de base mensuel</span>
+        <input id="b-base" class="num" inputmode="decimal"
+               value="${pourChamp(b.salaire_base)}"></label>
+    </div>
+    <fieldset><legend>Primes et indemnités de ce mois</legend>
+      <table class="saisie"><thead><tr>
+        <th>Libellé</th><th style="width:24%">Montant</th>
+        <th style="width:14%" class="centre">Soumis CNAS</th>
+        <th style="width:14%" class="centre">Soumis IRG</th><th></th>
+      </tr></thead><tbody id="b-primes"></tbody></table>
+      <button class="petit-bouton" id="b-ajout-prime" type="button">+ Prime</button>
+    </fieldset>
+    <fieldset><legend>Retenues sur ce bulletin</legend>
+      <table class="saisie"><thead><tr>
+        <th>Libellé</th><th style="width:22%">Montant</th>
+        <th style="width:16%">Compte</th><th style="width:36px"></th>
+      </tr></thead><tbody id="b-retenues"></tbody></table>
+      <button class="petit-bouton" id="b-ajout-retenue" type="button">+ Retenue</button>
+      <div class="aide">Avance sur salaire, acompte, remboursement de prêt,
+        absence non rémunérée… Elles se déduisent du net à payer, <b>après</b>
+        la CNAS et l'IRG : elles ne changent ni les cotisations ni l'impôt.
+        Le compte est proposé d'après le libellé — 425 pour une avance déjà
+        versée, 427 pour une opposition — et reste modifiable.</div>
+    </fieldset>`;
+
+  const corpsPrimes = $('#b-primes', conteneur);
+  const ajoutePrime = (p = {}) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input class="bp-libelle" value="${ech(p.libelle || '')}"></td>
+      <td><input class="bp-montant num" inputmode="decimal" value="${pourChamp(p.montant)}"></td>
+      <td class="centre"><input type="checkbox" class="bp-cnas" ${p.soumis_cnas !== false ? 'checked' : ''}></td>
+      <td class="centre"><input type="checkbox" class="bp-irg" ${p.soumis_irg !== false ? 'checked' : ''}></td>
+      <td><button type="button" class="plat petit-bouton">✕</button></td>`;
+    $('button', tr).onclick = () => tr.remove();
+    corpsPrimes.appendChild(tr);
+  };
+  primes.forEach(ajoutePrime);
+  if (!primes.length) ajoutePrime();
+  $('#b-ajout-prime', conteneur).onclick = () => ajoutePrime();
+
+  const corpsRetenues = $('#b-retenues', conteneur);
+  const ajouteRetenue = (r = {}) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input class="br-libelle" list="retenues-usuelles"
+                 placeholder="Avance sur salaire" value="${ech(r.libelle || '')}"></td>
+      <td><input class="br-montant num" inputmode="decimal" value="${pourChamp(r.montant)}"></td>
+      <td><input class="br-compte" value="${ech(r.compte || '')}" placeholder="427"></td>
+      <td><button type="button" class="plat petit-bouton">✕</button></td>`;
+    $('button', tr).onclick = () => tr.remove();
+    // Le compte suit le libellé tant qu'on n'y a pas touché soi-même.
+    $('.br-libelle', tr).addEventListener('change', () => {
+      const compte = $('.br-compte', tr);
+      if (!compte.dataset.choisi) {
+        compte.value = /avance|acompte|pr[êe]t/i.test($('.br-libelle', tr).value)
+          ? '425' : '427';
+      }
+    });
+    $('.br-compte', tr).addEventListener('input', (ev) => {
+      ev.target.dataset.choisi = '1';
+    });
+    corpsRetenues.appendChild(tr);
+  };
+  retenues.forEach(ajouteRetenue);
+  if (!retenues.length) ajouteRetenue();
+  $('#b-ajout-retenue', conteneur).onclick = () => ajouteRetenue();
+  conteneur.insertAdjacentHTML('beforeend',
+    `<datalist id="retenues-usuelles">${['Avance sur salaire', 'Acompte',
+      'Remboursement de prêt', 'Absence non rémunérée', 'Retenue diverse']
+      .map((x) => `<option value="${x}">`).join('')}</datalist>`);
+
+  modale({
+    titre: `Bulletin de ${b.nom} ${b.prenom} — ${b.periode}`,
+    contenu: conteneur, large: true,
+    boutons: [{ libelle: 'Annuler' }, {
+      libelle: 'Recalculer le bulletin', classe: 'primaire',
+      action: async () => {
+        const primesSaisies = [...corpsPrimes.querySelectorAll('tr')].map((tr) => ({
+          libelle: $('.bp-libelle', tr).value,
+          montant: $('.bp-montant', tr).value,
+          soumis_cnas: $('.bp-cnas', tr).checked,
+          soumis_irg: $('.bp-irg', tr).checked,
+        })).filter((p) => p.libelle && cts(p.montant));
+        const corps = {
+          jours_travailles: $('#b-jours', conteneur).value,
+          salaire_base: $('#b-base', conteneur).value,
+          retenues: [...corpsRetenues.querySelectorAll('tr')].map((tr) => ({
+            libelle: $('.br-libelle', tr).value,
+            montant: $('.br-montant', tr).value,
+            compte: $('.br-compte', tr).value,
+          })).filter((x) => cts(x.montant)),
+        };
+        // Grille vide : on ne dit rien des primes, et celles de la fiche du
+        // salarié s'appliquent. L'envoyer vide les effacerait.
+        if (primesSaisies.length) corps.primes = primesSaisies;
+        const r = await envoie(`/api/bulletins/${id}`, corps, 'PUT');
+        notifie(`Bulletin recalculé : net à payer ${fm(r.net_a_payer)}`
+              + (r.autres_retenues ? `, après ${fm(r.autres_retenues)} de retenues.` : '.'),
+                'succes', 8000);
+        afficheRoute();
+      },
+    }],
+  });
+}
+
+/** Rouvrir la paie d'un mois déjà comptabilisé, pour la corriger. */
+async function reprendPaie(periode) {
+  modale({
+    titre: `Reprendre la paie de ${periode}`,
+    contenu: `<div class="message alerte">
+        <strong>Les bulletins repasseront en brouillon.</strong>
+        Les écritures de paie de ce mois — et leur règlement, s'il a été
+        enregistré — seront <b>extournées</b> : elles restent lisibles au
+        journal, une écriture inverse les annule. Vous pourrez alors corriger
+        les bulletins, puis recomptabiliser.
+      </div>
+      <label class="champ"><span>Saisissez REPRENDRE pour confirmer</span>
+        <input id="confirme-reprise" autocomplete="off"></label>`,
+    boutons: [{ libelle: 'Annuler' }, {
+      libelle: 'Reprendre la paie', classe: 'danger',
+      action: async (r) => {
+        const d = await envoie('/api/bulletins/reprendre', {
+          periode, confirmation: $('#confirme-reprise', r).value });
+        notifie(d.message, 'succes', 9000);
+        afficheRoute();
+      },
+    }],
+  });
 }
 
 async function genereBulletins(periode) {

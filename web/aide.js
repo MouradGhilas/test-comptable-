@@ -354,6 +354,18 @@ const AIDES = {
       + 'le salarié : elle s\'ajoute au coût, elle ne diminue pas le net.',
       'L\'IRG retenu et les cotisations sont des dettes : ils figurent dans '
       + 'la G50 du mois et se paient ensuite.',
+      'Une <strong>retenue</strong> — avance, acompte, remboursement de prêt, '
+      + 'opposition — se saisit avec le bouton <strong>Modifier</strong> du '
+      + 'bulletin. Elle se déduit du net <em>après</em> la CNAS et l\'IRG : '
+      + 'le salarié a bien gagné son brut, il en a seulement déjà touché une '
+      + 'partie. Elle ne change donc ni les cotisations ni l\'impôt.',
+      'Le compte de la retenue suit sa nature : <strong>425</strong> pour une '
+      + 'avance déjà versée — elle s\'éteint —, <strong>427</strong> pour une '
+      + 'opposition ou une saisie-arrêt. L\'application le propose, vous le '
+      + 'corrigez si besoin.',
+      'Une paie déjà comptabilisée se <strong>reprend</strong> : ses écritures '
+      + 'sont extournées, les bulletins repassent en brouillon. Rien n\'est '
+      + 'effacé, tout reste au journal.',
       'Barème et taux viennent de Paramètres → Fiscalité, et sont à vérifier '
       + 'chaque année.',
     ],
