@@ -65,16 +65,32 @@ def construit_archive(prefixe: str = "cabinet-immo/") -> bytes:
 # Installateur en un seul fichier
 # ---------------------------------------------------------------------------
 
-GABARIT = '''#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+#: Première ligne d'un fichier qui est à la fois un script shell et un
+#: programme Python. Le shell y lit `exec python3 -- "$0" "$@"` ; Python y
+#: voit une chaîne de caractères sans effet. Renommé « .command », le
+#: fichier se lance alors d'un double-clic sur un Mac — où un « .py » n'est
+#: qu'ouvert dans un éditeur de texte.
+ENTETE_POLYGLOTTE = (
+    "#!/bin/sh\n"
+    + "'" * 4 + 'exec python3 -- "$0" ${1+"$@"} # ' + "'" * 3 + "\n"
+)
+
+GABARIT = '''# -*- coding: utf-8 -*-
 """CABINET IMMO {version} — installateur en un seul fichier.
 
 Comptabilité pour agence et promotion immobilières (Algérie).
 
+La première ligne fait de ce fichier à la fois un script shell et un
+programme Python : renommé en « .command », il se lance d'un double-clic
+sur un Mac, où un « .py » n'est ouvert que dans un éditeur de texte.
+
 COMMENT L'UTILISER
 ------------------
   Windows : double-cliquez sur ce fichier.
-  Autre   : ouvrez un terminal et tapez  python3 {nom_fichier}
+  macOS   : double-cliquez sur la version « .command » (clic droit →
+            Ouvrir la première fois, macOS demande confirmation pour un
+            fichier téléchargé).
+  Linux   : ouvrez un terminal et tapez  python3 {nom_fichier}
 
 Il dépose l'application dans un dossier « cabinet-immo » — dans vos Documents
 si ce fichier est encore dans Téléchargements ou sur le Bureau — puis lance
@@ -239,7 +255,8 @@ if __name__ == "__main__":
 
 def construit_installateur_unique(version: str, nom_fichier: str) -> str:
     charge = base64.b64encode(construit_archive()).decode("ascii")
-    return GABARIT.format(version=version, charge=charge, nom_fichier=nom_fichier)
+    return ENTETE_POLYGLOTTE + GABARIT.format(
+        version=version, charge=charge, nom_fichier=nom_fichier)
 
 
 # ---------------------------------------------------------------------------
@@ -268,8 +285,15 @@ def principal() -> int:
 
     nom_installateur = f"cabinet-immo-{VERSION}-installateur.py"
     unique = sortie / nom_installateur
-    unique.write_text(construit_installateur_unique(VERSION, nom_installateur),
-                      encoding="utf-8")
+    contenu = construit_installateur_unique(VERSION, nom_installateur)
+    unique.write_text(contenu, encoding="utf-8")
+
+    # Le même installateur, sous le nom que macOS sait ouvrir d'un
+    # double-clic. Un « .py » y est ouvert dans un éditeur de texte ; un
+    # « .command » est exécuté par le Terminal.
+    pour_mac = sortie / f"cabinet-immo-{VERSION}-installateur-MAC.command"
+    pour_mac.write_text(contenu, encoding="utf-8")
+    pour_mac.chmod(0o755)
 
     def taille(chemin):
         return f"{chemin.stat().st_size / 1024:.0f} Ko"
@@ -280,6 +304,7 @@ def principal() -> int:
     print("=" * 70)
     print(f"  {complet.name:<46} {taille(complet):>8}   clé USB, lien")
     print(f"  {unique.name:<46} {taille(unique):>8}   messagerie")
+    print(f"  {pour_mac.name:<46} {taille(pour_mac):>8}   macOS")
     print(f"  {maj.name:<46} {taille(maj):>8}   mise à jour")
     print("=" * 70)
     print(f"  Dossier : {sortie}")

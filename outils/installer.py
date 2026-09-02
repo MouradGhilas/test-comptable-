@@ -29,6 +29,7 @@ from pathlib import Path
 
 RACINE = Path(__file__).resolve().parent.parent
 WINDOWS = os.name == "nt"
+MACOS = sys.platform == "darwin"
 
 
 def titre(texte):
@@ -158,15 +159,51 @@ WScript.Echo dossier
         fichier.unlink(missing_ok=True)
 
 
+def _corps_lanceur() -> str:
+    return ("#!/bin/sh\n"
+            "# Genere par l\'installateur\n"
+            'cd "$(dirname "$0")" || exit 1\n'
+            f'exec "{sys.executable}" app.py "$@"\n')
+
+
+def dossier_bureau() -> Path | None:
+    for nom in ("Desktop", "Bureau"):
+        chemin = Path.home() / nom
+        if chemin.is_dir():
+            return chemin
+    return None
+
+
 def ecrit_lanceur_unix() -> None:
     script = RACINE / "lancer.sh"
-    script.write_text(
-        "#!/bin/sh\n"
-        '# Genere par l\'installateur\n'
-        'cd "$(dirname "$0")" || exit 1\n'
-        f'exec "{sys.executable}" app.py "$@"\n')
+    script.write_text(_corps_lanceur())
     script.chmod(0o755)
     succes("Lanceur créé : lancer.sh")
+    if not MACOS:
+        return
+
+    # Le Finder n'exécute pas un « .sh » : double-cliqué, il s'ouvre dans un
+    # éditeur de texte. C'est « .command » qu'il confie au Terminal — sans
+    # quoi l'application est installée mais rien ne permet de l'ouvrir.
+    commande = RACINE / "Cabinet Immo.command"
+    commande.write_text(_corps_lanceur())
+    commande.chmod(0o755)
+    succes("Lanceur créé : « Cabinet Immo.command » (double-clic)")
+
+    bureau = dossier_bureau()
+    if not bureau:
+        return
+    copie = bureau / "Cabinet Immo.command"
+    try:
+        copie.write_text(
+            "#!/bin/sh\n"
+            "# Genere par l\'installateur\n"
+            f'cd "{RACINE}" || exit 1\n'
+            f'exec "{sys.executable}" app.py "$@"\n')
+        copie.chmod(0o755)
+        succes(f"Raccourci « Cabinet Immo » créé sur le Bureau")
+    except OSError as err:
+        avert(f"Raccourci du Bureau impossible ({err}).")
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +276,12 @@ def principal() -> int:
     if WINDOWS:
         print("    Ouvrir l'application : raccourci « Cabinet Immo » du Bureau")
         print("    Mettre à jour        : METTRE-A-JOUR.bat")
+    elif MACOS:
+        print("    Ouvrir l'application : « Cabinet Immo » sur le Bureau")
+        print("                           (double-clic ; la première fois,")
+        print("                            clic droit puis Ouvrir)")
+        print("    Mettre à jour        : depuis l'application,")
+        print("                           Paramètres → Mise à jour")
     else:
         print("    Ouvrir l'application : ./lancer.sh")
         print("    Mettre à jour        : python3 outils/mise_a_jour.py")

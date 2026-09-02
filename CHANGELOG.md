@@ -3,6 +3,21 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.8.5
+
+- **L'application s'installe sur un Mac.** Elle y fonctionnait déjà, mais
+  rien ne permettait de la lancer : le Finder n'exécute ni un `.py` ni un
+  `.sh` — il les ouvre dans un éditeur de texte. Le paquet contient
+  désormais un **`…-installateur-MAC.command`**, que macOS sait lancer, et
+  l'installation pose un **`Cabinet Immo.command` sur le Bureau** qui ouvre
+  l'application d'un double-clic.
+- La première fois, macOS demande confirmation pour un fichier venu
+  d'Internet : **clic droit → Ouvrir**, puis *Ouvrir*. Ensuite le double-clic
+  suffit. C'est écrit dans le guide, avec la marche à suivre complète.
+- L'installateur est un fichier **à la fois script shell et programme
+  Python** : un seul contenu, deux noms, aucun risque de divergence entre la
+  version Windows et la version Mac.
+
 ## 1.8.4
 
 - **Une retenue sur salaire se saisit enfin.** « Y a pas de case retenue » :

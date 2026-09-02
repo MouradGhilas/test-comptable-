@@ -24,7 +24,14 @@ déclaration **G n° 50**, gestion des **ventes sur plan (loi n° 11-04)** et de
 télécharge tout seul si le poste n'en a pas, crée le raccourci du Bureau et
 propose le démarrage automatique. Aucun droit administrateur.
 
-**Linux / macOS**
+**macOS** — un Mac n'exécute pas un `.py` d'un double-clic. Utilisez le
+fichier `cabinet-immo-…-installateur-MAC.command` (le même installateur, sous
+le nom que le Finder sait lancer) : **clic droit → Ouvrir** la première fois,
+macOS demandant confirmation pour un fichier venu d'Internet. L'installateur
+pose un **`Cabinet Immo.command`** sur le Bureau, qui ouvre l'application.
+Python doit être présent : <https://www.python.org/downloads/macos/>.
+
+**Linux**
 
 ```bash
 python3 app.py
@@ -517,7 +524,7 @@ Pour un usage à plusieurs postes sur le réseau local :
 
 ```bash
 python3 outils/test_fonctionnel.py   # 96 contrôles métier et comptables
-python3 outils/test_http.py          # 65 contrôles du serveur et de l'interface
+python3 outils/test_http.py          # 68 contrôles du serveur et de l'interface
 python3 outils/test_comptable.py     # 461 contrôles de conformité comptable
 python3 outils/test_mise_a_jour.py   # 39 contrôles du chemin de mise à jour
 python3 app.py --verifier            # intégrité de vos données

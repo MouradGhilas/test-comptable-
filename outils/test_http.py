@@ -330,6 +330,23 @@ def executer():
     verifie("Les primes ne sont pas converties deux fois",
             "cts($('.p-montant'" not in fisc_js.replace(" ", ""))
 
+    # Un Mac n'exécute pas un « .py » d'un double-clic. L'installateur doit
+    # rester lançable par le shell autant que par Python.
+    import subprocess as _sp
+    from outils import faire_paquet
+    entete = faire_paquet.ENTETE_POLYGLOTTE
+    verifie("L'installateur reste un script shell valide",
+            entete.startswith("#!/bin/sh") and "exec python3" in entete, entete)
+    essai = Path(DOSSIER) / "polyglotte.command"
+    essai.write_text(entete + "print('depuis python')\n", encoding="utf-8")
+    essai.chmod(0o755)
+    verifie("… et Python le lit comme du Python",
+            _sp.run([sys.executable, str(essai)], capture_output=True,
+                    text=True).stdout.strip() == "depuis python")
+    verifie("… et le shell le confie à Python",
+            _sp.run(["sh", str(essai)], capture_output=True,
+                    text=True).stdout.strip() == "depuis python")
+
 
 if __name__ == "__main__":
     print("\n\033[1m═══ TEST HTTP — CABINET IMMO ═══\033[0m")

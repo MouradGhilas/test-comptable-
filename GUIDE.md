@@ -40,6 +40,29 @@ Vous avez reçu **soit** un dossier `.zip`, **soit** un seul fichier
 Dans les deux cas c'est fini : un raccourci **Cabinet Immo** est apparu sur le
 Bureau.
 
+### C. Vous êtes sur un Mac
+
+Un Mac n'exécute pas un fichier `.py` d'un double-clic : il l'ouvre dans un
+éditeur de texte. Utilisez le fichier reçu qui se termine par
+**`-installateur-MAC.command`** — c'est le même installateur, sous le nom que
+le Mac sait lancer.
+
+1. **Installez Python** une seule fois, si ce n'est pas déjà fait :
+   <https://www.python.org/downloads/macos/> → téléchargez le fichier `.pkg`,
+   double-cliquez, puis *Continuer* jusqu'au bout.
+2. **Clic droit** sur `…-installateur-MAC.command` → **Ouvrir**.
+   *(Clic droit → Ouvrir, et non double-clic : macOS refuse au premier
+   lancement un fichier venu d'Internet. Une fenêtre demande confirmation,
+   cliquez sur **Ouvrir**. Les fois suivantes, le double-clic suffit.)*
+3. Le Terminal s'ouvre et affiche l'installation. Entrée pour accepter, deux
+   fois.
+
+Un fichier **Cabinet Immo** apparaît alors sur le Bureau : c'est lui qui ouvre
+l'application. Là encore, **clic droit → Ouvrir** la première fois.
+
+> **Si rien ne se passe au clic droit → Ouvrir**, c'est que Python manque :
+> reprenez l'étape 1.
+
 ## Premier démarrage
 
 Le navigateur s'ouvre sur l'application. Vous créez :
@@ -545,7 +568,8 @@ renseigner le serveur d'envoi.
 | Symptôme | Que faire |
 |---|---|
 | **Bandeau rouge « Connexion perdue avec l'application »** | La fenêtre de l'application a été fermée, ou l'onglet date d'une session précédente. Rouvrir le raccourci **Cabinet Immo**, puis cliquer sur **Réessayer**. Aucune donnée n'est perdue. L'onglet se rétablit d'ailleurs tout seul dès que l'application redémarre. |
-| L'application ne s'ouvre pas | Relancer l'installateur reçu (`INSTALLER.bat` ou le fichier `…-installateur.py`) : il répare l'installation sans toucher aux données. |
+| L'application ne s'ouvre pas | Relancer l'installateur reçu (`INSTALLER.bat`, `…-installateur.py`, ou `…-installateur-MAC.command` sur un Mac) : il répare l'installation sans toucher aux données. |
+| Sur un Mac, rien ne se passe au double-clic | Un `.py` s'ouvre dans un éditeur : prenez le fichier `…-installateur-MAC.command`, et faites **clic droit → Ouvrir** la première fois. |
 | Double-clic sur le raccourci alors qu'elle tourne déjà | L'application ne se dédouble pas : elle ramène la fenêtre existante. |
 | Une erreur inexpliquée revient | **Paramètres → Sauvegarde & données → Signaler un problème.** L'application prépare un rapport technique, vous le lisez, puis vous le copiez, l'enregistrez ou l'envoyez. **Aucune donnée comptable n'y figure.** |
 | Une écriture est refusée | Le message dit exactement pourquoi (déséquilibre, compte inconnu, exercice clôturé). |
