@@ -65,15 +65,86 @@ def construit_archive(prefixe: str = "cabinet-immo/") -> bytes:
 # Installateur en un seul fichier
 # ---------------------------------------------------------------------------
 
-#: Première ligne d'un fichier qui est à la fois un script shell et un
-#: programme Python. Le shell y lit `exec python3 -- "$0" "$@"` ; Python y
-#: voit une chaîne de caractères sans effet. Renommé « .command », le
-#: fichier se lance alors d'un double-clic sur un Mac — où un « .py » n'est
-#: qu'ouvert dans un éditeur de texte.
-ENTETE_POLYGLOTTE = (
-    "#!/bin/sh\n"
-    + "'" * 4 + 'exec python3 -- "$0" ${1+"$@"} # ' + "'" * 3 + "\n"
-)
+#: Version de Python déposée quand le poste n'en a aucun. Même principe que
+#: l'installateur Windows, qui télécharge la version « embarquée » officielle :
+#: rien n'est installé dans le système, tout tient dans un dossier à part.
+PYTHON_PORTABLE = "3.11.9"
+PYTHON_PORTABLE_TAG = "20240726"
+
+#: Les premières lignes d'un fichier qui est à la fois un script shell et un
+#: programme Python : le shell exécute le préambule, Python n'y voit qu'une
+#: chaîne de caractères sans effet.
+#:
+#: Ce préambule fait le travail que l'utilisateur ne doit pas avoir à faire —
+#: chercher un Python utilisable et, s'il n'y en a aucun, en déposer un dans
+#: un coin à lui. Personne n'a à installer quoi que ce soit, ni à savoir ce
+#: qu'est Python.
+PREAMBULE_SHELL = """#!/bin/sh
+''''true
+# --- Cabinet Immo : trouver un moteur Python, ou en deposer un -----------
+# Rien n'est installe dans le systeme : le moteur telecharge, s'il l'est,
+# reste dans ~/.cabinet-immo/runtime et ne sert qu'a cette application.
+RUNTIME="$HOME/.cabinet-immo/runtime"
+
+utilisable() {
+  [ -n "$1" ] && [ -x "$1" ] && "$1" -c \\
+    'import sys,sqlite3; sys.exit(0 if sys.version_info >= (3,9) else 1)' \\
+    >/dev/null 2>&1
+}
+
+for candidat in \\
+    "$RUNTIME/python/bin/python3" \\
+    "$(command -v python3 2>/dev/null)" \\
+    /opt/homebrew/bin/python3 \\
+    /usr/local/bin/python3 \\
+    /usr/bin/python3
+do
+  if utilisable "$candidat"; then exec "$candidat" -- "$0" ${1+"$@"}; fi
+done
+
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64)  ARCHI="aarch64-apple-darwin" ;;
+  Darwin-x86_64) ARCHI="x86_64-apple-darwin" ;;
+  Linux-x86_64)  ARCHI="x86_64-unknown-linux-gnu" ;;
+  Linux-aarch64) ARCHI="aarch64-unknown-linux-gnu" ;;
+  *) ARCHI="" ;;
+esac
+if [ -z "$ARCHI" ]; then
+  echo ""
+  echo "  Systeme non reconnu ($(uname -s) $(uname -m))."
+  echo "  Installez Python 3 puis relancez ce fichier."
+  exit 1
+fi
+
+URL="https://github.com/astral-sh/python-build-standalone/releases/download/__TAG__/cpython-__VERSION__+__TAG__-$ARCHI-install_only.tar.gz"
+echo ""
+echo "  Cabinet Immo a besoin d'un moteur pour fonctionner, et ce poste"
+echo "  n'en a pas. Telechargement en cours (17 Mo, une seule fois)."
+echo "  Rien ne sera installe dans le systeme."
+echo ""
+mkdir -p "$RUNTIME" || exit 1
+ARCHIVE="$RUNTIME/moteur.tar.gz"
+if ! curl -fL --progress-bar -o "$ARCHIVE" "$URL"; then
+  echo ""
+  echo "  Telechargement impossible. Verifiez la connexion Internet,"
+  echo "  puis relancez ce fichier."
+  exit 1
+fi
+tar -xzf "$ARCHIVE" -C "$RUNTIME" || exit 1
+rm -f "$ARCHIVE"
+if utilisable "$RUNTIME/python/bin/python3"; then
+  echo "  Moteur installe."
+  exec "$RUNTIME/python/bin/python3" -- "$0" ${1+"$@"}
+fi
+echo "  Le moteur telecharge ne fonctionne pas sur ce poste."
+exit 1
+# '''
+"""
+
+ENTETE_POLYGLOTTE = (PREAMBULE_SHELL
+                     .replace("__TAG__", PYTHON_PORTABLE_TAG)
+                     .replace("__VERSION__", PYTHON_PORTABLE))
+
 
 GABARIT = '''# -*- coding: utf-8 -*-
 """CABINET IMMO {version} — installateur en un seul fichier.
@@ -87,10 +158,13 @@ sur un Mac, où un « .py » n'est ouvert que dans un éditeur de texte.
 COMMENT L'UTILISER
 ------------------
   Windows : double-cliquez sur ce fichier.
-  macOS   : double-cliquez sur la version « .command » (clic droit →
-            Ouvrir la première fois, macOS demande confirmation pour un
-            fichier téléchargé).
-  Linux   : ouvrez un terminal et tapez  python3 {nom_fichier}
+  macOS   : ouvrez Terminal, tapez « sh » et un espace, puis faites
+            glisser ce fichier dans la fenêtre et appuyez sur Entrée.
+            (macOS refuse d'ouvrir d'un double-clic un fichier reçu
+            d'Internet qui n'est pas signé par un éditeur enregistré ;
+            passer par Terminal contourne ce blocage sans rien
+            désactiver.)
+  Linux   : ouvrez un terminal et tapez  sh {nom_fichier}
 
 Il dépose l'application dans un dossier « cabinet-immo » — dans vos Documents
 si ce fichier est encore dans Téléchargements ou sur le Bureau — puis lance

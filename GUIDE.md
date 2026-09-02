@@ -42,26 +42,33 @@ Bureau.
 
 ### C. Vous êtes sur un Mac
 
-Un Mac n'exécute pas un fichier `.py` d'un double-clic : il l'ouvre dans un
-éditeur de texte. Utilisez le fichier reçu qui se termine par
-**`-installateur-MAC.command`** — c'est le même installateur, sous le nom que
-le Mac sait lancer.
+Vous avez reçu le fichier **`…-installateur-MAC.command`**.
 
-1. **Installez Python** une seule fois, si ce n'est pas déjà fait :
-   <https://www.python.org/downloads/macos/> → téléchargez le fichier `.pkg`,
-   double-cliquez, puis *Continuer* jusqu'au bout.
-2. **Clic droit** sur `…-installateur-MAC.command` → **Ouvrir**.
-   *(Clic droit → Ouvrir, et non double-clic : macOS refuse au premier
-   lancement un fichier venu d'Internet. Une fenêtre demande confirmation,
-   cliquez sur **Ouvrir**. Les fois suivantes, le double-clic suffit.)*
-3. Le Terminal s'ouvre et affiche l'installation. Entrée pour accepter, deux
-   fois.
+**Ne double-cliquez pas dessus.** macOS refuse d'ouvrir un fichier venu
+d'Internet qui n'est pas signé par un éditeur enregistré auprès d'Apple, et
+affiche *« provient d'un développeur non identifié »* avec un seul bouton OK.
+Ce n'est pas un problème du fichier : c'est une règle qui s'applique à tout
+programme non enregistré.
 
-Un fichier **Cabinet Immo** apparaît alors sur le Bureau : c'est lui qui ouvre
-l'application. Là encore, **clic droit → Ouvrir** la première fois.
+Faites plutôt ceci — trois gestes :
 
-> **Si rien ne se passe au clic droit → Ouvrir**, c'est que Python manque :
-> reprenez l'étape 1.
+1. Ouvrez **Terminal** : appuyez sur `Cmd` + `Espace`, tapez `terminal`,
+   Entrée.
+2. Dans la fenêtre noire, tapez **`sh`** suivi d'**un espace** — sans appuyer
+   sur Entrée.
+3. **Faites glisser le fichier** `…-installateur-MAC.command` depuis le
+   Finder (ou depuis Téléchargements) **dans la fenêtre du Terminal** : son
+   emplacement s'écrit tout seul. Appuyez alors sur **Entrée**.
+
+L'installation démarre. Entrée pour accepter, deux fois.
+
+> **Vous n'avez rien d'autre à installer.** Si le Mac n'a pas de moteur
+> Python, l'installateur en télécharge un (17 Mo) et le range dans un dossier
+> à lui. Rien n'est installé dans le système, aucun mot de passe n'est
+> demandé.
+
+Un fichier **Cabinet Immo** apparaît ensuite sur le Bureau : celui-là, créé
+sur place, s'ouvre d'un simple double-clic — macOS ne le bloque pas.
 
 ## Premier démarrage
 
@@ -569,7 +576,7 @@ renseigner le serveur d'envoi.
 |---|---|
 | **Bandeau rouge « Connexion perdue avec l'application »** | La fenêtre de l'application a été fermée, ou l'onglet date d'une session précédente. Rouvrir le raccourci **Cabinet Immo**, puis cliquer sur **Réessayer**. Aucune donnée n'est perdue. L'onglet se rétablit d'ailleurs tout seul dès que l'application redémarre. |
 | L'application ne s'ouvre pas | Relancer l'installateur reçu (`INSTALLER.bat`, `…-installateur.py`, ou `…-installateur-MAC.command` sur un Mac) : il répare l'installation sans toucher aux données. |
-| Sur un Mac, rien ne se passe au double-clic | Un `.py` s'ouvre dans un éditeur : prenez le fichier `…-installateur-MAC.command`, et faites **clic droit → Ouvrir** la première fois. |
+| Sur un Mac : « provient d'un développeur non identifié » | Normal pour tout programme non enregistré chez Apple. Ouvrez **Terminal**, tapez `sh` puis un espace, faites glisser le fichier dans la fenêtre, Entrée. |
 | Double-clic sur le raccourci alors qu'elle tourne déjà | L'application ne se dédouble pas : elle ramène la fenêtre existante. |
 | Une erreur inexpliquée revient | **Paramètres → Sauvegarde & données → Signaler un problème.** L'application prépare un rapport technique, vous le lisez, puis vous le copiez, l'enregistrez ou l'envoyez. **Aucune donnée comptable n'y figure.** |
 | Une écriture est refusée | Le message dit exactement pourquoi (déséquilibre, compte inconnu, exercice clôturé). |

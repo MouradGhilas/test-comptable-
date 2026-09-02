@@ -3,6 +3,24 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.8.6
+
+- **Sur Mac, plus rien à installer.** La version précédente demandait
+  d'installer Python depuis un site — pour quelqu'un qui ne code pas, c'est
+  une étape de trop, et je n'aurais pas dû l'ajouter. L'installateur
+  **cherche un moteur sur le poste et en dépose un s'il n'y en a pas**
+  (17 Mo, rangés dans `~/.cabinet-immo/runtime`) : rien dans le système,
+  aucun mot de passe, aucune case à cocher. C'est ce que l'installateur
+  Windows faisait déjà de son côté.
+- **Le blocage « développeur non identifié » est contourné, sans rien
+  désactiver.** macOS refuse d'ouvrir d'un double-clic un programme non
+  signé par un éditeur enregistré chez Apple — et ne propose qu'un bouton
+  *OK*. On passe donc une seule fois par le Terminal : `sh`, un espace, puis
+  on **fait glisser le fichier** dans la fenêtre. Le raccourci que
+  l'installation pose ensuite sur le Bureau est, lui, créé sur place :
+  macOS ne le bloque pas, il s'ouvre d'un double-clic.
+- Le guide décrit ces trois gestes, avec la raison du blocage.
+
 ## 1.8.5
 
 - **L'application s'installe sur un Mac.** Elle y fonctionnait déjà, mais

@@ -336,7 +336,13 @@ def executer():
     from outils import faire_paquet
     entete = faire_paquet.ENTETE_POLYGLOTTE
     verifie("L'installateur reste un script shell valide",
-            entete.startswith("#!/bin/sh") and "exec python3" in entete, entete)
+            entete.startswith("#!/bin/sh") and 'exec "$candidat"' in entete,
+            entete[:200])
+    # Personne ne doit avoir à installer Python : le préambule en cherche un,
+    # et en dépose un si le poste n'en a aucun.
+    verifie("… qui trouve un moteur Python, ou le télécharge",
+            "python-build-standalone" in entete
+            and "$RUNTIME/python/bin/python3" in entete)
     essai = Path(DOSSIER) / "polyglotte.command"
     essai.write_text(entete + "print('depuis python')\n", encoding="utf-8")
     essai.chmod(0o755)
