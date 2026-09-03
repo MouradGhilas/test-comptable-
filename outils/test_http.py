@@ -364,6 +364,48 @@ def executer():
             risque.get("cause") == "temporaire", etat.get("dossier_donnees"))
     verifie("… avec de quoi agir, pas seulement de quoi s'inquiéter",
             "Sauvegarde" in risque.get("detail", ""), risque.get("detail"))
+    # Le meme piege, en amont : l'installateur ne doit pas poser la
+    # comptabilite dans l'apercu du zip. Il ne reconnaissait que le nom du
+    # dossier courant ; celui d'un apercu s'appelle « ...maj1.8.4 (3).zip ».
+    import importlib.util
+    source = Path(DOSSIER) / "installateur_essai.py"
+    source.write_text(
+        faire_paquet.construit_installateur_unique("9.9.9", source.name),
+        encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("_installateur", source)
+    installateur = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(installateur)
+    apercu = Path("C:/Users/USER/AppData/Local/Temp/"
+                  "f0dbefc0_maj1.8.4 (3).zip.maj1.8.4 (3).zip")
+    verifie("L'apercu d'un zip n'est pas un lieu d'installation",
+            installateur.de_passage(apercu) is True)
+    verifie("… et l'installateur pose l'application ailleurs",
+            not str(installateur.dossier_installation(apercu)).startswith(
+                str(apercu)),
+            str(installateur.dossier_installation(apercu)))
+    verifie("Un dossier ordinaire reste le lieu d'installation",
+            installateur.dossier_installation(Path("D:/compta"))
+            == Path("D:/compta/cabinet-immo"))
+
+    # Personne ne doit etre renvoye vers python.org : sous Windows, le paquet
+    # zip depose lui-meme un moteur. C'est une consigne, pas une preference.
+    for nom in ("INSTALLER.bat", "LANCER.bat"):
+        texte = (RACINE / nom).read_text(encoding="ascii")
+        verifie(f"{nom} arrete l'execution depuis un apercu d'archive",
+                '%ICI:.zip\\=%' in texte and "AppData\\Local\\Temp" in texte)
+        verifie(f"{nom} n'envoie personne installer Python",
+                "python.org" not in texte)
+    lanceur = (RACINE / "LANCER.bat").read_text(encoding="ascii")
+    verifie("LANCER.bat utilise le moteur depose par l'installation",
+            "runtime\\python.exe" in lanceur)
+    installateur_py = faire_paquet.construit_installateur_unique("9.9.9", "x.py")
+    verifie("L'installateur non plus n'envoie personne sur python.org",
+            "python.org" not in installateur_py)
+    guide = (RACINE / "GUIDE.md").read_text(encoding="utf-8")
+    verifie("Le guide non plus", "python.org" not in guide)
+    verifie("… et il dit de ne pas installer depuis la fenetre du zip",
+            "Extraire tout" in guide and "provisoire" in guide)
+
     demarrage_js = (RACINE / "web" / "demarrage.js").read_text(encoding="utf-8")
     avant_auth = demarrage_js.index("signaleEmplacementRisque(etat)") \
         < demarrage_js.index("if (!etat.installe)")

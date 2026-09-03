@@ -171,11 +171,18 @@ si ce fichier est encore dans Téléchargements ou sur le Bureau — puis lance
 l'installation. Vos données ne sont jamais touchées : si une installation
 existe déjà, elle est mise à jour, pas remplacée.
 
-SI RIEN NE SE PASSE AU DOUBLE-CLIC
-----------------------------------
-Python n'est pas installé sur ce poste. Installez-le une seule fois depuis
-https://www.python.org/downloads/ en cochant « Add Python to PATH »,
-puis double-cliquez à nouveau sur ce fichier.
+SI RIEN NE SE PASSE AU DOUBLE-CLIC (Windows)
+--------------------------------------------
+Ce poste n'a pas encore de moteur Python — c'est le cas d'un ordinateur
+neuf. Ne l'installez pas vous-même : utilisez plutôt le fichier
+« cabinet-immo-{version}.zip ». Faites un clic droit dessus,
+« Extraire tout… », choisissez Documents, puis double-cliquez
+INSTALLER.bat dans le dossier extrait : il dépose le moteur lui-même,
+sans droit administrateur.
+
+N'ouvrez jamais le .zip d'un simple double-clic pour lancer l'installation
+depuis la fenêtre qui s'affiche : Windows n'a alors rien extrait, et le
+dossier qu'il montre est provisoire.
 """
 
 import base64
@@ -193,12 +200,35 @@ NOM_DOSSIER = "cabinet-immo"
 DE_PASSAGE = {{"downloads", "telechargements", "téléchargements",
               "desktop", "bureau", "temp", "tmp"}}
 
+#: Emplacements que le système efface de lui-même. Le nom du dossier ne suffit
+#: pas à les reconnaître : l'aperçu d'une archive s'appelle
+#: « ..._maj1.8.4 (3).zip », et se trouve sous AppData\\Local\\Temp.
+PROVISOIRES = ("/appdata/local/temp/", "/appdata/locallow/temp/",
+               "/windows/temp/", "/local settings/temp/",
+               "/var/folders/", "/tmp/", "/private/tmp/")
+ARCHIVES = (".zip", ".rar", ".7z", ".cab", ".tar", ".gz")
+
+
+def de_passage(ici: Path) -> bool:
+    """Un endroit où l'on ne laisse pas une comptabilité.
+
+    Windows ouvre un .zip comme un dossier sans l'extraire : on y installe,
+    on y saisit, et il l'efface. Le cas s'est produit ; il se reconnaît au
+    chemin, pas au nom du dossier.
+    """
+    if ici.name.lower() in DE_PASSAGE:
+        return True
+    chemin = str(ici).replace("\\\\", "/").lower() + "/"
+    if any(marque in chemin for marque in PROVISOIRES):
+        return True
+    return any(part.endswith(ARCHIVES) for part in chemin.split("/") if part)
+
 
 def dossier_installation(ici: Path) -> Path:
     """Où poser l'application. À côté du fichier, sauf dossier de passage."""
-    if (ici / NOM_DOSSIER / "app.py").exists():
-        return ici / NOM_DOSSIER          # déjà installé ici : on n'en bouge pas
-    if ici.name.lower() not in DE_PASSAGE:
+    if not de_passage(ici):
+        if (ici / NOM_DOSSIER / "app.py").exists():
+            return ici / NOM_DOSSIER      # déjà installé ici : on n'en bouge pas
         return ici / NOM_DOSSIER
     for nom in ("Documents", "Mes documents"):
         documents = Path.home() / nom
@@ -227,9 +257,14 @@ def principal():
     print()
 
     if sys.version_info < (3, 9):
-        print("  Python " + ".".join(map(str, sys.version_info[:3])) +
-              " est trop ancien (3.9 minimum).")
-        print("  Installez une version récente : https://www.python.org/downloads/")
+        print("  Le moteur Python de ce poste est trop ancien : " +
+              ".".join(map(str, sys.version_info[:3])) + " (3.9 minimum).")
+        print()
+        print("  Vous n'avez rien à installer vous-même. Utilisez plutôt")
+        print("  le fichier « cabinet-immo-" + VERSION + ".zip » :")
+        print("    1. clic droit dessus, « Extraire tout… », dans Documents ;")
+        print("    2. ouvrez le dossier extrait, double-cliquez INSTALLER.bat.")
+        print("  Il dépose son propre moteur, sans rien changer au système.")
         input("\\n  Appuyez sur Entrée pour fermer…")
         return 1
 

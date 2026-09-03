@@ -66,10 +66,9 @@ function Installe-PythonEmbarque {
     } catch {
         Echec "Telechargement impossible : $($_.Exception.Message)"
         Write-Host ""
-        Write-Host "  Deux solutions :" -ForegroundColor Yellow
-        Write-Host "   - verifiez la connexion Internet puis relancez ce fichier ;"
-        Write-Host "   - ou installez Python depuis https://www.python.org/downloads/"
-        Write-Host "     en cochant « Add Python to PATH », puis relancez."
+        Write-Host "  Le moteur se telecharge une seule fois, et il faut" -ForegroundColor Yellow
+        Write-Host "  Internet pour cela. Connectez le poste, puis relancez"
+        Write-Host "  INSTALLER.bat : rien n'est perdu, il reprendra ici."
         throw
     }
 

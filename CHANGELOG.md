@@ -20,6 +20,21 @@ et après une mise à jour.
   disparaît. Ce cas est maintenant reconnu et annoncé **dès l'accueil, avant
   même la connexion**, avec le geste à faire : extraire l'archive dans
   *Documents*, puis relancer depuis le dossier extrait.
+- **L'installation refuse de se faire depuis la fenêtre du `.zip`.** C'est
+  par là que la comptabilité a atterri dans `Temp` : ouvrir une archive d'un
+  double-clic n'extrait rien, Windows en montre le contenu dans un dossier
+  provisoire, et `INSTALLER.bat` s'y installait sans broncher. Les deux
+  lanceurs Windows s'arrêtent maintenant dans ce cas, en rappelant le geste :
+  clic droit, « Extraire tout… », Documents. L'installateur en un seul
+  fichier, lui, pose l'application dans *Documents* au lieu du dossier
+  provisoire — il ne reconnaissait jusqu'ici que les dossiers nommés
+  « Temp », or celui d'un aperçu s'appelle « …maj1.8.4 (3).zip ».
+- **Plus personne n'est renvoyé vers python.org.** Sur un ordinateur neuf,
+  qui n'a aucun moteur Python, quatre messages disaient encore d'aller en
+  installer un. C'est `INSTALLER.bat` qui s'en charge, sans droit
+  administrateur et sans rien changer au système : les messages le disent
+  désormais. `LANCER.bat` utilise ce moteur, et lance l'installation si
+  l'application n'a jamais été installée.
 - Le contrôle d'emplacement, jusqu'ici limité aux dossiers synchronisés
   (OneDrive, Google Drive, Dropbox…), couvre aussi les **dossiers
   temporaires** et les **aperçus d'archive**. Il apparaît dans *Santé du

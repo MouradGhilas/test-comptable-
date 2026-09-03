@@ -69,10 +69,10 @@ def verifie_python() -> bool:
     if sys.version_info < (3, 9):
         echec(f"Python {sys.version.split()[0]} est trop ancien (3.9 minimum).")
         print()
-        print("  Installez une version récente depuis :")
-        print("    https://www.python.org/downloads/")
-        print("  Cochez « Add Python to PATH » pendant l'installation,")
-        print("  puis relancez ce fichier.")
+        print("  Vous n'avez rien à installer vous-même : sous Windows,")
+        print("  INSTALLER.bat dépose son propre moteur (11 Mo) dans le")
+        print("  dossier de l'application. Fermez cette fenêtre et")
+        print("  double-cliquez INSTALLER.bat.")
         return False
     try:
         import sqlite3                                        # noqa: F401

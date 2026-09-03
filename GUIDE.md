@@ -17,25 +17,33 @@ Vous avez reçu **soit** un dossier `.zip`, **soit** un seul fichier
 2. Il indique où il va s'installer (vos `Documents`) — Entrée pour accepter.
 3. Répondez aux deux questions, Entrée à chaque fois.
 
-> **Si le double-clic n'ouvre rien**, Python n'est pas installé sur ce PC.
-> Installez-le une seule fois depuis <https://www.python.org/downloads/> en
-> cochant **« Add Python to PATH »**, puis double-cliquez à nouveau.
+> **Si le double-clic n'ouvre rien**, ce PC n'a pas encore de moteur Python —
+> c'est le cas d'un ordinateur neuf. **N'installez rien vous-même** :
+> demandez le fichier `cabinet-immo-….zip` et suivez le **B** ci-dessous,
+> qui dépose son propre moteur.
 
 ### B. Vous avez reçu l'archive `cabinet-immo-….zip`
 
-1. Clic droit → **Extraire tout**, dans `Documents`.
-2. Ouvrez le dossier extrait, double-cliquez sur **`INSTALLER.bat`**.
+1. **Clic droit sur le `.zip` → « Extraire tout… »**, dans `Documents`.
+2. Ouvrez **le dossier extrait**, double-cliquez sur **`INSTALLER.bat`**.
 3. Répondez aux deux questions (Entrée pour accepter) :
    - *Démarrer automatiquement à chaque ouverture de session ?* → **Oui**
    - *Ouvrir l'application maintenant ?* → **Oui**
 
+> ⚠️ **N'ouvrez pas le `.zip` d'un double-clic pour installer depuis la
+> fenêtre qui s'affiche.** Windows y montre le contenu de l'archive comme un
+> dossier, mais il ne l'a **pas extrait** : ce dossier est provisoire, rangé
+> dans `AppData\Local\Temp`, et Windows l'efface. Une comptabilité tenue là
+> disparaît sans avertissement. C'est arrivé. Depuis, `INSTALLER.bat` s'arrête
+> de lui-même dans ce cas et vous rappelle d'extraire d'abord.
+>
 > Ici, **si Python n'est pas installé**, l'installateur le télécharge tout seul
 > (11 Mo) et le range dans le dossier de l'application. Rien n'est installé
 > dans Windows, aucun mot de passe administrateur n'est demandé.
 >
-> **Si le téléchargement échoue** (pas d'Internet au moment de l'installation) :
-> installez Python depuis <https://www.python.org/downloads/> en cochant
-> **« Add Python to PATH »**, puis relancez `INSTALLER.bat`.
+> **Si le téléchargement échoue**, c'est qu'il n'y avait pas d'Internet à ce
+> moment-là. Connectez le poste et relancez `INSTALLER.bat` : il reprend là
+> où il s'était arrêté. Vous n'avez rien à installer par vous-même.
 
 Dans les deux cas c'est fini : un raccourci **Cabinet Immo** est apparu sur le
 Bureau.
