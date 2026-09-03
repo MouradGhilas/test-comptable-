@@ -353,6 +353,23 @@ def executer():
             _sp.run(["sh", str(essai)], capture_output=True,
                     text=True).stdout.strip() == "depuis python")
 
+    # Il a travaillé depuis l'aperçu d'un zip, dans AppData\Local\Temp :
+    # un dossier que Windows efface. Rien ne le lui disait. L'avertissement
+    # doit passer par /api/etat, qui est public — c'est sur l'écran
+    # d'installation, avant tout compte, que la première saisie commence.
+    # Le dossier de ces essais est lui-même temporaire : il déclenche donc.
+    etat = appel("/api/etat")[0]
+    risque = etat.get("emplacement_risque") or {}
+    verifie("Un dossier de données temporaire est signalé dès l'accueil",
+            risque.get("cause") == "temporaire", etat.get("dossier_donnees"))
+    verifie("… avec de quoi agir, pas seulement de quoi s'inquiéter",
+            "Sauvegarde" in risque.get("detail", ""), risque.get("detail"))
+    demarrage_js = (RACINE / "web" / "demarrage.js").read_text(encoding="utf-8")
+    avant_auth = demarrage_js.index("signaleEmplacementRisque(etat)") \
+        < demarrage_js.index("if (!etat.installe)")
+    verifie("… et l'interface le montre avant l'écran de connexion",
+            "function signaleEmplacementRisque(" in noyau_js and avant_auth)
+
 
 if __name__ == "__main__":
     print("\n\033[1m═══ TEST HTTP — CABINET IMMO ═══\033[0m")

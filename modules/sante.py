@@ -290,6 +290,24 @@ def _sauvegarde(societe_id, ex, anomalies):
         route_ecran="/parametres/sauvegarde"))
 
 
+def _emplacement(societe_id, ex, anomalies):
+    """Où vit la comptabilité — la panne qui n'a besoin d'aucun bogue.
+
+    Un dossier temporaire, ou l'aperçu d'un zip, emporte tout sans prévenir.
+    Le contrôle ne dépend ni de la société ni de l'exercice : il regarde le
+    disque, et c'est justement pour cela qu'il a sa place ici.
+    """
+    from modules import systeme
+    risque = systeme.emplacement_risque()
+    if not risque:
+        return
+    anomalies.append(_anomalie(
+        "emplacement",
+        "alerte" if risque["cause"] == "synchronisation" else "critique",
+        risque["titre"], risque["detail"],
+        route_ecran="/parametres/sauvegarde"))
+
+
 #: Ordre d'exécution : du plus grave au plus anodin.
 #: Les fiches qu'un import peut créer d'une simple mention, et le nom qu'on
 #: leur donne à l'écran. Voir `noyau.base.TABLES_A_COMPLETER`.
@@ -408,10 +426,10 @@ def _bulletins_a_refaire(societe_id, ex, anomalies):
         route_ecran="/paie/bulletins"))
 
 
-CONTROLES = [_equilibre, _numerotation, _caisse, _factures_sans_ecriture,
-             _tiers_inverses, _tva_declaree, _brouillons, _justificatifs,
-             _lettrage, _fiches_a_completer, _primes_invraisemblables,
-             _bulletins_a_refaire, _sauvegarde]
+CONTROLES = [_emplacement, _equilibre, _numerotation, _caisse,
+             _factures_sans_ecriture, _tiers_inverses, _tva_declaree,
+             _brouillons, _justificatifs, _lettrage, _fiches_a_completer,
+             _primes_invraisemblables, _bulletins_a_refaire, _sauvegarde]
 
 POIDS = {"critique": 0, "alerte": 1, "info": 2}
 

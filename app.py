@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import socket
 import sys
+import textwrap
 import threading
 import webbrowser
 from pathlib import Path
@@ -186,6 +187,15 @@ def principal():
     print("╠" + "═" * largeur + "╣")
     print("║" + f"  Adresse   : {adresse}".ljust(largeur) + "║")
     print("║" + f"  Données   : {config.dossier_donnees}".ljust(largeur) + "║")
+    # Un dossier de données que le système peut effacer ne se voit pas depuis
+    # le navigateur avant qu'il soit trop tard : on le dit ici, dès l'ouverture.
+    from modules.systeme import emplacement_risque
+    risque = emplacement_risque()
+    if risque:
+        print("╠" + "═" * largeur + "╣")
+        print("║" + f"  ATTENTION — {risque['titre']}".ljust(largeur) + "║")
+        for ligne in textwrap.wrap(risque["detail"], largeur - 4):
+            print("║" + f"  {ligne}".ljust(largeur) + "║")
     if not installe:
         print("║" + "  ".ljust(largeur) + "║")
         print("║" + "  Première utilisation : créez votre compte dans le".ljust(largeur) + "║")

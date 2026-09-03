@@ -223,6 +223,9 @@ async function chargeSocietes() {
 async function demarre() {
   const etat = await api('/api/etat');
   App.etat.version = etat.version;
+  // Avant tout le reste : si le dossier de données est promis à l'effacement,
+  // il faut le dire tout de suite, y compris sur l'écran d'installation.
+  signaleEmplacementRisque(etat);
 
   if (!etat.installe) { afficheAuth(false); return; }
   if (!etat.connecte) { afficheAuth(true); return; }

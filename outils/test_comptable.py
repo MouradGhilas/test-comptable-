@@ -36,6 +36,7 @@ import base64
 import datetime
 import http.cookiejar
 import json
+import os
 import shutil
 import socket
 import sqlite3
@@ -2956,6 +2957,28 @@ S0100;CHERIF;Sofiane;Agent;40000;3000
           trouve and "brouillon" in trouve[0]["explication"], trouve)
 
 
+_SONDE_EMPLACEMENT = """
+import json, sys
+from noyau import config as c
+c.config = c.Configuration({"dossier_donnees": sys.argv[1]})
+from modules import systeme
+print(json.dumps(systeme.emplacement_risque()))
+"""
+
+
+def emplacement(chemin):
+    """Ce que l'application penserait d'un dossier de donnees situe la.
+
+    Interroge dans un processus neuf : le chemin teste est celui d'un autre
+    poste, souvent d'un autre systeme, et n'existe pas ici.
+    """
+    r = subprocess.run([sys.executable, "-c", _SONDE_EMPLACEMENT, chemin],
+                       cwd=RACINE, capture_output=True, text=True)
+    if r.returncode != 0:
+        return {"erreur": r.stderr.strip()[-200:]}
+    return json.loads(r.stdout)
+
+
 def suite_transfert(dos):
     """Reprendre son dossier sur un second poste.
 
@@ -3099,6 +3122,74 @@ def suite_transfert(dos):
     v("… et l'application repond toujours",
       bool(dos.appel("/api/etat").get("version")))
     v("… la comptabilite reste equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("7. Ce qui rendait la reprise impossible sous Windows")
+    # ==================================================================
+    # « Reprise impossible -- [WinError 32] le processus ne peut pas acceder
+    # au fichier ... comptabilite.db-wal ». La restauration effacait la base
+    # et son journal avant d'ecrire la nouvelle ; sous Windows un fichier
+    # ouvert ne s'efface pas. Sous Linux si -- d'ou des essais toujours verts.
+    # Le remplacement passe desormais par SQLite : la base garde son fichier,
+    # seul son contenu change. C'est ce que verifie l'inode.
+    base_disque = dos.dossier / "comptabilite.db"
+    inode = base_disque.stat().st_ino
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "OD", "date": f"{annee}-03-17",
+        "libelle": "A effacer par la restauration", "valider": True,
+        "lignes": [{"compte": "607", "debit": "700", "credit": "0"},
+                   {"compte": "401", "debit": "0", "credit": "700"}]})
+    # Un fichier tenu ouvert : c'est exactement ce qui bloquait l'effacement.
+    verrou = open(base_disque, "rb")
+    try:
+        dos.appel("/api/sauvegardes/restaurer",
+                  {"nom": sauvegarde["nom"], "confirmation": "RESTAURER"})
+    finally:
+        verrou.close()
+    v("la restauration aboutit alors que la base est tenue ouverte",
+      dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == 1,
+      dos.sql("SELECT libelle FROM ecritures"))
+    v("… sans avoir efface le fichier de base",
+      base_disque.stat().st_ino == inode)
+    v("… ni laisse trainer une base de travail",
+      not (dos.dossier / "comptabilite.db.recue").exists())
+    v("… et l'application repond encore",
+      bool(dos.appel("/api/etat").get("version")))
+
+    # ==================================================================
+    titre("8. Un dossier de donnees que le systeme peut effacer")
+    # ==================================================================
+    # Sur sa capture, le chemin etait
+    # C:\...\AppData\Local\Temp\...maj1.8.4 (3).zip\cabinet-immo\donnees :
+    # l'application tournait depuis l'apercu du zip. Tout ce qu'il saisissait
+    # la etait promis a l'effacement, sans que rien ne le lui dise.
+    zip_windows = ("C:\\Users\\USER\\AppData\\Local\\Temp\\"
+                   "f0dbefc0_maj1.8.4 (3).zip\\cabinet-immo\\donnees")
+    v("l'apercu d'un zip est reconnu",
+      (emplacement(zip_windows) or {}).get("cause") == "archive",
+      emplacement(zip_windows))
+    v("… et le message dit quoi faire",
+      "Extraire" in (emplacement(zip_windows) or {}).get("detail", ""),
+      emplacement(zip_windows))
+    temp_windows = "C:\\Users\\USER\\AppData\\Local\\Temp\\cabinet-immo"
+    v("un dossier temporaire est reconnu aussi",
+      (emplacement(temp_windows) or {}).get("cause") == "temporaire",
+      emplacement(temp_windows))
+    v("un dossier synchronise reste signale",
+      (emplacement("C:\\Users\\USER\\OneDrive\\Documents\\cabinet-immo")
+       or {}).get("service") == "OneDrive")
+    v("un dossier ordinaire ne declenche rien",
+      emplacement("C:\\Users\\USER\\Documents\\cabinet-immo") is None,
+      emplacement("C:\\Users\\USER\\Documents\\cabinet-immo"))
+    # La restauration a remis les comptes d'origine : il faut se reconnecter.
+    dos.appel("/api/connexion",
+              {"identifiant": "yacine", "mot_de_passe": "monmotdepasse"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    exid = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]["id"]
+    sante = dos.appel(f"/api/sante?societe={sid}&exercice={exid}")
+    v("l'ecran Sante porte l'avertissement",
+      any(a["cle"] == "emplacement" for a in sante["anomalies"]),
+      [a["cle"] for a in sante["anomalies"]])
 
 
 SUITES = [

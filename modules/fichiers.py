@@ -21,7 +21,8 @@ from pathlib import Path
 
 from noyau import base as db
 from noyau import util
-from noyau.config import config, APPLICATION, VERSION, RACINE as RACINE_APPLICATION
+from noyau.config import (config, journalise, APPLICATION, VERSION,
+                         RACINE as RACINE_APPLICATION)
 from noyau.serveur import ErreurApplicative, route, Reponse
 
 EXTENSIONS_AUTORISEES = {
@@ -297,6 +298,71 @@ def api_restaure(ctx):
             "message": "Restauration terminée. Reconnectez-vous pour recharger les données."}
 
 
+def _efface_base(fichier: Path) -> None:
+    """Retire un fichier de base et les deux journaux qui l'accompagnent."""
+    for suffixe in ("-wal", "-shm", ""):
+        try:
+            Path(str(fichier) + suffixe).unlink(missing_ok=True)
+        except OSError:
+            # Un fichier de travail qui résiste n'empêche rien : il sera
+            # écrasé au passage suivant.
+            pass
+
+
+def _verse_la_base(recue: Path) -> None:
+    """Verse la base reçue dans celle du poste, par SQLite et non par le disque.
+
+    Le remplacement se faisait en effaçant le fichier de base et son journal
+    WAL avant d'écrire le nouveau. Sous Windows, un fichier ouvert ne s'efface
+    pas : la reprise s'arrêtait sur « [WinError 32] — le processus ne peut pas
+    accéder au fichier … comptabilite.db-wal ». Sous Linux l'effacement passe,
+    ce qui explique que les essais ne l'aient jamais montré.
+
+    `Connection.backup()` écrit le contenu *dans* la base déjà ouverte : plus
+    de fichier à retirer, donc plus de verrou à contourner. C'est aussi tout ou
+    rien — en cas d'échec en cours de copie, le poste garde sa base d'avant.
+    """
+    # Une connexion oubliée par un fil qui vient de finir garderait la base
+    # sous verrou pendant la copie.
+    db.ferme()
+    gc.collect()
+
+    source = sqlite3.connect(str(recue))
+    try:
+        try:
+            source.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        except sqlite3.DatabaseError as err:
+            raise ErreurApplicative(
+                "La comptabilité contenue dans cette sauvegarde est illisible "
+                f"({err}). Reprenez une sauvegarde plus ancienne, ou refaites-en "
+                "une depuis le poste d'origine.") from err
+        try:
+            source.backup(db.connexion())
+            return
+        except sqlite3.Error as err:
+            # Base du poste absente, tronquée, ou taille de page différente :
+            # on repose alors le fichier à la main, comme avant.
+            journalise("restauration",
+                       f"Remplacement par SQLite impossible ({err}) : "
+                       "reprise par le fichier.")
+            db.ferme()
+            gc.collect()
+    finally:
+        source.close()
+
+    base = Path(config.base_de_donnees)
+    try:
+        _efface_base(base)
+        shutil.copyfile(recue, base)
+    except OSError as err:
+        raise ErreurApplicative(
+            "La base du poste n'a pas pu être remplacée : elle est utilisée "
+            f"par un autre programme ({err}). Fermez les autres fenêtres de "
+            + APPLICATION + ", ainsi qu'un éventuel antivirus ou explorateur "
+            "de fichiers ouvert sur le dossier « donnees », puis "
+            "recommencez.") from err
+
+
 def _pose_la_base(octets: bytes) -> dict:
     """Écrit la base et les pièces d'une archive de sauvegarde.
 
@@ -325,24 +391,18 @@ def _pose_la_base(octets: bytes) -> dict:
             manifeste = {}
 
     config.prepare_dossiers()
-    db.ferme()
-    # Une connexion oubliée par un fil qui vient de finir garderait le
-    # fichier — et son journal WAL — sous les pieds de celui qu'on pose.
-    gc.collect()
 
-    # L'ordre compte, et c'est ce qui manquait : le journal WAL de l'ancienne
-    # base est retiré **avant** que la nouvelle ne prenne sa place. Écrire
-    # par-dessus en laissant traîner un WAL qui décrit une autre base donnait
-    # « disk I/O error » à la réouverture — la restauration d'une sauvegarde
-    # n'a jamais abouti depuis l'écran.
-    base = Path(config.base_de_donnees)
-    for suffixe in ("-wal", "-shm"):
-        Path(str(base) + suffixe).unlink(missing_ok=True)
-    # Effacer plutôt qu'écraser : un descripteur encore ouvert sur l'ancien
-    # fichier ne suit pas le nouveau, qui repart sur une entrée neuve.
-    base.unlink(missing_ok=True)
-    with archive.open("comptabilite.db") as source, open(base, "wb") as destination:
+    # La base reçue est d'abord déposée à côté, sous un nom de travail : on
+    # veut l'avoir lue et vérifiée avant de toucher à celle du poste.
+    travail = Path(str(config.base_de_donnees) + ".recue")
+    _efface_base(travail)
+    with archive.open("comptabilite.db") as source, open(travail, "wb") as destination:
         shutil.copyfileobj(source, destination)
+    try:
+        _verse_la_base(travail)
+    finally:
+        _efface_base(travail)
+
     for interne in noms:
         if interne.startswith("pieces_justificatives/") and not interne.endswith("/"):
             cible = config.dossier_donnees / interne
@@ -386,7 +446,7 @@ def api_installe_depuis_sauvegarde(ctx):
         # La base posée ne s'ouvre pas : on la retire, sans quoi le poste
         # resterait avec un dossier qu'il ne sait pas lire.
         db.ferme()
-        Path(config.base_de_donnees).unlink(missing_ok=True)
+        _efface_base(Path(config.base_de_donnees))
         raise ErreurApplicative(
             "Cette sauvegarde n'a pas pu être ouverte sur ce poste. "
             f"Détail : {err}. Si elle vient d'une version plus récente, "

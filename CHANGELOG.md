@@ -3,6 +3,28 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.8.7
+
+- **La reprise d'une sauvegarde ne s'arrête plus sur « [WinError 32] ».**
+  Sous Windows, remettre une sauvegarde en place échouait avec *« le
+  processus ne peut pas accéder au fichier … comptabilite.db-wal »*.
+  L'opération effaçait la base et son journal avant d'écrire la nouvelle ;
+  or Windows refuse d'effacer un fichier ouvert. Le remplacement passe
+  désormais **par SQLite** : le fichier reste en place, seul son contenu
+  change. Plus rien à effacer, donc plus rien à débloquer — et si la copie
+  échoue en route, le poste garde sa base d'avant.
+- **L'application dit quand vos données sont dans un dossier que Windows va
+  effacer.** Ouvrir un `.zip` d'un double-clic n'extrait rien : Windows en
+  montre le contenu dans un dossier provisoire, situé dans
+  `AppData\Local\Temp`. L'application s'y lance et fonctionne — puis tout
+  disparaît. Ce cas est maintenant reconnu et annoncé **dès l'accueil, avant
+  même la connexion**, avec le geste à faire : extraire l'archive dans
+  *Documents*, puis relancer depuis le dossier extrait.
+- Le contrôle d'emplacement, jusqu'ici limité aux dossiers synchronisés
+  (OneDrive, Google Drive, Dropbox…), couvre aussi les **dossiers
+  temporaires** et les **aperçus d'archive**. Il apparaît dans *Santé du
+  dossier*, dans les premiers pas, et dans la fenêtre de démarrage.
+
 ## 1.8.6
 
 - **Sur Mac, plus rien à installer.** La version précédente demandait

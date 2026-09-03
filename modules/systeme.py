@@ -62,6 +62,12 @@ def api_etat(ctx):
     if sur_disque and sur_disque != VERSION:
         reponse["redemarrage_requis"] = True
         reponse["version_disque"] = sur_disque
+    # Un dossier de données que le système peut effacer doit se voir avant la
+    # connexion : c'est souvent là, sur l'écran d'installation, que la
+    # première saisie commence — et qu'elle est perdue.
+    risque = emplacement_risque()
+    if risque and risque["cause"] != "synchronisation":
+        reponse["emplacement_risque"] = risque
     return _termine_etat(reponse, utilisateur, nb_utilisateurs, ctx)
 
 
@@ -138,14 +144,71 @@ SERVICES_SYNCHRONISES = {
 }
 
 
+#: Extensions d'archives. Un dossier de données situé *dans* un fichier de ce
+#: type signifie que l'application tourne depuis l'aperçu d'un zip.
+ARCHIVES = (".zip", ".rar", ".7z", ".tar", ".gz", ".cab")
+
+#: Emplacements que le système efface de lui-même, tôt ou tard.
+DOSSIERS_TEMPORAIRES = (
+    "/appdata/local/temp/", "/appdata/locallow/temp/", "/windows/temp/",
+    "/local settings/temp/", "/var/folders/", "/tmp/", "/private/tmp/",
+)
+
+
 def emplacement_risque() -> dict | None:
-    """Le dossier de données est-il dans un espace synchronisé ?"""
-    chemin = str(config.dossier_donnees).replace("\\", "/").lower()
-    compact = chemin.replace(" ", "").replace("/", "")
+    """Le dossier de données tient-il debout, ou le système peut-il l'emporter ?
+
+    Trois façons de perdre une comptabilité sans qu'aucun bogue n'y soit pour
+    quelque chose, de la plus brutale à la plus sournoise : travailler dans
+    l'aperçu d'un zip, travailler dans un dossier temporaire, travailler dans
+    un dossier synchronisé. Les deux premières effacent tout sans prévenir ;
+    la troisième abîme la base à petit feu.
+    """
+    chemin = str(config.dossier_donnees).replace("\\", "/")
+    minuscule = chemin.lower()
+    segments = [s for s in minuscule.split("/") if s]
+
+    # Windows ouvre un zip comme un dossier : on y voit l'application, on la
+    # lance, elle fonctionne — et le dossier disparaît à la fermeture. Un
+    # segment de chemin qui porte encore l'extension de l'archive le trahit.
+    if any(s.endswith(ARCHIVES) for s in segments):
+        return {
+            "cause": "archive", "service": None,
+            "titre": "Vos données sont à l'intérieur d'un fichier compressé",
+            "detail": (
+                "L'application a été lancée depuis l'aperçu d'une archive "
+                f"(« {chemin} »). Windows y ouvre un dossier provisoire qu'il "
+                "efface ensuite : tout ce qui est saisi ici sera perdu. "
+                "Fermez l'application, extrayez l'archive dans vos Documents "
+                "— clic droit, « Extraire tout » — puis relancez depuis le "
+                "dossier extrait."),
+        }
+
+    balise = minuscule if minuscule.endswith("/") else minuscule + "/"
+    if any(marque in balise for marque in DOSSIERS_TEMPORAIRES):
+        return {
+            "cause": "temporaire", "service": None,
+            "titre": "Vos données sont dans un dossier temporaire",
+            "detail": (
+                f"Votre comptabilité est dans « {chemin} », un emplacement que "
+                "le système vide de lui-même. Elle disparaîtra sans "
+                "avertissement. Faites une sauvegarde tout de suite "
+                "(Paramètres → Sauvegarde & données), installez l'application "
+                "dans vos Documents, puis reprenez la sauvegarde là-bas."),
+        }
+
+    compact = minuscule.replace(" ", "").replace("/", "")
     for service, nom in SERVICES_SYNCHRONISES.items():
-        if (f"/{service}/" in chemin or chemin.endswith(f"/{service}")
+        if (f"/{service}/" in minuscule or minuscule.endswith(f"/{service}")
                 or service.replace(" ", "") in compact):
-            return {"service": nom}
+            return {
+                "cause": "synchronisation", "service": nom,
+                "titre": f"Vos données sont dans un dossier synchronisé par {nom}",
+                "detail": (
+                    f"C'est risqué : {nom} recopie la base pendant que "
+                    "l'application écrit dedans, ce qui peut l'abîmer. "
+                    "Déplacez le dossier de données hors de cet espace."),
+            }
     return None
 
 
@@ -182,12 +245,9 @@ def api_premiers_pas(ctx):
                    "pour découvrir sans rien risquer.",
          "fait": nb_ecritures > 0 or nb_tiers > 0,
          "lien": "#/parametres/import"},
-        {"cle": "emplacement", "titre": "Vérifier où sont vos données",
-         "detail": (f"Votre comptabilité est dans un dossier synchronisé par "
-                    f"{risque['service']}. C'est risqué : le service recopie "
-                    "la base pendant que l'application écrit dedans, ce qui "
-                    "peut l'abîmer. Déplacez-la hors de ce dossier."
-                    if risque else
+        {"cle": "emplacement",
+         "titre": risque["titre"] if risque else "Vérifier où sont vos données",
+         "detail": (risque["detail"] if risque else
                     "Votre comptabilité est dans un dossier local, hors de "
                     "tout service de synchronisation. C'est ce qu'il faut."),
          "fait": risque is None, "alerte": risque is not None,

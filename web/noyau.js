@@ -930,6 +930,30 @@ function signaleRedemarrageRequis(etat) {
   };
 }
 
+/* --------------------------------------- Où sont vraiment les données ----
+
+   Windows ouvre une archive comme un dossier : on y voit l'application, on
+   la lance, elle fonctionne — et le dossier provisoire est effacé ensuite.
+   C'est arrivé : un poste a travaillé depuis l'aperçu d'un zip, dans
+   AppData\Local\Temp. Rien à l'écran ne le disait. Le bandeau le dit, et
+   il ne se ferme pas : ce n'est pas un conseil, c'est la perte du dossier. */
+
+function signaleEmplacementRisque(etat) {
+  const risque = etat && etat.emplacement_risque;
+  if (!risque) return;
+  if ($('#bandeau-emplacement')) return;
+  const barre = document.createElement('div');
+  barre.id = 'bandeau-emplacement';
+  barre.className = 'bandeau-redemarrage';
+  barre.innerHTML = `
+    <span style="font-size:20px">⚠️</span>
+    <div>
+      <strong>${ech(risque.titre)}</strong>
+      ${ech(risque.detail)}
+    </div>`;
+  document.body.appendChild(barre);
+}
+
 /* ------------------------------------------------- Recherche globale ----
 
    Un comptable ne se souvient pas de l'écran où se trouve ce qu'il cherche :
