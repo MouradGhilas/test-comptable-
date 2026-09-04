@@ -141,7 +141,7 @@ SCHEMA = Path(__file__).parent / "schema.sql"
 
 #: Version du schéma attendue par cette version du programme.
 #: À incrémenter dès qu'une migration est ajoutée ci-dessous.
-VERSION_SCHEMA = 10
+VERSION_SCHEMA = 11
 
 
 def colonnes(table: str) -> set[str]:
@@ -385,6 +385,25 @@ def _migration_10() -> None:
     ajoute_colonne("reglements", "operation_ref", "TEXT")
 
 
+def _migration_11() -> None:
+    """La part non déclarée est une créance, pas une somme déjà en caisse.
+
+    Elle était portée directement au compte de caisse à la validation de la
+    facture : elle se trouvait donc réputée encaissée d'avance, et rien ne
+    permettait de dire si le client l'avait réglée ou non. Elle passe
+    désormais par le compte du client, hors déclaration, et se solde par des
+    règlements comme n'importe quelle créance.
+    """
+    ajoute_colonne("factures", "montant_hors_regle",
+                   "INTEGER NOT NULL DEFAULT 0")
+    # Les factures déjà saisies sous l'ancienne règle avaient bien leur part
+    # non déclarée en caisse : elle est donc soldée, et doit le rester.
+    execute("UPDATE factures SET montant_hors_regle = montant_hors "
+            "WHERE montant_hors > 0 AND ecriture_hors_id IS NOT NULL")
+    # Un règlement dit maintenant laquelle des deux parts il solde.
+    ajoute_colonne("reglements", "part", "TEXT")
+
+
 #: version -> fonction de migration. Exécutées dans l'ordre croissant.
 MIGRATIONS = {
     2: _migration_2,
@@ -396,6 +415,7 @@ MIGRATIONS = {
     8: _migration_8,
     9: _migration_9,
     10: _migration_10,
+    11: _migration_11,
 }
 
 

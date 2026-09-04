@@ -1014,10 +1014,14 @@ async function ficheFacture(zone, id) {
         f.net_a_payer - f.montant_regle > 0 ? 'danger' : 'succes')}
     </div>
     ${f.montant_hors ? `<div class="grille c3" style="margin-bottom:16px">
-      ${indicateur('Facturé (déclaré)', fm(f.net_a_payer, true), 'entre dans la G 50')}
+      ${indicateur('Facturé (déclaré)', fm(f.net_a_payer, true),
+        `réglé ${fm(f.montant_regle)} — reste ${fm(f.reste_declare)}`)}
       ${indicateur('Non déclaré', fm(f.montant_hors, true),
-        `${ech(f.compte_hors || '')}${f.tresorerie_hors ? ' — ' + ech(f.tresorerie_hors) : ''}`, 'attention')}
-      ${indicateur('Prix réel', fm(f.prix_reel, true), 'déclaré + non déclaré', 'accent')}
+        `réglé ${fm(f.montant_hors_regle)} — reste ${fm(f.reste_hors)}`,
+        f.reste_hors > 0 ? 'attention' : 'succes')}
+      ${indicateur('Prix réel', fm(f.prix_reel, true),
+        f.reste_total > 0 ? `reste dû ${fm(f.reste_total)} en tout`
+          : 'intégralement réglé', 'accent')}
     </div>` : ''}
     ${carte('Lignes', tableau([
       { titre: 'Désignation', rendu: (l) => ech(l.designation) },
@@ -1030,6 +1034,9 @@ async function ficheFacture(zone, id) {
     ], f.lignes), '', true)}
     ${f.reglements.length ? carte('Règlements', tableau([
       { titre: 'Date', rendu: (r) => fdate(r.date) },
+      { titre: 'Part', masquerSiVide: true,
+        rendu: (r) => r.part === 'hors_declaration'
+          ? badgePerimetre('hors_declaration') : '' },
       { titre: 'Mode', cle: 'mode' },
       { titre: 'Compte', cle: 'compte_tresorerie' },
       { titre: 'Référence', cle: 'reference' },
@@ -1108,8 +1115,8 @@ async function editeFacture(id, sens = 'vente') {
         <strong>Part non déclarée</strong>
         Elle n'apparaît pas sur la facture remise au ${achat ? 'fournisseur' : 'client'} :
         une pièce qui la porte vous met en cause. Elle est enregistrée à part,
-        sans TVA ni droit de timbre, et le journal la montre à côté de la part
-        déclarée, comme une seule opération.
+        sans TVA ni droit de timbre, et suivie comme une créance : vous voyez
+        à tout moment ce qui en a été payé et ce qui reste dû.
       </p>
       <div class="ligne-champs">
         <label class="champ"><span>Montant</span>
@@ -1118,10 +1125,12 @@ async function editeFacture(id, sens = 'vente') {
           <select id="f-hors-compte">${comptes.map(([v, l]) =>
             `<option value="${ech(v)}">${ech(l)}</option>`).join('')}</select>
           <div class="aide">Par défaut, celui de la première ligne.</div></label>
-        <label class="champ"><span>Encaissée sur</span>
-          <select id="f-hors-tresorerie"><option value="">—</option>${tresoreries.map(([v, l]) =>
+        <label class="champ"><span>Déjà encaissée sur</span>
+          <select id="f-hors-tresorerie"><option value="">— pas encore réglée</option>${tresoreries.map(([v, l]) =>
             `<option value="${v}">${ech(l)}</option>`).join('')}</select>
-          <div class="aide">La caisse ou la banque qui reçoit cette part.</div></label>
+          <div class="aide">Laissez vide si le ${achat ? 'fournisseur' : 'client'}
+            n'a pas encore payé : la somme reste due, et se solde plus tard
+            depuis « Encaisser ».</div></label>
       </div>
       <div class="bandeau-equilibre">
         <span>Facturé (déclaré) <strong id="f-recap-declare">0,00</strong></span>
@@ -1304,7 +1313,8 @@ async function creeAvoir(id) {
 async function regleFacture(id) {
   const f = await api(`/api/factures/${id}`);
   const achat = f.sens.includes('achat');
-  const reste = f.net_a_payer - f.montant_regle;
+  const deuxParts = Boolean(f.montant_hors);
+  const reste = deuxParts ? f.reste_total : (f.net_a_payer - f.montant_regle);
   const tresoreries = await optionsTresorerie();
   const MODES = [['virement', 'Virement'], ['cheque', 'Chèque'],
                  ['espece', 'Espèces'], ['traite', 'Traite']];
@@ -1314,18 +1324,25 @@ async function regleFacture(id) {
     <div class="ligne-champs">
       <label class="champ"><span>Date *</span>
         <input type="date" id="r-date" value="${aujourdhui()}"></label>
-      <label class="champ"><span>Reste dû</span>
-        <input value="${fm(reste)}" disabled></label>
+      ${deuxParts ? `
+      <label class="champ"><span>Reste dû — déclaré</span>
+        <input value="${fm(f.reste_declare)}" disabled></label>
+      <label class="champ"><span>Reste dû — non déclaré</span>
+        <input value="${fm(f.reste_hors)}" disabled></label>`
+      : `<label class="champ"><span>Reste dû</span>
+        <input value="${fm(reste)}" disabled></label>`}
     </div>
     <p class="message info">
       Un même règlement peut arriver en plusieurs fois — un chèque et des
       espèces pour la même vente. Ajoutez une ligne par moyen de paiement :
-      chacun garde son compte et sa référence, et l'ensemble reste une seule
-      opération.
+      chacun garde son compte et sa référence${deuxParts
+        ? ', et dit laquelle des deux parts il solde' : ''},
+      et l'ensemble reste une seule opération.
     </p>
     <table class="saisie"><thead><tr>
-      <th style="width:20%">Mode</th><th style="width:30%">Compte</th>
-      <th style="width:22%">Référence</th><th style="width:22%" class="num">Montant</th><th></th>
+      ${deuxParts ? '<th style="width:18%">Part</th>' : ''}
+      <th style="width:16%">Mode</th><th style="width:26%">Compte</th>
+      <th style="width:20%">Référence</th><th style="width:20%" class="num">Montant</th><th></th>
     </tr></thead><tbody id="r-lignes"></tbody></table>
     <div class="rangee" style="margin-top:8px">
       <button class="petit-bouton" id="r-ajout">+ Moyen de paiement</button></div>
@@ -1336,9 +1353,13 @@ async function regleFacture(id) {
 
   const corps = $('#r-lignes', conteneur);
 
-  function ajouteLigne(montant = '') {
+  function ajouteLigne(montant = '', part = 'declare') {
     const tr = document.createElement('tr');
     tr.innerHTML = `
+      ${deuxParts ? `<td><select class="r-part">
+        <option value="declare" ${part === 'declare' ? 'selected' : ''}>Déclaré</option>
+        <option value="hors_declaration" ${part === 'hors_declaration' ? 'selected' : ''}>Non déclaré</option>
+      </select></td>` : ''}
       <td><select class="r-mode">${MODES.map(([v, l]) =>
         `<option value="${v}">${l}</option>`).join('')}</select></td>
       <td><select class="r-tresorerie">${tresoreries.map(([v, l]) =>
@@ -1363,6 +1384,7 @@ async function regleFacture(id) {
 
   function litLignes() {
     return $$('tr', corps).map((tr) => ({
+      part: deuxParts ? $('.r-part', tr).value : undefined,
       mode: $('.r-mode', tr).value,
       tresorerie_id: $('.r-tresorerie', tr).value,
       reference: $('.r-reference', tr).value,
@@ -1370,7 +1392,15 @@ async function regleFacture(id) {
     })).filter((l) => cts(l.montant) > 0);
   }
 
-  ajouteLigne(pourChamp(reste));
+  // Une vente à deux parts s'ouvre sur ses deux restes dus : c'est le cas
+  // ordinaire — le chèque solde l'une, les espèces l'autre.
+  if (deuxParts) {
+    if (f.reste_declare > 0) ajouteLigne(pourChamp(f.reste_declare), 'declare');
+    if (f.reste_hors > 0) ajouteLigne(pourChamp(f.reste_hors), 'hors_declaration');
+    if (!$$('tr', corps).length) ajouteLigne();
+  } else {
+    ajouteLigne(pourChamp(reste));
+  }
   $('#r-ajout', conteneur).onclick = () => ajouteLigne();
 
   modale({

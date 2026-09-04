@@ -126,10 +126,11 @@ def parcours(page) -> None:
       page.is_visible("#f-bloc-espece"))
     page.select_option("#f-mode", "")
 
-    tresoreries = page.eval_on_selector(
-        "#f-hors-tresorerie",
-        "el => Array.from(el.options).map(o => o.value).filter(Boolean)")
-    page.select_option("#f-hors-tresorerie", tresoreries[-1])
+    # « Pas encore réglée » est le choix par défaut : la part non déclarée
+    # naît due, et c'est justement ce qu'il faut pouvoir suivre.
+    v("la part non déclarée peut rester à recevoir",
+      page.input_value("#f-hors-tresorerie") == "",
+      page.input_value("#f-hors-tresorerie"))
     page.click("text=Enregistrer et valider")
     page.wait_for_timeout(2500)
     v("la facture est enregistrée et comptabilisée", "/factures/" in page.url,
@@ -139,6 +140,10 @@ def parcours(page) -> None:
       "Prix réel" in contenu and "Non déclaré" in contenu)
     v("… et les deux écritures y figurent, chacune avec son périmètre",
       contenu.count("Voir le détail") >= 2)
+    sans_espaces = "".join(c if not c.isspace() else " " for c in contenu)
+    v("… la fiche dit ce qui reste dû sur la part non déclarée",
+      "reste 77 770,00" in sans_espaces,
+      [m for m in sans_espaces.split("<") if "reste" in m][:2])
 
     # ======================================================================
     titre("2. Le client apporte un chèque et des espèces")
@@ -146,10 +151,15 @@ def parcours(page) -> None:
     page.click("text=Encaisser")
     page.wait_for_selector("#r-lignes", timeout=15000)
     v("l'encaissement s'ouvre à plusieurs lignes", page.is_visible("#r-ajout"))
-    page.click("#r-ajout")
-    page.wait_for_timeout(200)
-    v("une seconde ligne s'ajoute",
+    # Une vente à deux parts s'ouvre sur ses deux restes dus : une ligne pour
+    # chacune, déjà servie. C'est le cas ordinaire, pas une exception.
+    v("… une ligne par part, déjà servies",
       page.eval_on_selector_all("#r-lignes tr", "l => l.length") == 2)
+    v("la colonne « Part » existe sur une vente mixte",
+      page.query_selector("#r-lignes .r-part") is not None)
+    v("… et la seconde ligne vise bien le non déclaré",
+      page.input_value("#r-lignes tr:nth-child(2) .r-part") == "hors_declaration",
+      page.input_value("#r-lignes tr:nth-child(2) .r-part"))
 
     comptes = page.eval_on_selector_all(
         "#r-lignes .r-tresorerie",
@@ -157,19 +167,29 @@ def parcours(page) -> None:
     page.select_option("#r-lignes tr:nth-child(1) .r-mode", "cheque")
     page.select_option("#r-lignes tr:nth-child(1) .r-tresorerie", comptes[0])
     page.fill("#r-lignes tr:nth-child(1) .r-reference", "CH-114520")
-    page.fill("#r-lignes tr:nth-child(1) .r-montant", "80000")
     page.select_option("#r-lignes tr:nth-child(2) .r-mode", "espece")
     page.select_option("#r-lignes tr:nth-child(2) .r-tresorerie", comptes[-1])
-    page.fill("#r-lignes tr:nth-child(2) .r-montant", "39000")
     page.dispatch_event("#r-lignes tr:nth-child(2) .r-montant", "input")
     page.wait_for_timeout(300)
-    reste = page.inner_text("#r-apres").replace(" ", " ")
+    reste = "".join(c for c in page.inner_text("#r-apres") if not c.isspace())
     v("le reste dû tombe à zéro sous les yeux", reste == "0,00", reste)
     page.click("text=Enregistrer")
     page.wait_for_timeout(2000)
-    v("la facture est soldée par les deux moyens",
-      "Payee" in page.content() or "payée" in page.content().lower(),
+    v("la facture est soldée, les deux parts comprises",
+      "payée" in page.content().lower() or "payee" in page.content().lower(),
       page.content()[:120])
+
+    # ======================================================================
+    titre("2 bis. La situation du client dit s'il a payé le black")
+    # ======================================================================
+    page.goto(BASE + "/#/tiers", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    page.click("text=RAMDANI ELMEHDI")
+    page.wait_for_timeout(1200)
+    contenu = page.content()
+    v("la fiche du client porte une situation", "Situation" in contenu)
+    v("… avec la colonne « Non déclaré »", "Non déclaré" in contenu)
+    v("… et le total réel", "Total réel" in contenu)
 
     # ======================================================================
     titre("3. Une liste vide dit ce qui manque")

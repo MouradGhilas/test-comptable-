@@ -296,6 +296,22 @@ nav a .pastille { margin-left: auto; background: var(--danger); color: #fff;
    Un rectangle gris vide laisse chercher, et c'est ce qui s'est passe. */
 .aide.manquant { color: var(--alerte); font-weight: 600; }
 
+/* Les deux moities d'une vente, lues d'un coup d'oeil : ce qui est declare,
+   ce qui ne l'est pas, et le total reel. */
+.situation-tiers { display: flex; gap: 16px; flex-wrap: wrap; }
+.colonne-situation { flex: 1; min-width: 180px; padding: 10px 12px;
+                     border: 1px solid var(--bordure);
+                     border-radius: var(--rayon); }
+.colonne-situation .libelle { font-size: 11px; text-transform: uppercase;
+                              letter-spacing: .04em; color: var(--texte-doux);
+                              margin-bottom: 6px; }
+.colonne-situation table { width: 100%; }
+.colonne-situation td { padding: 2px 0; }
+.colonne-situation .total td { border-top: 1px solid var(--bordure);
+                               font-weight: 600; padding-top: 5px; }
+.colonne-situation.hors { border-left: 3px solid var(--alerte); }
+.colonne-situation.total { border-left: 3px solid var(--primaire); }
+
 /* ---------- Tableaux ---------- */
 /* `overflow-x: auto` fait de l'enveloppe un conteneur de défilement : un
    en-tête `position: sticky` s'y accroche, mais à un conteneur qui n'a

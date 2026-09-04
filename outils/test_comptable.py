@@ -3260,9 +3260,19 @@ def suite_vente_mixte(dos):
     lignes_hors = dos.sql(
         "SELECT compte, debit, credit FROM lignes WHERE ecriture_id = ? ORDER BY id",
         (f["ecriture_hors_id"],))
-    v("la part non declaree va du produit a la caisse annexe",
+    v("la part non declaree naît due, au compte du client",
       {(l["compte"], l["debit"], l["credit"]) for l in lignes_hors}
-      == {("5300005", 7777000, 0), ("7011", 0, 7777000)}, lignes_hors)
+      == {("411", 7777000, 0), ("7011", 0, 7777000)}, lignes_hors)
+    v("… et « deja encaissee » la solde dans la foulee",
+      f["montant_hors_regle"] == 7777000 and f["reste_hors"] == 0,
+      (f["montant_hors_regle"], f["reste_hors"]))
+    encaissement = dos.sql(
+        "SELECT r.montant, r.part, ct.compte FROM reglements r "
+        "JOIN comptes_tresorerie ct ON ct.id = r.tresorerie_id "
+        "WHERE r.facture_id = ? AND r.part = 'hors_declaration'", (fid,))
+    v("… par un reglement porte sur la caisse annexe",
+      [(e["montant"], e["compte"]) for e in encaissement]
+      == [(7777000, "5300005")], encaissement)
     v("… sans TVA", not any(l["compte"].startswith("445") for l in lignes_hors),
       lignes_hors)
     perimetres = dos.sql(
@@ -3328,8 +3338,8 @@ def suite_vente_mixte(dos):
     v("… pour le total attendu", r["total"] == 11900000, fm(r["total"]))
     v("… et restent une seule operation", bool(r["operation_ref"]),
       r["operation_ref"])
-    modes = dos.sql("SELECT mode, montant FROM reglements "
-                    "WHERE facture_id = ? ORDER BY id", (fid,))
+    modes = dos.sql("SELECT mode, montant, part FROM reglements "
+                    "WHERE facture_id = ? AND part = 'declare' ORDER BY id", (fid,))
     v("chacun garde son mode et son montant",
       [(m["mode"], m["montant"]) for m in modes]
       == [("cheque", 8000000), ("espece", 3900000)], modes)
@@ -3373,22 +3383,109 @@ def suite_vente_mixte(dos):
     message = dos.refuse("/api/factures", {
         "societe_id": sid, "sens": "vente", "tiers_id": client,
         "date": f"{annee}-09-10", "perimetre": "totalite",
-        "montant_hors": "10000", "compte_hors": "7011",
-        "lignes": [{"designation": "Vente", "quantite": 1,
-                    "prix_unitaire": "1000", "taux_tva": 19, "compte": "7011"}]})
-    v("une part non declaree sans caisse est refusee", bool(message), message)
-    v("… en disant ce qui manque et pourquoi",
-      "encaiss" in (message or "").lower(), message)
-
-    message = dos.refuse("/api/factures", {
-        "societe_id": sid, "sens": "vente", "tiers_id": client,
-        "date": f"{annee}-09-10", "perimetre": "totalite",
         "montant_hors": "10000", "compte_hors": "9999999",
         "tresorerie_hors_id": caisse,
         "lignes": [{"designation": "Vente", "quantite": 1,
                     "prix_unitaire": "1000", "taux_tva": 19, "compte": "7011"}]})
     v("un compte absent du plan est refuse", bool(message), message)
     v("… en disant ou le creer", "Plan comptable" in (message or ""), message)
+
+    # ==================================================================
+    titre("8. Combien le client a paye, et ce qu'il doit encore")
+    # ==================================================================
+    # « Si je fais le non declare, je ne peux pas designer combien le client a
+    #   paye ou pas encore. » La part non declaree partait droit en caisse :
+    #   elle etait donc reputee reglee d'avance. Elle nait due, desormais.
+    attente = dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "tiers_id": client,
+        "date": f"{annee}-10-05", "perimetre": "totalite",
+        "montant_hors": "77770", "compte_hors": "7011",
+        "lignes": [{"designation": "Logement F4", "quantite": 1,
+                    "prix_unitaire": "200000", "taux_tva": 19,
+                    "compte": "7011"}],
+        "valider": True})
+    aid = attente["id"]
+    a = dos.appel(f"/api/factures/{aid}")
+    v("sans caisse indiquee, la part non declaree reste due",
+      a["montant_hors_regle"] == 0 and a["reste_hors"] == 7777000,
+      (a["montant_hors_regle"], a["reste_hors"]))
+    v("… le reste du declare est distinct",
+      a["reste_declare"] == 23800000, fm(a["reste_declare"]))
+    v("… et le reste total les additionne",
+      a["reste_total"] == 23800000 + 7777000, fm(a["reste_total"]))
+
+    # Il encaisse le declare par cheque, et rien du black.
+    dos.appel("/api/reglements/multiple", {
+        "societe_id": sid, "sens": "encaissement", "facture_id": aid,
+        "tiers_id": client, "date": f"{annee}-10-10",
+        "lignes": [{"mode": "cheque", "tresorerie_id": banque_id,
+                    "part": "declare", "montant": "238000"}]})
+    a = dos.appel(f"/api/factures/{aid}")
+    v("le declare solde ne solde pas le black",
+      a["reste_declare"] == 0 and a["reste_hors"] == 7777000,
+      (a["reste_declare"], a["reste_hors"]))
+    v("… la facture n'est donc pas payee", a["statut"] == "partielle",
+      a["statut"])
+
+    # Puis il encaisse la moitie du black, en especes.
+    dos.appel("/api/reglements/multiple", {
+        "societe_id": sid, "sens": "encaissement", "facture_id": aid,
+        "tiers_id": client, "date": f"{annee}-10-20",
+        "lignes": [{"mode": "espece", "tresorerie_id": caisse,
+                    "part": "hors_declaration", "montant": "38885"}]})
+    a = dos.appel(f"/api/factures/{aid}")
+    v("un acompte sur le black se voit", a["reste_hors"] == 3888500,
+      fm(a["reste_hors"]))
+    message = dos.refuse("/api/reglements/multiple", {
+        "societe_id": sid, "sens": "encaissement", "facture_id": aid,
+        "tiers_id": client, "date": f"{annee}-10-21",
+        "lignes": [{"mode": "espece", "tresorerie_id": caisse,
+                    "part": "hors_declaration", "montant": "50000"}]})
+    v("on ne peut pas encaisser plus que le reste du black", bool(message),
+      message)
+    v("… et le message nomme la part concernee",
+      "non declar" in (message or "").lower().replace("é", "e"), message)
+
+    # ==================================================================
+    titre("9. La situation du client, les deux parts separees")
+    # ==================================================================
+    situation = dos.appel(f"/api/tiers/{client}/situation")
+    # Les deux factures de la section 6 sont restees en brouillon : elles ne
+    # doivent rien, et n'entrent donc pas dans la situation.
+    v("le declare est compte a part",
+      situation["declare"]["du"] == 11900000 + 23800000,
+      situation["declare"])
+    v("… sans compter les brouillons",
+      situation["nb_factures"] == 2, situation["nb_factures"])
+    v("le non declare aussi",
+      situation["hors_declaration"]["du"] == 7777000 * 2,
+      situation["hors_declaration"])
+    v("… avec ce qui en a ete regle",
+      situation["hors_declaration"]["regle"] == 7777000 + 3888500,
+      situation["hors_declaration"])
+    v("… et ce qui reste du",
+      situation["hors_declaration"]["reste"] == 3888500,
+      situation["hors_declaration"])
+    v("le total reel additionne les deux",
+      situation["total"]["du"]
+      == situation["declare"]["du"] + situation["hors_declaration"]["du"],
+      situation["total"])
+
+    # Le releve de compte le montre aussi, des lors qu'on regarde le reel.
+    releve = dos.appel(f"/api/tiers/{client}/releve?societe={sid}"
+                       f"&du={du}&au={au}")
+    lignes_hors = [m for m in releve["mouvements"]
+                   if m["perimetre"] == "hors_declaration"]
+    v("le releve en vue reelle porte les mouvements non declares",
+      bool(lignes_hors), len(releve["mouvements"]))
+    releve_dec = dos.appel(f"/api/tiers/{client}/releve?societe={sid}"
+                           f"&du={du}&au={au}&perimetre=declare")
+    v("… et le releve declare n'en porte aucun",
+      not any(m["perimetre"] == "hors_declaration"
+              for m in releve_dec["mouvements"]))
+    v("… en annoncant son perimetre",
+      releve_dec["libelle_perimetre"] == "Déclaré uniquement",
+      releve_dec["libelle_perimetre"])
 
 
 def suite_exercices(dos):

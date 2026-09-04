@@ -975,6 +975,32 @@ function signaleEmplacementRisque(etat) {
   document.body.appendChild(barre);
 }
 
+/* ------------------------------------------ Situation d'un tiers --------
+
+   « Il faut la situation du client : est-ce qu'il a payé le black ou pas. »
+   La question n'avait pas de réponse tant que la part non déclarée allait
+   droit en caisse — elle n'atteignait jamais le compte du client. Depuis
+   qu'elle est une créance, les deux colonnes se lisent côte à côte. */
+
+function situationTiers(situation) {
+  if (!situation || !situation.nb_factures) return '';
+  const bloc = (titre, s, genre) => `
+    <div class="colonne-situation ${genre}">
+      <div class="libelle">${ech(titre)}</div>
+      <table class="compact"><tbody>
+        <tr><td>Dû</td><td class="num">${fm(s.du)}</td></tr>
+        <tr><td>Réglé</td><td class="num">${fm(s.regle)}</td></tr>
+        <tr class="total"><td>Reste</td>
+            <td class="num ${s.reste > 0 ? 'rouge' : ''}">${fm(s.reste)}</td></tr>
+      </tbody></table>
+    </div>`;
+  return carte('Situation', `<div class="situation-tiers">
+      ${bloc('Déclaré', situation.declare, '')}
+      ${bloc('Non déclaré', situation.hors_declaration, 'hors')}
+      ${bloc('Total réel', situation.total, 'total')}
+    </div>`);
+}
+
 /* ------------------------------------------------- Recherche globale ----
 
    Un comptable ne se souvient pas de l'écran où se trouve ce qu'il cherche :

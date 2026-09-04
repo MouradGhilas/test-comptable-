@@ -241,6 +241,8 @@ async function ficheTiers(zone, id) {
       ${indicateur('Compte collectif', ech(t.compte))}
     </div>
 
+    ${situationTiers(t.situation)}
+
     <div class="grille c2">
       ${carte('Coordonnées', `<div class="liste-definitions">
         <dt>Adresse</dt><dd>${ech(t.adresse || '—')} ${ech(t.commune || '')} ${ech(t.wilaya || '')}</dd>
@@ -257,6 +259,12 @@ async function ficheTiers(zone, id) {
         { titre: 'Date', rendu: (f) => fdate(f.date) },
         { titre: 'Objet', rendu: (f) => `<div class="tronque">${ech(f.objet || '')}</div>` },
         { titre: 'TTC', classe: 'num', rendu: (f) => fm(f.montant_ttc) },
+        // Ce qui reste dû sur la part non déclarée : la question qu'il pose
+        // en premier devant un client — « a-t-il payé le black ? ».
+        { titre: 'Reste non déclaré', classe: 'num', masquerSiVide: true,
+          rendu: (f) => f.montant_hors
+            ? `<span class="${f.montant_hors - (f.montant_hors_regle || 0) > 0 ? 'rouge' : 'discret'}">`
+              + `${fm(f.montant_hors - (f.montant_hors_regle || 0))}</span>` : '' },
         { titre: 'Statut', rendu: (f) => etiquette(f.statut) },
       ], t.factures, { messageVide: 'Aucune facture.' }), '', true)}
     </div>

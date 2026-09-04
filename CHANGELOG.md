@@ -3,6 +3,35 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.10.0
+
+- **La part non déclarée est une créance, plus une somme réputée encaissée.**
+  C'était une erreur de conception de la 1.9.0 : cette part allait droit au
+  compte de caisse à la validation de la facture, donc elle passait pour
+  réglée le jour même. *« Si je fais le non déclaré, je ne peux pas désigner
+  combien le client a payé ou pas encore »* — c'était exact. Elle naît
+  désormais **due**, au compte du client et hors déclaration, et se solde par
+  des règlements comme n'importe quelle créance. Le champ « Déjà encaissée
+  sur » reste disponible et veut dire *payée comptant* : renseigné, le
+  règlement suit la validation ; laissé vide, la somme reste à recevoir.
+- **Chaque règlement dit quelle part il solde.** L'écran d'encaissement d'une
+  vente mixte s'ouvre sur ses deux restes dus — une ligne pour le déclaré, une
+  pour le non déclaré, chacune déjà servie du montant qui reste. Le chèque
+  solde l'un, les espèces l'autre, et l'application refuse d'encaisser plus
+  que ce qui est dû **sur cette part-là**. Une vente n'est « payée » que
+  lorsque ses deux moitiés le sont.
+- **La situation d'un client, les deux parts côte à côte.** Sur sa fiche :
+  ce qui est dû, ce qui est réglé, ce qui reste — pour le déclaré, pour le non
+  déclaré, et au total réel. La liste de ses factures gagne une colonne
+  « Reste non déclaré ». La question *« a-t-il payé le black ? »* se lit
+  maintenant d'un coup d'œil, là où elle n'avait aucune réponse.
+- Le **relevé de compte** montre lui aussi ces mouvements, puisqu'ils passent
+  enfin par le compte du client : en vue réelle ils y sont, en vue déclarée
+  ils n'y sont pas, et le document continue d'annoncer son périmètre.
+- Rappel : l'**import des tiers existe déjà** — Paramètres → Import, groupe
+  « Tiers ». Le modèle de fichier se télécharge depuis l'écran, se remplit
+  sous Excel et se redépose : tous les clients d'un coup.
+
 ## 1.9.1
 
 - **La liste des lots d'un contrat VSP n'est plus vide.** À la création d'un

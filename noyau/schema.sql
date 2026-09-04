@@ -361,6 +361,7 @@ CREATE TABLE IF NOT EXISTS factures (
     -- La seconde est isolee ici, avec son compte de produit et la caisse qui
     -- l'encaisse ; elle donne une ecriture distincte, hors declaration.
     montant_hors       INTEGER NOT NULL DEFAULT 0,
+    montant_hors_regle INTEGER NOT NULL DEFAULT 0,
     compte_hors        TEXT,
     tresorerie_hors_id INTEGER REFERENCES comptes_tresorerie(id),
     ecriture_hors_id   INTEGER REFERENCES ecritures(id) ON DELETE SET NULL,
@@ -438,6 +439,9 @@ CREATE TABLE IF NOT EXISTS reglements (
     -- Un encaissement paye moitie cheque moitie especes fait deux reglements :
     -- ils restent reconnaissables comme un seul geste.
     operation_ref TEXT,
+    -- Laquelle des deux parts d'une vente ce reglement solde : declare, ou
+    -- hors_declaration. Le cheque solde souvent l'une, les especes l'autre.
+    part          TEXT,
     ecriture_id   INTEGER REFERENCES ecritures(id) ON DELETE SET NULL,
     import_id     INTEGER REFERENCES imports(id) ON DELETE SET NULL,
     cree_le       TEXT NOT NULL

@@ -89,9 +89,12 @@ def api_detail(ctx):
     t["total_credit"] = total_credit
     t["mouvements"] = mouvements
     t["factures"] = db.lignes(
-        "SELECT id, numero, date, sens, objet, montant_ttc, montant_regle, statut "
+        "SELECT id, numero, date, sens, objet, montant_ttc, net_a_payer, "
+        "       montant_regle, montant_hors, montant_hors_regle, perimetre, "
+        "       statut "
         "FROM factures WHERE tiers_id = ? ORDER BY date DESC LIMIT 100", (identifiant,)
     )
+    t["situation"] = situation_tiers(identifiant)
     t["non_lettre"] = db.ligne(
         "SELECT COALESCE(SUM(debit),0) AS debit, COALESCE(SUM(credit),0) AS credit "
         "FROM lignes WHERE tiers_id = ? AND (lettrage IS NULL OR lettrage = '')",
@@ -111,6 +114,51 @@ def api_detail(ctx):
             "JOIN programmes p ON p.id = c.programme_id WHERE c.acquereur_id = ?",
             (identifiant,))
     return t
+
+
+def situation_tiers(tiers_id: int) -> dict:
+    """Où en est ce client, part déclarée et part non déclarée séparées.
+
+    « Il faut la situation du client : est-ce qu'il a payé le black ou pas. »
+    La question est légitime et n'avait pas de réponse : la part non déclarée
+    d'une vente allait droit en caisse, donc jamais au compte du client.
+    Depuis qu'elle est une créance, elle se compte comme le reste.
+
+    Les factures annulées et les proformas ne doivent rien : elles sont hors
+    du calcul.
+    """
+    vivantes = db.lignes(
+        "SELECT sens, perimetre, net_a_payer, montant_regle, "
+        "       montant_hors, montant_hors_regle "
+        "FROM factures WHERE tiers_id = ? AND statut NOT IN ('annulee', 'brouillon') "
+        "AND sens <> 'proforma'", (tiers_id,))
+
+    parts = {"declare": {"du": 0, "regle": 0}, "hors_declaration": {"du": 0, "regle": 0}}
+    for f in vivantes:
+        signe = -1 if f["sens"].startswith("avoir") else 1
+        cle = "hors_declaration" if f["perimetre"] == "hors_declaration" else "declare"
+        parts[cle]["du"] += signe * f["net_a_payer"]
+        parts[cle]["regle"] += signe * f["montant_regle"]
+        if f["montant_hors"] and cle == "declare":
+            parts["hors_declaration"]["du"] += signe * f["montant_hors"]
+            parts["hors_declaration"]["regle"] += signe * (f["montant_hors_regle"] or 0)
+
+    for bloc in parts.values():
+        bloc["reste"] = bloc["du"] - bloc["regle"]
+    total = {cle: sum(bloc[cle] for bloc in parts.values())
+             for cle in ("du", "regle", "reste")}
+    return {"declare": parts["declare"],
+            "hors_declaration": parts["hors_declaration"],
+            "total": total,
+            "nb_factures": len(vivantes)}
+
+
+@route("GET", "/api/tiers/<id>/situation")
+def api_situation_tiers(ctx):
+    """La situation d'un tiers, seule — pour l'afficher sans tout recharger."""
+    identifiant = int(ctx.params["id"])
+    tiers_ou_erreur(identifiant)
+    return situation_tiers(identifiant)
 
 
 @route("POST", "/api/tiers")
