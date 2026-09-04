@@ -134,9 +134,11 @@ async function editeMandat() {
   const champs = [
     {
       nom: 'bien_id', libelle: 'Bien', type: 'select', requis: true,
+      vide_message: "Aucun bien au portefeuille. Créez-le d'abord : Agence immobilière → Portefeuille → + Bien.",
       options: biens.biens.map((b) => [b.id, `${b.reference} — ${b.designation}`]),
     },
-    { nom: 'mandant_id', libelle: 'Mandant (propriétaire)', type: 'select', options: mandants },
+    { nom: 'mandant_id', libelle: 'Mandant (propriétaire)', type: 'select',
+      options: mandants, vide_message: 'Aucun propriétaire enregistré. Créez sa fiche : Tiers → + Tiers, type « mandant ».' },
     {
       nom: 'type_mandat', libelle: 'Type de mandat', type: 'select', vide: false,
       options: [['vente', 'Vente'], ['location', 'Location'], ['gestion', 'Gestion locative']],
@@ -202,15 +204,23 @@ async function editeTransaction() {
     {
       nom: 'bien_id', libelle: 'Bien vendu', type: 'select', requis: true,
       options: biens.biens.map((b) => [b.id, `${b.reference} — ${b.designation}`]),
+      vide_message: "Aucun bien au portefeuille. Créez-le d'abord : Agence immobilière → Portefeuille → + Bien.",
     },
     {
       nom: 'mandat_id', libelle: 'Mandat', type: 'select',
       options: mandats.mandats.map((m) => [m.id, `${m.numero} — ${m.bien || ''}`]),
+      vide_message: 'Aucun mandat actif. Ce n\'est pas bloquant : saisissez '
+        + 'alors la commission à la main, plus bas.',
       aide: 'La commission est reprise du mandat si elle n\'est pas saisie.',
     },
-    { nom: 'vendeur_id', libelle: 'Vendeur', type: 'select', options: await optionsTiers() },
-    { nom: 'acquereur_id', libelle: 'Acquéreur', type: 'select', options: clients },
-    { nom: 'notaire_id', libelle: 'Notaire', type: 'select', options: notaires },
+    { nom: 'vendeur_id', libelle: 'Vendeur', type: 'select',
+      options: await optionsTiers(),
+      vide_message: 'Aucun tiers dans ce dossier. Créez la fiche du vendeur : '
+        + 'Tiers → + Tiers.' },
+    { nom: 'acquereur_id', libelle: 'Acquéreur', type: 'select', options: clients,
+      vide_message: 'Aucun client dans ce dossier. Créez sa fiche : Tiers → + Tiers, type « client ».' },
+    { nom: 'notaire_id', libelle: 'Notaire', type: 'select', options: notaires,
+      vide_message: "Aucun notaire enregistré. Vous pourrez l'ajouter plus tard : Tiers → + Tiers, type « notaire »." },
     { nom: 'date_compromis', libelle: 'Date du compromis', type: 'date' },
     { nom: 'date_acte', libelle: 'Date de l\'acte définitif', type: 'date' },
     { nom: 'prix_vente', libelle: 'Prix de vente', type: 'montant', requis: true },
@@ -289,10 +299,15 @@ async function editeBail(id) {
     { groupe: 'Parties et bien' },
     {
       nom: 'bien_id', libelle: 'Bien loué', type: 'select', requis: true,
+      vide_message: "Aucun bien au portefeuille. Créez-le d'abord : Agence immobilière → Portefeuille → + Bien.",
       options: biens.biens.map((b) => [b.id, `${b.reference} — ${b.designation}`]),
     },
-    { nom: 'proprietaire_id', libelle: 'Propriétaire', type: 'select', options: proprietaires },
-    { nom: 'locataire_id', libelle: 'Locataire', type: 'select', options: locataires },
+    { nom: 'proprietaire_id', libelle: 'Propriétaire', type: 'select',
+      options: proprietaires, vide_message: 'Aucun propriétaire enregistré. Créez sa fiche : Tiers → + Tiers, type « mandant ».' },
+    { nom: 'locataire_id', libelle: 'Locataire', type: 'select',
+      options: locataires,
+      vide_message: 'Aucun locataire enregistré. Créez sa fiche : '
+        + 'Tiers → + Tiers, type « client ».' },
     {
       nom: 'usage', libelle: 'Usage', type: 'select', vide: false,
       options: [['habitation', 'Habitation'], ['commercial', 'Commercial'], ['professionnel', 'Professionnel']],

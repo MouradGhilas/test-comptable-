@@ -3,6 +3,26 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.9.1
+
+- **La liste des lots d'un contrat VSP n'est plus vide.** À la création d'un
+  contrat, « Lot vendu » s'affichait comme un rectangle gris ne proposant
+  rien. Deux causes, l'une et l'autre muettes. D'abord, l'écran ne montrait
+  que les lots au statut « disponible », alors que **le serveur, lui, accepte
+  tout lot qui n'est pas déjà sous contrat** : un lot repris avec la mention
+  « vendu » ou « réservé » — le cas normal d'un dossier commencé ailleurs —
+  devenait introuvable. La liste propose maintenant tous les lots libres de
+  contrat, en indiquant l'état de chacun, et dit combien sont écartés parce
+  qu'ils sont déjà vendus.
+- **Une liste vide dit désormais ce qui manque et où le créer.** C'était vrai
+  du lot, mais aussi de l'acquéreur, du notaire, du bien, du mandat, du
+  propriétaire, du locataire : un dossier neuf n'a rien de tout cela, et
+  aucun de ces champs ne le disait. Chacun affiche à présent la phrase utile
+  — « Aucun lot dans ce dossier. Créez d'abord un programme et ses lots :
+  Promotion immobilière → Programmes. » — au lieu d'un cadre vide.
+- La suite d'essais navigateur couvre ces deux cas, y compris celui du lot
+  déjà marqué « vendu » qui doit rester saisissable.
+
 ## 1.9.0
 
 - **Une vente porte ses deux parts, dans une seule saisie.** Le périmètre

@@ -418,13 +418,20 @@ function formulaire(champs, valeurs = {}) {
     const requis = champ.requis ? 'required' : '';
     const large = champ.large ? ' style="grid-column:1/-1"' : '';
     let controle;
+    let manque = '';
 
     if (champ.type === 'select') {
-      const options = (champ.options || []).map((o) => {
+      const liste = champ.options || [];
+      const options = liste.map((o) => {
         const [v, libelle] = Array.isArray(o) ? o : [o, o];
         return `<option value="${ech(v)}" ${String(v) === String(valeur) ? 'selected' : ''}>${ech(libelle)}</option>`;
       }).join('');
-      controle = `<select name="${champ.nom}" ${requis}>${champ.vide !== false ? '<option value=""></option>' : ''}${options}</select>`;
+      // Une liste vide s'affichait comme un rectangle gris : rien à choisir,
+      // et rien pour dire pourquoi. Il faut alors renvoyer vers l'écran où
+      // se crée ce qui manque, plutôt que de laisser chercher.
+      manque = liste.length === 0
+        ? (champ.vide_message || 'Rien à choisir ici pour l\'instant.') : '';
+      controle = `<select name="${champ.nom}" ${requis} ${manque ? 'disabled' : ''}>${champ.vide !== false ? '<option value=""></option>' : ''}${options}</select>`;
     } else if (champ.type === 'zone') {
       controle = `<textarea name="${champ.nom}" rows="${champ.lignes || 3}">${ech(valeur)}</textarea>`;
     } else if (champ.type === 'case') {
@@ -440,7 +447,7 @@ function formulaire(champs, valeurs = {}) {
                    value="${ech(valeur)}" ${requis} ${champ.attributs || ''}>`;
     }
     html += `<label class="champ"${large}><span>${ech(champ.libelle)}${champ.requis ? ' *' : ''}</span>
-             ${controle}${champ.aide ? `<div class="aide">${ech(champ.aide)}</div>` : ''}</label>`;
+             ${controle}${manque ? `<div class="aide manquant">${ech(manque)}</div>` : ''}${champ.aide ? `<div class="aide">${ech(champ.aide)}</div>` : ''}</label>`;
   }
   if (groupeOuvert) html += '</div></fieldset>';
   conteneur.innerHTML = html;

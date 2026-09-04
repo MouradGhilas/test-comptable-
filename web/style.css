@@ -292,6 +292,10 @@ nav a .pastille { margin-left: auto; background: var(--danger); color: #fff;
 .indicateur.attention .valeur { color: var(--alerte); }
 .indicateur.attention { border-left: 3px solid var(--alerte); }
 
+/* Une liste sans rien a choisir : on dit pourquoi, et ou aller le creer.
+   Un rectangle gris vide laisse chercher, et c'est ce qui s'est passe. */
+.aide.manquant { color: var(--alerte); font-weight: 600; }
+
 /* ---------- Tableaux ---------- */
 /* `overflow-x: auto` fait de l'enveloppe un conteneur de défilement : un
    en-tête `position: sticky` s'y accroche, mais à un conteneur qui n'a

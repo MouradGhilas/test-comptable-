@@ -528,20 +528,64 @@ App.pages['promotion/contrat'] = {
   },
 };
 
+/* Comment un lot se lit dans la liste des lots vendables. Le statut n'est
+   affiche que s'il n'est pas « disponible » : sur un dossier repris en cours
+   de route, un lot marque « vendu » ou « reserve » attend souvent son contrat,
+   et c'est justement celui-la qu'il vient saisir. */
+const STATUTS_LOT = {
+  disponible: '', reserve: 'réservé', vendu: 'vendu', livre: 'livré',
+  bloque: 'bloqué',
+};
+
+/** Les lots qu'un contrat peut encore prendre, et pourquoi les autres non.
+
+    L'ecran ne proposait que les lots « disponible », alors que le serveur
+    accepte tout lot qui n'est pas deja sous contrat. Un lot repris avec le
+    statut « vendu » — le cas d'un dossier en cours — devenait donc
+    introuvable : la liste s'affichait vide, sans un mot. */
+function lotsVendables(lots) {
+  const libres = lots.filter((l) => !l.contrat_id);
+  const options = libres.map((l) => {
+    const etat = STATUTS_LOT[l.statut] || l.statut;
+    return [l.id, `${l.programme_code} / ${l.numero} — `
+      + `${l.typologie || l.type_lot} — ${fm(l.prix_vente, true)}`
+      + (etat ? ` (${etat})` : '')];
+  });
+  const sousContrat = lots.length - libres.length;
+  let message = '';
+  if (!lots.length) {
+    message = 'Aucun lot dans ce dossier. Créez d\'abord un programme et ses '
+      + 'lots : Promotion immobilière → Programmes.';
+  } else if (!libres.length) {
+    message = `Les ${lots.length} lots du dossier font déjà l'objet d'un `
+      + 'contrat. Résiliez le contrat existant, ou créez le lot manquant.';
+  }
+  return { options, message, sousContrat };
+}
+
 async function editeContrat(id, lotId) {
+  // Tous les lots, pas seulement les « disponible » : le tri se fait sur ce
+  // que le serveur refuse vraiment — un lot deja sous contrat.
   const [lots, clients, notaires, modeles] = await Promise.all([
-    charge('/api/lots', { statut: 'disponible' }), optionsTiers('client'),
+    charge('/api/lots'), optionsTiers('client'),
     optionsTiers('notaire'), charge('/api/modeles-echeancier'),
   ]);
+  const vendables = lotsVendables(lots.lots);
   const existant = id ? await api(`/api/contrats-vsp/${id}`) : { lot_id: lotId };
   const champs = [
     { groupe: 'Objet de la vente' },
     ...(id ? [] : [{
       nom: 'lot_id', libelle: 'Lot vendu', type: 'select', requis: true,
-      options: lots.lots.map((l) => [l.id,
-        `${l.programme_code} / ${l.numero} — ${l.typologie || l.type_lot} — ${fm(l.prix_vente, true)}`]),
+      options: vendables.options,
+      vide_message: vendables.message,
+      aide: vendables.sousContrat
+        ? `${vendables.sousContrat} lot(s) déjà sous contrat ne sont pas proposés.`
+        : undefined,
     }]),
-    { nom: 'acquereur_id', libelle: 'Acquéreur', type: 'select', requis: !id, options: clients },
+    { nom: 'acquereur_id', libelle: 'Acquéreur', type: 'select', requis: !id,
+      options: clients,
+      vide_message: 'Aucun client dans ce dossier. Créez la fiche de '
+        + "l'acquéreur : Tiers → + Tiers, type « client »." },
     {
       nom: 'type_contrat', libelle: 'Type de contrat', type: 'select', vide: false,
       options: [['vsp', 'Vente sur plan (VSP)'], ['reservation', 'Contrat de réservation'],
@@ -552,7 +596,9 @@ async function editeContrat(id, lotId) {
     { nom: 'prix_total', libelle: 'Prix de vente TTC', type: 'montant', aide: 'Vide = prix du lot' },
     { nom: 'taux_tva', libelle: 'TVA', type: 'taux', defaut: 1900 },
     { groupe: 'Formalités' },
-    { nom: 'notaire_id', libelle: 'Notaire', type: 'select', options: notaires },
+    { nom: 'notaire_id', libelle: 'Notaire', type: 'select', options: notaires,
+      vide_message: 'Aucun notaire enregistré. Vous pourrez l\'ajouter plus '
+        + 'tard : Tiers → + Tiers, type « notaire ».' },
     { nom: 'num_acte_notarie', libelle: 'N° de l\'acte notarié' },
     { nom: 'date_publication', libelle: 'Publication à la conservation foncière', type: 'date' },
     { nom: 'fgcmpi_atteste', libelle: 'Garantie FGCMPI attestée', type: 'case' },

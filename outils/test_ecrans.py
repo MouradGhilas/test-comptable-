@@ -72,7 +72,12 @@ def prepare_dossier() -> tuple[int, int]:
     poste("/api/tresorerie", {"societe_id": sid, "code": "CA2",
                               "libelle": "Caisse annexe", "type": "caisse",
                               "compte": "5300005"})
+    SOCIETE.append(sid)
     return sid, 0
+
+
+#: L'identifiant du dossier, pose par prepare_dossier().
+SOCIETE: list[int] = []
 
 
 def parcours(page) -> None:
@@ -167,7 +172,56 @@ def parcours(page) -> None:
       page.content()[:120])
 
     # ======================================================================
-    titre("3. Corriger un exercice mal saisi")
+    titre("3. Une liste vide dit ce qui manque")
+    # ======================================================================
+    # « Quand il allait dans contrat VSP pour mettre le lot vendu, il ne
+    #   trouvait pas de lots : la barre glissante ne proposait rien, juste un
+    #   rectangle gris. » Deux causes, l'une et l'autre muettes : aucun lot
+    #   dans le dossier, ou des lots qui existent mais que l'ecran filtrait
+    #   plus severement que le serveur.
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    page.goto(BASE + "/#/promotion/contrats", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    page.click("text=+ Contrat VSP")
+    page.wait_for_selector("[name=lot_id]", timeout=15000)
+    v("sans aucun lot, la liste dit pourquoi",
+      "Aucun lot dans ce dossier" in page.content(),
+      page.inner_text("[name=lot_id] ~ .manquant") if
+      page.query_selector("[name=lot_id] ~ .manquant") else "(rien)")
+    v("… et ou creer ce qui manque", "Programmes" in page.content())
+    # Le dossier d'essai a un client mais pas de notaire : la liste des
+    # notaires est donc celle qui doit parler ici.
+    v("le notaire absent le dit aussi, sans bloquer",
+      "Aucun notaire enregistré" in page.content())
+    v("… et l'acquereur, lui, est bien propose",
+      page.eval_on_selector("[name=acquereur_id]", "el => el.options.length") > 1)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # Un lot repris avec le statut « vendu » — le cas d'un dossier en cours —
+    # doit rester saisissable : le serveur l'accepte, l'ecran le cachait.
+    programme = poste("/api/programmes", {
+        "societe_id": SOCIETE[0], "code": "PRG1",
+        "intitule": "Residence El Feth", "wilaya": "16 Alger"})
+    poste("/api/lots", {"societe_id": SOCIETE[0],
+                        "programme_id": programme["id"], "numero": "A01",
+                        "type_lot": "logement", "typologie": "F3",
+                        "prix_vente": "5000000", "statut": "vendu"})
+    page.reload(wait_until="networkidle")
+    page.wait_for_timeout(900)
+    page.click("text=+ Contrat VSP")
+    page.wait_for_selector("[name=lot_id]", timeout=15000)
+    libelles = page.eval_on_selector(
+        "[name=lot_id]",
+        "el => Array.from(el.options).map(o => o.textContent).filter(Boolean)")
+    v("un lot deja marque « vendu » reste proposable",
+      any("A01" in l for l in libelles), libelles)
+    v("… et son etat est dit dans la liste",
+      any("vendu" in l for l in libelles), libelles)
+
+    # ======================================================================
+    titre("4. Corriger un exercice mal saisi")
     # ======================================================================
     page.keyboard.press("Escape")
     page.wait_for_timeout(400)
@@ -221,7 +275,7 @@ def principal() -> int:
             try:
                 parcours(page)
             finally:
-                titre("4. Rien ne casse en silence")
+                titre("5. Rien ne casse en silence")
                 vraies = [e for e in erreurs if "favicon" not in e.lower()]
                 v("aucune erreur JavaScript sur tout le parcours",
                   not vraies, vraies[:3])
