@@ -710,12 +710,74 @@ def executer():
     verifie("Ajout de colonne idempotent",
             db.ajoute_colonne("ecritures", "perimetre", "TEXT") is False)
 
-    titre("21. Sauvegarde et intégrité")
+    titre("21. Dates venues d'un autre tableur")
+    # « 1 ligne sera écrite, 96 mises de côté » : sa reprise de quatre ans
+    # s'arrêtait sur « date 45195 incompréhensible ». Un .xlsx ne dit jamais
+    # qu'une cellule porte une date : il porte un nombre de jours, et un
+    # style. Nous ne reconnaissions que le style de nos propres modèles.
+    from noyau import tableur
+    verifie("Un numéro de série est compris comme une date",
+            util.date_iso("45195") == "2023-09-26", util.date_iso("45195"))
+    verifie("… avec l'heure éventuelle en plus",
+            util.date_iso("45195,75") == "2023-09-26")
+    verifie("Une année seule n'est pas prise pour une date",
+            util.date_iso("2024") is None, util.date_iso("2024"))
+    verifie("Une date écrite normalement passe toujours",
+            util.date_iso("10/06/2024") == "2024-06-10")
+
+    classeur = _classeur_etranger()
+    lignes = tableur.lit_classeur(classeur)
+    verifie("Le format court d'Excel est reconnu (numFmtId 14)",
+            lignes[1][0] == "2023-09-26", lignes[1])
+    verifie("… comme un format personnalisé jj/mm/aaaa",
+            lignes[1][1] == "2023-10-26", lignes[1])
+    verifie("… sans transformer les montants en dates",
+            lignes[1][2] == 119000, lignes[1])
+    verifie("… sur toutes les lignes du fichier",
+            lignes[2][0] == "2021-08-21", lignes[2])
+
+    titre("22. Sauvegarde et intégrité")
     from modules.fichiers import cree_sauvegarde
     archive = cree_sauvegarde("test")
     verifie("Archive de sauvegarde créée", archive.exists() and archive.stat().st_size > 1000,
             f"{archive.stat().st_size} octets")
     verifie("Intégrité SQLite", db.valeur("PRAGMA integrity_check", (), "?") == "ok")
+
+
+def _classeur_etranger() -> bytes:
+    """Un .xlsx tel qu'en produit l'Excel de quelqu'un d'autre.
+
+    Ses styles ne sont pas les nôtres : une date au format court (numFmtId
+    14), une autre au format personnalisé « dd/mm/yyyy », et un montant au
+    format numérique — qui, lui, doit rester un montant.
+    """
+    import io
+    import zipfile
+    styles = """<?xml version="1.0" encoding="UTF-8"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="1"><numFmt numFmtId="167" formatCode="dd/mm/yyyy"/></numFmts>
+<cellStyleXfs count="1"><xf numFmtId="0"/></cellStyleXfs>
+<cellXfs count="4">
+<xf numFmtId="0" xfId="0"/>
+<xf numFmtId="14" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="167" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="4" xfId="0" applyNumberFormat="1"/>
+</cellXfs></styleSheet>"""
+    feuille = """<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+<row r="1"><c r="A1" t="inlineStr"><is><t>Date</t></is></c>
+<c r="B1" t="inlineStr"><is><t>Echeance</t></is></c>
+<c r="C1" t="inlineStr"><is><t>Montant</t></is></c></row>
+<row r="2"><c r="A2" s="1"><v>45195</v></c><c r="B2" s="2"><v>45225</v></c>
+<c r="C2" s="3"><v>119000</v></c></row>
+<row r="3"><c r="A3" s="1"><v>44429</v></c><c r="B3" s="2"><v>44459</v></c>
+<c r="C3" s="3"><v>357000</v></c></row>
+</sheetData></worksheet>"""
+    tampon = io.BytesIO()
+    with zipfile.ZipFile(tampon, "w") as archive:
+        archive.writestr("xl/styles.xml", styles)
+        archive.writestr("xl/worksheets/sheet1.xml", feuille)
+    return tampon.getvalue()
 
 
 # ===========================================================================

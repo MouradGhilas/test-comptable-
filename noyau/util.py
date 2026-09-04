@@ -171,8 +171,40 @@ def _date_reelle(iso: str, defaut: str | None) -> str | None:
     return iso
 
 
+#: Origine des dates d'un tableur : le système 1900 compte un 29 février
+#: fictif, d'où un décalage de deux jours plutôt qu'un.
+_ORIGINE_TABLEUR = _dt.date(1899, 12, 30)
+
+#: Bornes d'un numéro de série plausible : du 03/10/1954 au 08/04/2064.
+#: L'intervalle exclut volontairement les nombres à quatre chiffres, pour
+#: qu'une année écrite seule (« 2024 ») ne devienne jamais une date de 1905.
+_SERIE_MIN, _SERIE_MAX = 20000, 60000
+
+
+def _depuis_serie_tableur(texte: str) -> str | None:
+    """Une date qu'un tableur a livrée sous forme de nombre de jours.
+
+    « 45195 » n'est pas incompréhensible : c'est le 26/09/2023. Excel range
+    les dates ainsi, et ne les affiche comme dates que par le format de la
+    cellule. Un fichier enregistré en CSV, ou dont la colonne a perdu son
+    format, ne livre plus que ce nombre — et une reprise de quatre ans
+    d'écritures s'arrêtait là, ligne après ligne.
+    """
+    m = re.fullmatch(r"(\d{5})(?:[.,]\d+)?", texte)
+    if not m:
+        return None
+    jours = int(m.group(1))
+    if not _SERIE_MIN <= jours <= _SERIE_MAX:
+        return None
+    return (_ORIGINE_TABLEUR + _dt.timedelta(days=jours)).isoformat()
+
+
 def date_iso(valeur, defaut: str | None = None) -> str | None:
-    """Normalise une date vers 'AAAA-MM-JJ'. Accepte jj/mm/aaaa."""
+    """Normalise une date vers 'AAAA-MM-JJ'.
+
+    Accepte jj/mm/aaaa, aaaa-mm-jj, aaaa-mm, et le numéro de série d'un
+    tableur.
+    """
     if not valeur:
         return defaut
     texte = str(valeur).strip()
@@ -184,6 +216,9 @@ def date_iso(valeur, defaut: str | None = None) -> str | None:
         return _date_reelle(f"{a}-{int(mo):02d}-{int(j):02d}", defaut)
     if re.fullmatch(r"\d{4}-\d{2}", texte):
         return _date_reelle(texte + "-01", defaut)
+    serie = _depuis_serie_tableur(texte)
+    if serie:
+        return _date_reelle(serie, defaut)
     return defaut
 
 

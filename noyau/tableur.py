@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 import io
+import re
 import zipfile
 from xml.sax.saxutils import escape
 
@@ -294,6 +295,65 @@ def _texte_partage(archive: zipfile.ZipFile) -> list[str]:
     return valeurs
 
 
+#: numFmtId réservés par Excel pour les dates et les heures. Un classeur
+#: francophone en « jj/mm/aaaa » utilise le 14 : c'est le cas le plus courant.
+_FORMATS_DATE_STANDARD = {14, 15, 16, 17, 18, 19, 20, 21, 22,
+                          27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
+                          45, 46, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58}
+
+
+def _code_est_une_date(code: str) -> bool:
+    """Un format personnalisé décrit-il une date ?
+
+    Le texte entre guillemets, les sections entre crochets et les caractères
+    échappés ne décrivent pas la valeur : « #,##0 "jours" » n'est pas une
+    date, malgré son « j ».
+    """
+    if not code:
+        return False
+    epure = re.sub(r'"[^"]*"|\[[^\]]*\]|\\.', "", code).lower()
+    if "general" in epure:
+        return False
+    return any(lettre in epure for lettre in "ymdhs")
+
+
+def _styles_date(archive: zipfile.ZipFile) -> set[str]:
+    """Les styles de cellule qui désignent une date, dans CE classeur.
+
+    Un .xlsx ne dit jamais qu'une cellule contient une date : il contient un
+    nombre de jours, et un style. Nous ne reconnaissions que le style de nos
+    propres modèles — un fichier venu de l'Excel de quelqu'un d'autre livrait
+    donc « 45195 » là où il y avait le 26/09/2023, et toute une reprise
+    s'arrêtait sur des dates « incompréhensibles ».
+    """
+    import xml.etree.ElementTree as ET
+    try:
+        racine = ET.fromstring(archive.read("xl/styles.xml"))
+    except (KeyError, ET.ParseError):
+        return {str(DATE)}
+
+    personnalises: dict[int, str] = {}
+    for format_ in racine.iter(f"{_NS}numFmt"):
+        try:
+            personnalises[int(format_.get("numFmtId"))] = format_.get("formatCode") or ""
+        except (TypeError, ValueError):
+            continue
+
+    styles = set()
+    table = racine.find(f"{_NS}cellXfs")
+    for index, xf in enumerate(table.findall(f"{_NS}xf") if table is not None else []):
+        try:
+            numero = int(xf.get("numFmtId") or 0)
+        except ValueError:
+            continue
+        if numero in _FORMATS_DATE_STANDARD or _code_est_une_date(personnalises.get(numero, "")):
+            styles.add(str(index))
+    # Nos propres modèles restent lisibles même si le classeur n'a pas de
+    # table de styles exploitable.
+    styles.add(str(DATE))
+    return styles
+
+
 def _noms_feuilles(archive: zipfile.ZipFile) -> list[str]:
     import xml.etree.ElementTree as ET
     try:
@@ -321,13 +381,14 @@ def lit_classeur(donnees: bytes, feuille: int = 0) -> list[list]:
         if feuille >= len(noms):
             raise ValueError(f"Le fichier ne contient que {len(noms)} feuille(s).")
         racine = ET.fromstring(archive.read(noms[feuille]))
+        styles = _styles_date(archive)
 
     lignes = []
     for rang in racine.iter(f"{_NS}row"):
         cellules: dict[int, object] = {}
         for cellule in rang.findall(f"{_NS}c"):
             index = _reference_colonne(cellule.get("r") or "A1")
-            cellules[index] = _valeur_cellule(cellule, partages)
+            cellules[index] = _valeur_cellule(cellule, partages, styles)
         if not cellules:
             lignes.append([])
             continue
@@ -336,7 +397,7 @@ def lit_classeur(donnees: bytes, feuille: int = 0) -> list[list]:
     return lignes
 
 
-def _valeur_cellule(cellule, partages: list[str]):
+def _valeur_cellule(cellule, partages: list[str], styles_date=None):
     type_cellule = cellule.get("t")
     if type_cellule == "inlineStr":
         return "".join(t.text or "" for t in cellule.iter(f"{_NS}t"))
@@ -357,15 +418,9 @@ def _valeur_cellule(cellule, partages: list[str]):
         return brut
     # Une date est un nombre de jours ; le style seul les distingue. On s'en
     # remet au format de la cellule quand il correspond à un style de date.
-    if cellule.get("s") in _STYLES_DATE and 1 < nombre_ < 300000:
+    if cellule.get("s") in (styles_date or {str(DATE)}) and 1 < nombre_ < 300000:
         return (_ORIGINE_EXCEL + datetime.timedelta(days=int(nombre_))).isoformat()
     return int(nombre_) if nombre_.is_integer() else nombre_
-
-
-#: Index de style correspondant au format date dans les classeurs que nous
-#: produisons. Les fichiers venus d'ailleurs sont lus comme des nombres, que
-#: l'import sait interpréter à partir du texte saisi.
-_STYLES_DATE = {str(DATE)}
 
 
 def lit_tableau(donnees: bytes, feuille: int = 0) -> tuple[list[str], list[list]]:

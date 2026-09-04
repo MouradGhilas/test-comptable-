@@ -35,6 +35,7 @@ Usage :
 import base64
 import datetime
 import http.cookiejar
+import io
 import json
 import os
 import shutil
@@ -47,6 +48,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -92,6 +94,10 @@ def fm(centimes):
 
 def b64(texte):
     return base64.b64encode(texte.encode("utf-8")).decode()
+
+
+def b64_octets(octets: bytes) -> str:
+    return base64.b64encode(octets).decode()
 
 
 def port_libre():
@@ -2979,6 +2985,150 @@ def emplacement(chemin):
     return json.loads(r.stdout)
 
 
+def classeur_etranger(dates_serie: list[int]) -> bytes:
+    """Un .xlsx tel qu'en produit l'Excel de quelqu'un d'autre.
+
+    Ses styles ne sont pas les notres : la date est au format court d'Excel
+    (numFmtId 14), le montant au format numerique. Le fichier ne contient
+    donc aucune date lisible — seulement des nombres de jours.
+    """
+    entetes = ["Numero", "Date", "Client", "Designation", "Montant HT", "TVA %"]
+    lignes = ["<row r=\"1\">" + "".join(
+        f'<c r="{chr(65 + i)}1" t="inlineStr"><is><t>{h}</t></is></c>'
+        for i, h in enumerate(entetes)) + "</row>"]
+    for k, serie in enumerate(dates_serie):
+        r = k + 2
+        lignes.append(
+            f'<row r="{r}">'
+            f'<c r="A{r}" t="inlineStr"><is><t>FV-{1000 + k}</t></is></c>'
+            f'<c r="B{r}" s="1"><v>{serie}</v></c>'
+            f'<c r="C{r}" t="inlineStr"><is><t>MAZIGH</t></is></c>'
+            f'<c r="D{r}" t="inlineStr"><is><t>Commission sur vente</t></is></c>'
+            f'<c r="E{r}" s="3"><v>{100000 + k * 1000}</v></c>'
+            f'<c r="F{r}" s="3"><v>19</v></c></row>')
+    styles = ('<?xml version="1.0" encoding="UTF-8"?>'
+              '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+              '<cellStyleXfs count="1"><xf numFmtId="0"/></cellStyleXfs>'
+              '<cellXfs count="4"><xf numFmtId="0" xfId="0"/>'
+              '<xf numFmtId="14" xfId="0" applyNumberFormat="1"/>'
+              '<xf numFmtId="167" xfId="0" applyNumberFormat="1"/>'
+              '<xf numFmtId="4" xfId="0" applyNumberFormat="1"/></cellXfs></styleSheet>')
+    feuille = ('<?xml version="1.0" encoding="UTF-8"?>'
+               '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+               '<sheetData>' + "".join(lignes) + '</sheetData></worksheet>')
+    tampon = io.BytesIO()
+    with zipfile.ZipFile(tampon, "w") as archive:
+        archive.writestr("xl/styles.xml", styles)
+        archive.writestr("xl/worksheets/sheet1.xml", feuille)
+    return tampon.getvalue()
+
+
+def suite_dates_tableur(dos):
+    """Une reprise qui s'arretait sur « date 45195 incomprehensible ».
+
+    Sa capture disait tout : « 1 ligne sera ecrite, 96 mises de cote ». Un
+    .xlsx ne dit jamais qu'une cellule porte une date : il porte un nombre
+    de jours, et un style. Nous ne reconnaissions que le style de nos propres
+    modeles — un fichier venu de son Excel livrait donc « 45195 » la ou il y
+    avait le 26/09/2023, et quatre ans d'ecritures restaient dehors.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "dates", "mot_de_passe": "motdepasse123",
+        "nom_complet": "Comptable", "raison_sociale": "SARL REPRISE",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+
+    # Les dates exactes de sa capture : de 2021 a 2025.
+    series = [45195, 45449, 45453, 45491, 45554, 45798, 45927, 44429]
+    fichier = classeur_etranger(series)
+
+    # ==================================================================
+    titre("1. Les dates de son fichier sont comprises")
+    # ==================================================================
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "factures_vente",
+        "contenu": b64_octets(fichier), "nom": "ventes.xlsx"})
+    v("aucune ligne n'est mise de cote", a["nb_rejetes"] == 0,
+      [x["message"] for x in (a.get("anomalies") or [])][:5])
+    v("… toutes sont pretes", a["nb_valides"] == len(series), a["nb_valides"])
+    v("… et la premiere porte la bonne date",
+      a["apercu"][0]["date"] == "2023-09-26", a["apercu"][0])
+    v("… la derniere aussi, quatre ans plus tot",
+      a["apercu"][-1]["date"] == "2021-08-21", a["apercu"][-1])
+
+    # ==================================================================
+    titre("2. Et elles arrivent telles quelles en base")
+    # ==================================================================
+    # Un fichier de quatre ans a besoin des exercices de ces quatre annees :
+    # l'application le dit, plutot que d'inventer une periode comptable.
+    message = dos.refuse("/api/import/valider", {
+        "societe_id": sid, "modele": "factures_vente",
+        "contenu": b64_octets(fichier), "fichier": "ventes.xlsx"})
+    v("un exercice manquant est annonce, pas invente", bool(message), message)
+    v("… en nommant la date et l'ecran ou le creer",
+      "2023" in (message or "") and "Exercices" in (message or ""), message)
+    for annee in range(2021, 2026):
+        dos.appel("/api/exercices", {
+            "societe_id": sid, "libelle": str(annee),
+            "date_debut": f"{annee}-01-01", "date_fin": f"{annee}-12-31"})
+
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "factures_vente",
+        "contenu": b64_octets(fichier), "fichier": "ventes.xlsx"})
+    v("les factures sont enregistrees", r["crees"] == len(series), r)
+    dates = [f["date"] for f in dos.sql(
+        "SELECT date FROM factures ORDER BY date")]
+    v("… avec les dates du fichier, converties une seule fois",
+      dates[0] == "2021-08-21" and dates[-1] == "2025-09-27", dates)
+    v("aucune date aberrante n'est passee",
+      all("1900-01-01" < d < "2099-12-31" for d in dates), dates)
+    v("le montant, lui, n'est pas devenu une date",
+      dos.sql("SELECT montant_ht FROM factures ORDER BY id")[0]["montant_ht"]
+      == 10000000,
+      dos.sql("SELECT montant_ht FROM factures ORDER BY id")[0])
+
+    # ==================================================================
+    titre("3. Ce qui n'est pas une date reste refuse")
+    # ==================================================================
+    # « 2024 » est une annee, pas un numero de serie : la confondre donnerait
+    # le 16/07/1905, en silence.
+    v("une annee seule n'est pas une date",
+      dos.appel("/api/import/analyse", {
+          "societe_id": sid, "modele": "factures_vente",
+          "contenu": b64_octets(classeur_texte(["2024"])),
+          "nom": "x.xlsx"})["nb_rejetes"] == 1)
+    v("une date ecrite normalement passe toujours",
+      dos.appel("/api/import/analyse", {
+          "societe_id": sid, "modele": "factures_vente",
+          "contenu": b64_octets(classeur_texte(["10/06/2024"])),
+          "nom": "x.xlsx"})["apercu"][0]["date"] == "2024-06-10")
+
+
+def classeur_texte(dates: list[str]) -> bytes:
+    """Le meme fichier, mais dont la colonne Date porte du texte."""
+    entetes = ["Numero", "Date", "Client", "Designation", "Montant HT", "TVA %"]
+    lignes = ["<row r=\"1\">" + "".join(
+        f'<c r="{chr(65 + i)}1" t="inlineStr"><is><t>{h}</t></is></c>'
+        for i, h in enumerate(entetes)) + "</row>"]
+    for k, texte in enumerate(dates):
+        r = k + 2
+        lignes.append(
+            f'<row r="{r}">'
+            f'<c r="A{r}" t="inlineStr"><is><t>FT-{2000 + k}</t></is></c>'
+            f'<c r="B{r}" t="inlineStr"><is><t>{texte}</t></is></c>'
+            f'<c r="C{r}" t="inlineStr"><is><t>MAZIGH</t></is></c>'
+            f'<c r="D{r}" t="inlineStr"><is><t>Commission</t></is></c>'
+            f'<c r="E{r}"><v>100000</v></c>'
+            f'<c r="F{r}"><v>19</v></c></row>')
+    feuille = ('<?xml version="1.0" encoding="UTF-8"?>'
+               '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+               '<sheetData>' + "".join(lignes) + '</sheetData></worksheet>')
+    tampon = io.BytesIO()
+    with zipfile.ZipFile(tampon, "w") as archive:
+        archive.writestr("xl/worksheets/sheet1.xml", feuille)
+    return tampon.getvalue()
+
+
 def suite_transfert(dos):
     """Reprendre son dossier sur un second poste.
 
@@ -3591,6 +3741,8 @@ SUITES = [
     ("vente_mixte", "Une vente declaree et non declaree, payee en deux fois",
      suite_vente_mixte, False),
     ("exercices", "Corriger ou supprimer un exercice", suite_exercices, False),
+    ("dates_tableur", "Des dates venues d'un autre tableur", suite_dates_tableur,
+     False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),

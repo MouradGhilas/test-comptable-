@@ -3,6 +3,28 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.10.1
+
+- **Les dates d'un fichier Excel sont enfin comprises.** Une reprise de
+  quatre ans s'arrêtait sur *« 1 ligne sera écrite, 96 mises de côté »*, avec
+  à chaque ligne « date **45195** incompréhensible ». Ce n'était pas une date
+  illisible : c'est ainsi qu'un tableur range les dates — un nombre de jours
+  depuis le 30/12/1899 — et seul le **format de la cellule** les distingue
+  d'un nombre ordinaire. L'application ne reconnaissait que le format de ses
+  propres modèles ; un fichier venu de votre Excel livrait donc « 45195 » là
+  où il y avait le 26/09/2023.
+- L'application lit maintenant **les formats du classeur lui-même** : le
+  format court d'Excel, les formats personnalisés (`jj/mm/aaaa`,
+  `aaaa-mm-jj`…), et les formats de date propres aux autres tableurs. Les
+  montants, eux, restent des montants.
+- **Un numéro de série reste compris même sans son format** — c'est le cas
+  d'un fichier enregistré en CSV, où la colonne perd sa mise en forme.
+  Une année écrite seule (« 2024 ») n'est en revanche jamais prise pour une
+  date : elle donnerait le 16/07/1905 sans que rien ne le dise.
+- Si le fichier couvre des années dont l'exercice n'existe pas encore,
+  l'application le dit clairement, avec l'année concernée et l'écran où le
+  créer. Elle n'invente pas de période comptable.
+
 ## 1.10.0
 
 - **La part non déclarée est une créance, plus une somme réputée encaissée.**
