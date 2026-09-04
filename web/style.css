@@ -287,6 +287,10 @@ nav a .pastille { margin-left: auto; background: var(--danger); color: #fff;
 .indicateur.accent { border-left: 3px solid var(--primaire); }
 .indicateur.succes .valeur { color: var(--succes); }
 .indicateur.danger .valeur { color: var(--danger); }
+/* Ce qui n'entre dans aucune déclaration se lit d'un coup d'œil : ni une
+   erreur, ni un chiffre ordinaire. */
+.indicateur.attention .valeur { color: var(--alerte); }
+.indicateur.attention { border-left: 3px solid var(--alerte); }
 
 /* ---------- Tableaux ---------- */
 /* `overflow-x: auto` fait de l'enveloppe un conteneur de défilement : un

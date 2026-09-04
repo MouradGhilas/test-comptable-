@@ -1045,9 +1045,67 @@ async function ongletExercices(zone) {
     { titre: 'Clôturé le', rendu: (e) => fdate(e.date_cloture) },
     {
       titre: '', classe: 'num',
-      rendu: (e) => e.cloture ? '' : `<button class="petit-bouton" onclick="navigue('/comptabilite/cloture')">Clôturer</button>`,
+      rendu: (e) => e.cloture ? '' : `
+        <button class="petit-bouton" onclick="modifieExercice(${e.id})">Corriger</button>
+        <button class="petit-bouton" onclick="supprimeExercice(${e.id})">Supprimer</button>
+        <button class="petit-bouton" onclick="navigue('/comptabilite/cloture')">Clôturer</button>`,
     },
   ], d.exercices), '<button class="primaire" onclick="nouvelExercice()">+ Exercice</button>', true);
+}
+
+/* Se tromper en créant un exercice n'a rien d'exceptionnel — une année, une
+   date de fin — et rien ne permettait d'y revenir. Le libellé se corrige
+   toujours ; les dates tant que l'exercice est vide, le serveur le dit. */
+async function modifieExercice(id) {
+  const d = await charge('/api/exercices');
+  const ex = d.exercices.find((e) => e.id === id);
+  if (!ex) return;
+  const champs = [
+    { nom: 'libelle', libelle: 'Libellé', requis: true, defaut: ex.libelle },
+    { nom: 'date_debut', libelle: 'Du', type: 'date', requis: true, defaut: ex.date_debut },
+    { nom: 'date_fin', libelle: 'Au', type: 'date', requis: true, defaut: ex.date_fin },
+  ];
+  modale({
+    titre: `Corriger l'exercice ${ex.libelle}`,
+    contenu: avecNote(formulaire(champs), 'info',
+      `Les dates ne changent plus dès que l'exercice porte des écritures :
+       les déplacer les sortirait de leur exercice sans que rien ne le dise.
+       Le libellé, lui, reste corrigeable.`),
+    boutons: [{ libelle: 'Annuler' }, {
+      libelle: 'Enregistrer', classe: 'primaire',
+      action: async (r) => {
+        await envoie(`/api/exercices/${id}`, litFormulaire(r, champs), 'PUT');
+        notifie('Exercice corrigé.', 'succes');
+        await chargeSocietes();
+        afficheRoute();
+      },
+    }],
+  });
+}
+
+/** Un exercice vide s'enlève sans cérémonie ; un exercice qui porte des
+    écritures demande le mot, après avoir dit ce qu'il emporte. */
+async function supprimeExercice(id) {
+  const champs = [{
+    nom: 'confirmation', libelle: 'Confirmation', large: true,
+    aide: 'Saisissez SUPPRIMER si l\'exercice porte des écritures.',
+  }];
+  modale({
+    titre: 'Supprimer un exercice',
+    contenu: avecNote(formulaire(champs), 'alerte',
+      `Un exercice vide disparaît sans conséquence. S'il porte des écritures,
+       elles partent avec lui — l'application dira lesquelles avant de rien
+       faire.`),
+    boutons: [{ libelle: 'Annuler' }, {
+      libelle: 'Supprimer', classe: 'danger',
+      action: async (r) => {
+        const d = await envoie(`/api/exercices/${id}`, litFormulaire(r, champs), 'DELETE');
+        notifie(d.message || 'Exercice supprimé.', 'succes');
+        await chargeSocietes();
+        afficheRoute();
+      },
+    }],
+  });
 }
 
 async function nouvelExercice() {

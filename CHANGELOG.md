@@ -3,6 +3,47 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.9.0
+
+- **Une vente porte ses deux parts, dans une seule saisie.** Le périmètre
+  était un choix par facture : *Déclaré* ou *Hors déclaration*. Or une vente
+  de logement est souvent les deux à la fois — une part facturée, une part
+  réglée à côté. Il fallait saisir deux factures sans lien entre elles, et le
+  prix réellement convenu n'apparaissait nulle part. Le périmètre offre
+  désormais un troisième choix, **« Déclaré + non déclaré »** : la part non
+  déclarée s'inscrit à part, avec son compte de produit et la caisse qui
+  l'encaisse, et l'écran affiche les trois chiffres — **facturé, non déclaré,
+  prix réel**.
+- Cette part donne **sa propre écriture**, équilibrée seule, sans TVA ni droit
+  de timbre, du compte de produit à la caisse. Les deux écritures portent la
+  même référence d'opération : le journal les montre côte à côte plutôt que
+  comme deux ventes sans rapport. La G 50, le TCR et le bilan fiscal
+  continuent de n'en voir aucune trace, et continuent de dire ce qu'ils
+  écartent.
+- **La facture remise au client ne porte que la part facturée.** Une pièce
+  signée qui mentionne une part non déclarée met en cause celui qui l'a
+  établie ; c'est vérifié à chaque version.
+- **Un encaissement peut arriver en plusieurs fois.** Le client apporte un
+  chèque **et** des espèces pour la même vente : l'écran d'encaissement prend
+  autant de lignes que de moyens de paiement, chacune avec son compte et sa
+  référence, et le reste dû se met à jour sous les yeux. Cela fait bien
+  plusieurs règlements — c'est la réalité du relevé — mais une seule saisie.
+- **Le droit de timbre ne porte plus que sur la part en espèces.** Un mode de
+  règlement « Chèque + espèces » ouvre un champ *dont espèces*, et le timbre
+  se calcule sur ce montant seul, au lieu du TTC entier.
+- **Un exercice se corrige, et se supprime.** Se tromper d'année ou de date de
+  fin n'a rien d'exceptionnel, et rien ne permettait d'y revenir. Le libellé
+  se corrige toujours ; les dates tant qu'aucune écriture ne s'y rattache. Un
+  exercice créé par erreur s'enlève d'un clic s'il est vide ; s'il porte la
+  comptabilité, l'application dit **exactement ce qu'il emporterait** et
+  demande le mot, comme pour une restauration.
+- **Les comptes annexes fonctionnaient déjà** : *Paramètres → Plan comptable →
+  Nouveau compte* accepte un `5300005` sans difficulté. C'est de là que se
+  choisit la caisse qui reçoit la part non déclarée.
+- Nouvelle suite d'essais **dans un vrai navigateur** (`outils/test_ecrans.py`,
+  19 contrôles) : un formulaire peut être juste et ne rien afficher — c'est
+  arrivé, et seul un navigateur le voit.
+
 ## 1.8.7
 
 - **La reprise d'une sauvegarde ne s'arrête plus sur « [WinError 32] ».**

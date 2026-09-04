@@ -447,6 +447,20 @@ function formulaire(champs, valeurs = {}) {
   return conteneur;
 }
 
+/** Un formulaire précédé de ce qu'il faut savoir avant de le remplir.
+
+    Une explication placée après coup n'est jamais lue : elle vient d'abord,
+    dans le même bloc, et le formulaire suit. */
+function avecNote(champs, genre, texte) {
+  const conteneur = document.createElement('div');
+  const note = document.createElement('p');
+  note.className = `message ${genre}`;
+  note.textContent = texte.replace(/\s+/g, ' ').trim();
+  conteneur.appendChild(note);
+  conteneur.appendChild(champs);
+  return conteneur;
+}
+
 /** Lit un formulaire construit par `formulaire()`. */
 function litFormulaire(racine, champs) {
   const donnees = {};

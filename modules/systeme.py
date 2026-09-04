@@ -683,6 +683,130 @@ def api_cree_exercice(ctx):
     return {"id": identifiant}
 
 
+#: Ce qu'un exercice peut porter, et le nom qu'on lui donne à l'écran. Sert
+#: à dire ce qui disparaîtrait, plutôt qu'à refuser sans expliquer.
+CONTENU_EXERCICE = (
+    ("ecritures", "écriture", "écritures"),
+    ("factures", "facture", "factures"),
+    ("reglements", "règlement", "règlements"),
+    ("bulletins", "bulletin de paie", "bulletins de paie"),
+    ("declarations_g50", "déclaration G 50", "déclarations G 50"),
+)
+
+
+def contenu_exercice(exercice_id: int) -> list[dict]:
+    """Ce que porte un exercice, table par table."""
+    trouve = []
+    for table, singulier, pluriel in CONTENU_EXERCICE:
+        if not db.table_existe(table) or "exercice_id" not in db.colonnes(table):
+            continue
+        nombre = db.valeur(
+            f"SELECT COUNT(*) FROM {table} WHERE exercice_id = ?", (exercice_id,), 0)
+        if nombre:
+            trouve.append({"table": table, "nombre": nombre,
+                           "libelle": singulier if nombre == 1 else pluriel})
+    return trouve
+
+
+def exercice_ou_erreur(ctx) -> dict:
+    ex = db.ligne("SELECT * FROM exercices WHERE id = ?", (int(ctx.params["id"]),))
+    if not ex:
+        raise ErreurApplicative("Exercice introuvable.", 404)
+    return ex
+
+
+@route("PUT", "/api/exercices/<id>")
+def api_modifie_exercice(ctx):
+    """Corriger un exercice mal saisi : son libellé, et ses dates s'il est vide.
+
+    Se tromper en créant un exercice n'a rien d'exceptionnel, et rien ne
+    permettait d'y revenir. Le libellé se corrige toujours — ce n'est qu'un
+    nom. Les dates, elles, ne bougent que tant qu'aucune écriture ne s'y
+    rattache : les déplacer sous des écritures existantes les sortirait de
+    leur exercice sans que rien ne le dise.
+    """
+    ctx.interdit_lecture_seule()
+    ctx.exige_role("admin", "comptable")
+    ex = exercice_ou_erreur(ctx)
+    if ex["cloture"]:
+        raise ErreurApplicative(
+            f"L'exercice « {ex['libelle']} » est clôturé. Rouvrez-le d'abord "
+            "si vous devez le corriger.")
+
+    maj = {"libelle": ctx.champ("libelle") or ex["libelle"]}
+    debut = ctx.date("date_debut", ex["date_debut"])
+    fin = ctx.date("date_fin", ex["date_fin"])
+    if (debut, fin) != (ex["date_debut"], ex["date_fin"]):
+        porte = contenu_exercice(ex["id"])
+        if porte:
+            detail = ", ".join(f"{c['nombre']} {c['libelle']}" for c in porte)
+            raise ErreurApplicative(
+                f"Les dates de « {ex['libelle']} » ne peuvent plus changer : "
+                f"l'exercice porte {detail}. Le libellé, lui, reste "
+                "modifiable.")
+        if debut >= fin:
+            raise ErreurApplicative("Dates d'exercice invalides.")
+        chevauche = db.ligne(
+            "SELECT libelle FROM exercices WHERE societe_id = ? AND id <> ? "
+            "AND date_debut <= ? AND date_fin >= ?",
+            (ex["societe_id"], ex["id"], fin, debut))
+        if chevauche:
+            raise ErreurApplicative(
+                f"Cette période chevauche l'exercice « {chevauche['libelle']} ».")
+        maj["date_debut"], maj["date_fin"] = debut, fin
+
+    with db.transaction():
+        db.modifie("exercices", ex["id"], maj)
+        db.trace("modification", "exercice", ex["id"], maj["libelle"],
+                 ctx.nom_utilisateur)
+    return {"ok": True, **maj}
+
+
+@route("DELETE", "/api/exercices/<id>")
+def api_supprime_exercice(ctx):
+    """Supprimer un exercice créé par erreur.
+
+    Un exercice vide s'enlève sans cérémonie. Un exercice qui porte des
+    écritures emporterait la comptabilité avec lui : on dit alors exactement
+    ce qu'il contient, et on exige que ce soit tapé — la même confirmation
+    que pour la restauration d'une sauvegarde. Un comptable sait ce qu'il
+    fait ; il ne doit simplement pas pouvoir le faire d'un clic distrait.
+    """
+    ctx.interdit_lecture_seule()
+    ctx.exige_role("admin")
+    ex = exercice_ou_erreur(ctx)
+    if ex["cloture"]:
+        raise ErreurApplicative(
+            f"L'exercice « {ex['libelle']} » est clôturé : il ne se supprime "
+            "pas. Rouvrez-le d'abord si c'est bien ce que vous voulez.")
+
+    porte = contenu_exercice(ex["id"])
+    if porte and ctx.champ("confirmation") != "SUPPRIMER":
+        detail = ", ".join(f"{c['nombre']} {c['libelle']}" for c in porte)
+        raise ErreurApplicative(
+            f"L'exercice « {ex['libelle']} » porte {detail}. Les supprimer "
+            "efface définitivement cette part de la comptabilité — les "
+            "sauvegardes déjà faites, elles, la gardent. Saisissez SUPPRIMER "
+            "pour confirmer.")
+
+    autres = db.valeur(
+        "SELECT COUNT(*) FROM exercices WHERE societe_id = ? AND id <> ?",
+        (ex["societe_id"], ex["id"]), 0)
+    if not autres:
+        raise ErreurApplicative(
+            "C'est le seul exercice du dossier : le supprimer laisserait le "
+            "dossier sans période comptable. Créez le bon exercice d'abord, "
+            "puis supprimez celui-ci.")
+
+    with db.transaction():
+        db.trace("suppression", "exercice", ex["id"],
+                 {"libelle": ex["libelle"], "contenu": porte},
+                 ctx.nom_utilisateur)
+        db.supprime("exercices", ex["id"])
+    return {"ok": True, "supprime": porte,
+            "message": f"Exercice « {ex['libelle']} » supprimé."}
+
+
 # ---------------------------------------------------------------------------
 # Tableau de bord
 # ---------------------------------------------------------------------------

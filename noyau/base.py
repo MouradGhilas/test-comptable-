@@ -141,7 +141,7 @@ SCHEMA = Path(__file__).parent / "schema.sql"
 
 #: Version du schéma attendue par cette version du programme.
 #: À incrémenter dès qu'une migration est ajoutée ci-dessous.
-VERSION_SCHEMA = 9
+VERSION_SCHEMA = 10
 
 
 def colonnes(table: str) -> set[str]:
@@ -362,6 +362,29 @@ def _migration_9() -> None:
                    "INTEGER NOT NULL DEFAULT 0")
 
 
+def _migration_10() -> None:
+    """Une vente porte sa part déclarée et sa part non déclarée, ensemble.
+
+    Le périmètre était un choix par facture : déclaré, ou hors déclaration.
+    Une vente de logement est souvent les deux à la fois — une part facturée,
+    une part réglée à côté, encaissée en caisse. Il fallait donc saisir deux
+    factures sans lien entre elles, et le prix réellement convenu
+    n'apparaissait nulle part.
+    """
+    ajoute_colonne("factures", "montant_hors", "INTEGER NOT NULL DEFAULT 0")
+    ajoute_colonne("factures", "compte_hors", "TEXT")
+    ajoute_colonne("factures", "tresorerie_hors_id", "INTEGER")
+    ajoute_colonne("factures", "ecriture_hors_id", "INTEGER")
+    ajoute_colonne("factures", "operation_ref", "TEXT")
+    # Le droit de timbre ne porte que sur ce qui est réglé en espèces. Il
+    # fallait donc savoir combien, quand le client apporte un chèque et des
+    # espèces pour une même vente.
+    ajoute_colonne("factures", "montant_espece", "INTEGER NOT NULL DEFAULT 0")
+    # Le même encaissement en deux modes fait deux règlements : ils restent
+    # reconnaissables comme un seul geste.
+    ajoute_colonne("reglements", "operation_ref", "TEXT")
+
+
 #: version -> fonction de migration. Exécutées dans l'ordre croissant.
 MIGRATIONS = {
     2: _migration_2,
@@ -372,6 +395,7 @@ MIGRATIONS = {
     7: _migration_7,
     8: _migration_8,
     9: _migration_9,
+    10: _migration_10,
 }
 
 

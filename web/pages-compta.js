@@ -1013,6 +1013,12 @@ async function ficheFacture(zone, id) {
       ${indicateur('Reste dû', fm(f.net_a_payer - f.montant_regle, true), etiquette(f.statut),
         f.net_a_payer - f.montant_regle > 0 ? 'danger' : 'succes')}
     </div>
+    ${f.montant_hors ? `<div class="grille c3" style="margin-bottom:16px">
+      ${indicateur('Facturé (déclaré)', fm(f.net_a_payer, true), 'entre dans la G 50')}
+      ${indicateur('Non déclaré', fm(f.montant_hors, true),
+        `${ech(f.compte_hors || '')}${f.tresorerie_hors ? ' — ' + ech(f.tresorerie_hors) : ''}`, 'attention')}
+      ${indicateur('Prix réel', fm(f.prix_reel, true), 'déclaré + non déclaré', 'accent')}
+    </div>` : ''}
     ${carte('Lignes', tableau([
       { titre: 'Désignation', rendu: (l) => ech(l.designation) },
       { titre: 'Qté', classe: 'num', rendu: (l) => (l.quantite / 1000).toFixed(2) },
@@ -1031,7 +1037,10 @@ async function ficheFacture(zone, id) {
     ], f.reglements), '', true) : ''}
     ${f.ecriture ? carte('Écriture comptable générée',
       `<div class="rangee"><span>${ech(f.ecriture.journal)} — ${ech(f.ecriture.numero)} du ${fdate(f.ecriture.date)}</span>
-       <button class="petit-bouton" onclick="detailEcriture(${f.ecriture_id})">Voir le détail</button></div>`) : ''}`;
+       <button class="petit-bouton" onclick="detailEcriture(${f.ecriture_id})">Voir le détail</button></div>
+       ${f.ecriture_hors ? `<div class="rangee" style="margin-top:8px">
+         <span>${badgePerimetre('hors_declaration')} ${ech(f.ecriture_hors.journal)} — ${ech(f.ecriture_hors.numero)} du ${fdate(f.ecriture_hors.date)}</span>
+         <button class="petit-bouton" onclick="detailEcriture(${f.ecriture_hors_id})">Voir le détail</button></div>` : ''}`) : ''}`;
 }
 
 const COMPTES_PRODUIT = [
@@ -1050,9 +1059,10 @@ async function editeFacture(id, sens = 'vente') {
   const existante = id ? await api(`/api/factures/${id}`) : null;
   if (existante) sens = existante.sens;
   const achat = sens.includes('achat');
-  const [tiersOptions, comptes] = await Promise.all([
+  const [tiersOptions, comptes, tresoreries] = await Promise.all([
     optionsTiers(achat ? 'fournisseur' : 'client'),
     achat ? optionsComptes('6') : Promise.resolve(COMPTES_PRODUIT),
+    optionsTresorerie(),
   ]);
 
   const conteneur = document.createElement('div');
@@ -1067,12 +1077,17 @@ async function editeFacture(id, sens = 'vente') {
       <label class="champ"><span>Échéance</span><input type="date" id="f-echeance" value="${existante?.date_echeance || ''}"></label>
       <label class="champ"><span>Mode de règlement</span><select id="f-mode">
         <option value="">—</option>
-        ${[['virement', 'Virement'], ['cheque', 'Chèque'], ['espece', 'Espèces'], ['traite', 'Traite']]
+        ${[['virement', 'Virement'], ['cheque', 'Chèque'], ['espece', 'Espèces'],
+           ['traite', 'Traite'], ['mixte', 'Chèque + espèces']]
           .map(([v, l]) => `<option value="${v}" ${existante?.mode_reglement === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select><div class="aide">Espèces : le droit de timbre est ajouté automatiquement.</div></label>
+      <label class="champ" id="f-bloc-espece" hidden><span>dont espèces</span>
+        <input class="num" id="f-espece" value="${existante?.montant_espece ? pourChamp(existante.montant_espece) : ''}">
+        <div class="aide">Le droit de timbre ne porte que sur cette part.</div></label>
       <label class="champ"><span>Périmètre</span><select id="f-perimetre">
         <option value="declare">Déclaré</option>
         <option value="hors_declaration">Hors déclaration</option>
+        <option value="totalite">Déclaré + non déclaré</option>
       </select></label>
       <label class="champ" style="grid-column:1/-1"><span>Objet</span>
         <input id="f-objet" value="${ech(existante?.objet || '')}"></label>
@@ -1087,6 +1102,32 @@ async function editeFacture(id, sens = 'vente') {
       <span>Total HT <strong id="f-ht">0,00</strong></span>
       <span>TVA <strong id="f-tva">0,00</strong></span>
       <span>Total TTC <strong id="f-ttc">0,00</strong></span>
+    </div>
+    <div id="f-bloc-hors" hidden>
+      <p class="message info">
+        <strong>Part non déclarée</strong>
+        Elle n'apparaît pas sur la facture remise au ${achat ? 'fournisseur' : 'client'} :
+        une pièce qui la porte vous met en cause. Elle est enregistrée à part,
+        sans TVA ni droit de timbre, et le journal la montre à côté de la part
+        déclarée, comme une seule opération.
+      </p>
+      <div class="ligne-champs">
+        <label class="champ"><span>Montant</span>
+          <input class="num" id="f-hors-montant" value="${existante?.montant_hors ? pourChamp(existante.montant_hors) : ''}"></label>
+        <label class="champ"><span>Compte de ${achat ? 'charge' : 'produit'}</span>
+          <select id="f-hors-compte">${comptes.map(([v, l]) =>
+            `<option value="${ech(v)}">${ech(l)}</option>`).join('')}</select>
+          <div class="aide">Par défaut, celui de la première ligne.</div></label>
+        <label class="champ"><span>Encaissée sur</span>
+          <select id="f-hors-tresorerie"><option value="">—</option>${tresoreries.map(([v, l]) =>
+            `<option value="${v}">${ech(l)}</option>`).join('')}</select>
+          <div class="aide">La caisse ou la banque qui reçoit cette part.</div></label>
+      </div>
+      <div class="bandeau-equilibre">
+        <span>Facturé (déclaré) <strong id="f-recap-declare">0,00</strong></span>
+        <span>Non déclaré <strong id="f-recap-hors">0,00</strong></span>
+        <span>Prix réel <strong id="f-recap-total">0,00</strong></span>
+      </div>
     </div>`;
 
   const corps = $('#f-lignes', conteneur);
@@ -1136,13 +1177,57 @@ async function editeFacture(id, sens = 'vente') {
     $('#f-ht', conteneur).textContent = fm(ht);
     $('#f-tva', conteneur).textContent = fm(tva);
     $('#f-ttc', conteneur).textContent = fm(ht + tva);
+    suitLePremierCompte();
+    recapitule(ht + tva);
+  }
+
+  /* Une vente de logement reste une vente de logement, déclarée ou non : le
+     compte de la part non déclarée suit celui de la première ligne — jusqu'à
+     ce qu'il en choisisse un autre, et alors on ne le lui reprend plus. */
+  let compteHorsChoisi = Boolean(existante?.compte_hors);
+  function suitLePremierCompte() {
+    if (compteHorsChoisi) return;
+    const premier = $$('tr', corps).map((tr) => $('.d-compte', tr).value)
+      .find(Boolean);
+    const champ = $('#f-hors-compte', conteneur);
+    if (premier && champ && champ.value !== premier) champ.value = premier;
+  }
+
+  /** Les trois chiffres de la vente : ce qui est facturé, ce qui est encaissé
+      à côté, et le prix réellement convenu — celui qui doit tomber juste. */
+  function recapitule(ttc) {
+    const hors = cts($('#f-hors-montant', conteneur).value);
+    $('#f-recap-declare', conteneur).textContent = fm(ttc);
+    $('#f-recap-hors', conteneur).textContent = fm(hors);
+    $('#f-recap-total', conteneur).textContent = fm(ttc + hors);
+  }
+
+  /** Le bloc « part non déclarée » ne s'ouvre que si la vente en porte une ;
+      le champ « dont espèces » que si le client paie en deux fois. */
+  function appliqueModes() {
+    const totalite = $('#f-perimetre', conteneur).value === 'totalite';
+    $('#f-bloc-hors', conteneur).hidden = !totalite;
+    $('#f-bloc-espece', conteneur).hidden = $('#f-mode', conteneur).value !== 'mixte';
+    if (!totalite) $('#f-hors-montant', conteneur).value = '';
+    recalcule();
   }
 
   (existante?.lignes?.length ? existante.lignes : [{}]).forEach(ajouteLigne);
-  $('#f-perimetre', conteneur).value = existante?.perimetre
-    || (App.etat.perimetre !== 'tous' ? App.etat.perimetre : 'declare');
+  // Une facture déclarée qui porte une part encaissée à côté se rouvre sur
+  // le choix qui la décrit, pas sur « Déclaré » tout court.
+  $('#f-perimetre', conteneur).value = existante?.montant_hors ? 'totalite'
+    : (existante?.perimetre
+       || (App.etat.perimetre !== 'tous' ? App.etat.perimetre : 'declare'));
+  if (existante?.compte_hors) $('#f-hors-compte', conteneur).value = existante.compte_hors;
+  if (existante?.tresorerie_hors_id) {
+    $('#f-hors-tresorerie', conteneur).value = existante.tresorerie_hors_id;
+  }
   $('#f-ajout', conteneur).onclick = () => ajouteLigne();
-  recalcule();
+  $('#f-perimetre', conteneur).onchange = appliqueModes;
+  $('#f-mode', conteneur).onchange = appliqueModes;
+  $('#f-hors-montant', conteneur).oninput = recalcule;
+  $('#f-hors-compte', conteneur).onchange = () => { compteHorsChoisi = true; };
+  appliqueModes();
 
   const collecte = () => ({
     sens,
@@ -1151,8 +1236,13 @@ async function editeFacture(id, sens = 'vente') {
     date: $('#f-date', conteneur).value,
     date_echeance: $('#f-echeance', conteneur).value,
     mode_reglement: $('#f-mode', conteneur).value,
+    montant_espece: $('#f-espece', conteneur).value,
     objet: $('#f-objet', conteneur).value,
     perimetre: $('#f-perimetre', conteneur).value,
+    montant_hors: $('#f-perimetre', conteneur).value === 'totalite'
+      ? $('#f-hors-montant', conteneur).value : '',
+    compte_hors: $('#f-hors-compte', conteneur).value,
+    tresorerie_hors_id: $('#f-hors-tresorerie', conteneur).value,
     lignes: litLignes(),
   });
 
@@ -1213,29 +1303,93 @@ async function creeAvoir(id) {
 
 async function regleFacture(id) {
   const f = await api(`/api/factures/${id}`);
+  const achat = f.sens.includes('achat');
   const reste = f.net_a_payer - f.montant_regle;
-  const champs = [
-    { nom: 'tresorerie_id', libelle: 'Compte', type: 'select', requis: true, vide: false, options: await optionsTresorerie() },
-    { nom: 'date', libelle: 'Date', type: 'date', requis: true, defaut: aujourdhui() },
-    { nom: 'montant', libelle: 'Montant', type: 'montant', requis: true, defaut: reste },
-    {
-      nom: 'mode', libelle: 'Mode', type: 'select', vide: false,
-      options: [['virement', 'Virement'], ['cheque', 'Chèque'], ['espece', 'Espèces'], ['traite', 'Traite']],
-    },
-    { nom: 'reference', libelle: 'Référence (n° chèque/virement)', large: true },
-  ];
+  const tresoreries = await optionsTresorerie();
+  const MODES = [['virement', 'Virement'], ['cheque', 'Chèque'],
+                 ['espece', 'Espèces'], ['traite', 'Traite']];
+
+  const conteneur = document.createElement('div');
+  conteneur.innerHTML = `
+    <div class="ligne-champs">
+      <label class="champ"><span>Date *</span>
+        <input type="date" id="r-date" value="${aujourdhui()}"></label>
+      <label class="champ"><span>Reste dû</span>
+        <input value="${fm(reste)}" disabled></label>
+    </div>
+    <p class="message info">
+      Un même règlement peut arriver en plusieurs fois — un chèque et des
+      espèces pour la même vente. Ajoutez une ligne par moyen de paiement :
+      chacun garde son compte et sa référence, et l'ensemble reste une seule
+      opération.
+    </p>
+    <table class="saisie"><thead><tr>
+      <th style="width:20%">Mode</th><th style="width:30%">Compte</th>
+      <th style="width:22%">Référence</th><th style="width:22%" class="num">Montant</th><th></th>
+    </tr></thead><tbody id="r-lignes"></tbody></table>
+    <div class="rangee" style="margin-top:8px">
+      <button class="petit-bouton" id="r-ajout">+ Moyen de paiement</button></div>
+    <div class="bandeau-equilibre">
+      <span>Total saisi <strong id="r-total">0,00</strong></span>
+      <span>Reste après <strong id="r-apres">0,00</strong></span>
+    </div>`;
+
+  const corps = $('#r-lignes', conteneur);
+
+  function ajouteLigne(montant = '') {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><select class="r-mode">${MODES.map(([v, l]) =>
+        `<option value="${v}">${l}</option>`).join('')}</select></td>
+      <td><select class="r-tresorerie">${tresoreries.map(([v, l]) =>
+        `<option value="${v}">${ech(l)}</option>`).join('')}</select></td>
+      <td><input class="r-reference" placeholder="n° chèque"></td>
+      <td><input class="r-montant num" value="${montant}"></td>
+      <td><button class="plat petit-bouton">✕</button></td>`;
+    $('button', tr).onclick = () => {
+      if ($$('tr', corps).length > 1) { tr.remove(); recalcule(); }
+    };
+    $$('input, select', tr).forEach((el) => { el.oninput = recalcule; });
+    corps.appendChild(tr);
+    recalcule();
+  }
+
+  function recalcule() {
+    const total = $$('tr', corps)
+      .reduce((somme, tr) => somme + cts($('.r-montant', tr).value), 0);
+    $('#r-total', conteneur).textContent = fm(total);
+    $('#r-apres', conteneur).textContent = fm(reste - total);
+  }
+
+  function litLignes() {
+    return $$('tr', corps).map((tr) => ({
+      mode: $('.r-mode', tr).value,
+      tresorerie_id: $('.r-tresorerie', tr).value,
+      reference: $('.r-reference', tr).value,
+      montant: $('.r-montant', tr).value,
+    })).filter((l) => cts(l.montant) > 0);
+  }
+
+  ajouteLigne(pourChamp(reste));
+  $('#r-ajout', conteneur).onclick = () => ajouteLigne();
+
   modale({
-    titre: `${f.sens.includes('achat') ? 'Régler' : 'Encaisser'} la facture ${f.numero}`,
-    contenu: formulaire(champs),
+    titre: `${achat ? 'Régler' : 'Encaisser'} la facture ${f.numero}`,
+    contenu: conteneur, large: true,
     boutons: [{ libelle: 'Annuler' }, {
       libelle: 'Enregistrer', classe: 'primaire',
-      action: async (r) => {
-        await envoie('/api/reglements', {
-          ...litFormulaire(r, champs),
-          sens: f.sens.includes('achat') ? 'decaissement' : 'encaissement',
-          facture_id: id, tiers_id: f.tiers_id,
+      action: async () => {
+        const lignes = litLignes();
+        if (!lignes.length) throw new Error('Saisissez au moins un montant.');
+        const d = await envoie('/api/reglements/multiple', {
+          societe_id: App.etat.societe.id,
+          sens: achat ? 'decaissement' : 'encaissement',
+          date: $('#r-date', conteneur).value,
+          facture_id: id, tiers_id: f.tiers_id, lignes,
         });
-        notifie('Règlement enregistré.', 'succes');
+        notifie(lignes.length > 1
+          ? `${lignes.length} règlements enregistrés — ${fm(d.total)} au total.`
+          : 'Règlement enregistré.', 'succes');
         afficheRoute();
       },
     }],

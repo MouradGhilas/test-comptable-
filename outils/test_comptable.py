@@ -3192,6 +3192,293 @@ def suite_transfert(dos):
       [a["cle"] for a in sante["anomalies"]])
 
 
+def suite_vente_mixte(dos):
+    """Une vente qui porte les deux parts, et un client qui paie en deux fois.
+
+    « Quand on fait une vente, 80 % déclaré et 20 % non. » Le périmètre était
+    un choix par facture : déclaré, ou hors déclaration. Il fallait donc
+    saisir deux factures sans lien entre elles, et le prix réellement convenu
+    n'apparaissait nulle part.
+
+    Les montants non déclarés sont tous multiples du marqueur : aucun d'eux
+    ne doit apparaître dans un état fiscal.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "mixte", "mot_de_passe": "motdepasse123",
+        "nom_complet": "Comptable", "raison_sociale": "SARL PROMOTION",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    ex = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]
+    exid, du, au = ex["id"], ex["date_debut"], ex["date_fin"]
+    annee = int(du[:4])
+
+    client = dos.appel("/api/tiers", {
+        "societe_id": sid, "type": "client",
+        "raison_sociale": "RAMDANI ELMEHDI"})["id"]
+
+    # ==================================================================
+    titre("1. Le compte annexe qu'il cree lui-meme")
+    # ==================================================================
+    # « Que l'application me donne la possibilite de rajouter des comptes
+    #   annexes. Par exemple 5300005. »
+    caisse_compte = dos.appel("/api/comptes", {
+        "societe_id": sid, "numero": "5300005",
+        "intitule": "Caisse — encaissements non declares", "nature": "debit"})
+    v("un sous-compte de caisse a sept chiffres est accepte",
+      bool(caisse_compte.get("id")), caisse_compte)
+    caisse = dos.appel("/api/tresorerie", {
+        "societe_id": sid, "code": "CA2", "libelle": "Caisse annexe",
+        "type": "caisse", "compte": "5300005"})["id"]
+    v("… et sert de compte de tresorerie", bool(caisse), caisse)
+
+    # ==================================================================
+    titre("2. Une seule vente, ses deux parts")
+    # ==================================================================
+    # Declare : 100 000 HT + 19 000 TVA = 119 000 TTC. Non declare : 77 770.
+    facture = dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "tiers_id": client,
+        "date": f"{annee}-08-16", "perimetre": "totalite",
+        "montant_hors": "77770", "compte_hors": "7011",
+        "tresorerie_hors_id": caisse,
+        "lignes": [{"designation": "Logement F3 — batiment B",
+                    "quantite": 1, "prix_unitaire": "100000",
+                    "taux_tva": 19, "compte": "7011"}],
+        "valider": True})
+    fid = facture["id"]
+    f = dos.appel(f"/api/factures/{fid}")
+    v("la part declaree est celle de la facture", f["montant_ttc"] == 11900000,
+      fm(f["montant_ttc"]))
+    v("la part non declaree est portee a part", f["montant_hors"] == 7777000,
+      fm(f["montant_hors"]))
+    v("le prix reellement convenu est donne", f["prix_reel"] == 11900000 + 7777000,
+      fm(f["prix_reel"]))
+    v("les deux ecritures existent", bool(f["ecriture_id"] and f["ecriture_hors_id"]),
+      (f["ecriture_id"], f["ecriture_hors_id"]))
+    v("… et se reconnaissent comme une seule operation",
+      bool(f["operation_ref"]), f["operation_ref"])
+
+    lignes_hors = dos.sql(
+        "SELECT compte, debit, credit FROM lignes WHERE ecriture_id = ? ORDER BY id",
+        (f["ecriture_hors_id"],))
+    v("la part non declaree va du produit a la caisse annexe",
+      {(l["compte"], l["debit"], l["credit"]) for l in lignes_hors}
+      == {("5300005", 7777000, 0), ("7011", 0, 7777000)}, lignes_hors)
+    v("… sans TVA", not any(l["compte"].startswith("445") for l in lignes_hors),
+      lignes_hors)
+    perimetres = dos.sql(
+        "SELECT id, perimetre FROM ecritures WHERE id IN (?, ?)",
+        (f["ecriture_id"], f["ecriture_hors_id"]))
+    v("chaque ecriture porte son propre perimetre",
+      {p["perimetre"] for p in perimetres} == {"declare", "hors_declaration"},
+      perimetres)
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("3. Rien de la part non declaree n'atteint la declaration")
+    # ==================================================================
+    g = dos.appel(f"/api/g50?societe={sid}&periode={annee}-08")
+    fuites = contient_marqueur(g)
+    v("la G 50 ne porte aucun montant non declare", not fuites, fuites[:5])
+    v("la TVA collectee est celle de la seule part facturee",
+      g.get("tva_collectee", 0) == 1900000, fm(g.get("tva_collectee", 0)))
+    v("… et la G 50 annonce ce qu'elle ecarte",
+      g.get("hors_declaration", {}).get("produits") == 7777000,
+      g.get("hors_declaration"))
+
+    tcr = dos.appel(f"/api/etats/tcr?societe={sid}&exercice={exid}&perimetre=declare")
+    v("le TCR declare non plus", not contient_marqueur(tcr.get("lignes", [])),
+      contient_marqueur(tcr.get("lignes", []))[:5])
+
+    b_tous = dos.appel(f"/api/balance?societe={sid}&exercice={exid}&du={du}&au={au}")
+    ca_reel = -sum(l["solde_debit"] - l["solde_credit"] for l in b_tous["lignes"]
+                   if l["compte"].startswith("70"))
+    v("la vue reelle, elle, montre le prix convenu",
+      ca_reel == 10000000 + 7777000, fm(ca_reel))
+
+    # ==================================================================
+    titre("4. La facture remise au client ne porte que le declare")
+    # ==================================================================
+    contenu, _ = dos.appel(f"/api/factures/{fid}/impression", brut=True)
+    texte = contenu.decode("utf-8", "replace")
+    v("le montant non declare n'y figure pas", "77 770" not in texte,
+      [l for l in texte.splitlines() if "77 770" in l][:3])
+    v("le prix reel n'y figure pas non plus", "196 770" not in texte)
+    v("… mais le net a payer declare y est", "119 000" in texte)
+
+    # ==================================================================
+    titre("5. Le client apporte un cheque et des especes")
+    # ==================================================================
+    comptes_tresorerie = dos.appel(f"/api/tresorerie?societe={sid}")["comptes"]
+    banque_id = next((c["id"] for c in comptes_tresorerie
+                      if c["type"] in ("banque", "ccp")), None)
+    if banque_id is None:
+        banque_id = dos.appel("/api/tresorerie", {
+            "societe_id": sid, "code": "BQ1", "libelle": "Banque",
+            "type": "banque", "compte": "512"})["id"]
+    r = dos.appel("/api/reglements/multiple", {
+        "societe_id": sid, "sens": "encaissement", "facture_id": fid,
+        "tiers_id": client, "date": f"{annee}-08-20",
+        "lignes": [
+            {"mode": "cheque", "tresorerie_id": banque_id,
+             "reference": "CH-114520", "montant": "80000"},
+            {"mode": "espece", "tresorerie_id": caisse,
+             "montant": "39000"}]})
+    v("les deux moyens de paiement sont enregistres",
+      len(r["reglements"]) == 2, r)
+    v("… pour le total attendu", r["total"] == 11900000, fm(r["total"]))
+    v("… et restent une seule operation", bool(r["operation_ref"]),
+      r["operation_ref"])
+    modes = dos.sql("SELECT mode, montant FROM reglements "
+                    "WHERE facture_id = ? ORDER BY id", (fid,))
+    v("chacun garde son mode et son montant",
+      [(m["mode"], m["montant"]) for m in modes]
+      == [("cheque", 8000000), ("espece", 3900000)], modes)
+    f = dos.appel(f"/api/factures/{fid}")
+    v("la facture est soldee", f["statut"] == "payee", f["statut"])
+    v("la comptabilite tient toujours", dos.equilibre_global())
+
+    # ==================================================================
+    titre("6. Le droit de timbre ne porte que sur la part en especes")
+    # ==================================================================
+    mixte = dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "tiers_id": client,
+        "date": f"{annee}-09-02", "mode_reglement": "mixte",
+        "montant_espece": "50000",
+        "lignes": [{"designation": "Commission", "quantite": 1,
+                    "prix_unitaire": "100000", "taux_tva": 19,
+                    "compte": "7061"}]})
+    fm_mixte = dos.appel(f"/api/factures/{mixte['id']}")
+    tout_espece = dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "tiers_id": client,
+        "date": f"{annee}-09-03", "mode_reglement": "espece",
+        "lignes": [{"designation": "Commission", "quantite": 1,
+                    "prix_unitaire": "100000", "taux_tva": 19,
+                    "compte": "7061"}]})
+    f_espece = dos.appel(f"/api/factures/{tout_espece['id']}")
+    v("un timbre est bien du sur la part en especes",
+      fm_mixte["timbre"] > 0, fm_mixte["timbre"])
+    v("… mais moins que si tout etait paye en especes",
+      fm_mixte["timbre"] < f_espece["timbre"],
+      f"{fm(fm_mixte['timbre'])} vs {fm(f_espece['timbre'])}")
+    # 1 % de 50 000 DA d'especes = 500 DA, la ou tout en especes en donnerait
+    # 1 % de 119 000 DA.
+    v("… et proportionne a cette part", fm_mixte["timbre"] == 50000,
+      fm(fm_mixte["timbre"]))
+    v("… tout en especes, le timbre porte sur le TTC entier",
+      f_espece["timbre"] == 119000, fm(f_espece["timbre"]))
+
+    # ==================================================================
+    titre("7. Ce que la saisie refuse, et pourquoi")
+    # ==================================================================
+    message = dos.refuse("/api/factures", {
+        "societe_id": sid, "sens": "vente", "tiers_id": client,
+        "date": f"{annee}-09-10", "perimetre": "totalite",
+        "montant_hors": "10000", "compte_hors": "7011",
+        "lignes": [{"designation": "Vente", "quantite": 1,
+                    "prix_unitaire": "1000", "taux_tva": 19, "compte": "7011"}]})
+    v("une part non declaree sans caisse est refusee", bool(message), message)
+    v("… en disant ce qui manque et pourquoi",
+      "encaiss" in (message or "").lower(), message)
+
+    message = dos.refuse("/api/factures", {
+        "societe_id": sid, "sens": "vente", "tiers_id": client,
+        "date": f"{annee}-09-10", "perimetre": "totalite",
+        "montant_hors": "10000", "compte_hors": "9999999",
+        "tresorerie_hors_id": caisse,
+        "lignes": [{"designation": "Vente", "quantite": 1,
+                    "prix_unitaire": "1000", "taux_tva": 19, "compte": "7011"}]})
+    v("un compte absent du plan est refuse", bool(message), message)
+    v("… en disant ou le creer", "Plan comptable" in (message or ""), message)
+
+
+def suite_exercices(dos):
+    """Corriger un exercice mal saisi, ou l'enlever.
+
+    « Il veut pouvoir supprimer un exercice et changer le libelle s'il s'est
+    trompe. » Rien ne permettait de revenir sur un exercice une fois cree.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "ex", "mot_de_passe": "motdepasse123",
+        "nom_complet": "Comptable", "raison_sociale": "SARL EXERCICES",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    ex = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]
+    annee = int(ex["date_debut"][:4])
+
+    # ==================================================================
+    titre("1. Le libelle se corrige, toujours")
+    # ==================================================================
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "OD", "date": f"{annee}-04-01",
+        "libelle": "Une ecriture", "valider": True,
+        "lignes": [{"compte": "607", "debit": "1000", "credit": "0"},
+                   {"compte": "401", "debit": "0", "credit": "1000"}]})
+    dos.appel(f"/api/exercices/{ex['id']}",
+              {"libelle": f"Exercice {annee}"}, "PUT")
+    v("le libelle est corrige meme sur un exercice qui porte des ecritures",
+      dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]["libelle"]
+      == f"Exercice {annee}")
+
+    # ==================================================================
+    titre("2. Les dates ne bougent plus sous les ecritures")
+    # ==================================================================
+    message = dos.refuse(f"/api/exercices/{ex['id']}", {
+        "libelle": f"Exercice {annee}",
+        "date_debut": f"{annee}-02-01", "date_fin": f"{annee}-12-31"}, "PUT")
+    v("les dates sont refusees", bool(message), message)
+    v("… en disant ce que l'exercice porte",
+      "ecriture" in (message or "").lower().replace("é", "e"), message)
+
+    # ==================================================================
+    titre("3. Un exercice cree par erreur s'enleve")
+    # ==================================================================
+    faux = dos.appel("/api/exercices", {
+        "societe_id": sid, "libelle": "2043",
+        "date_debut": "2043-01-01", "date_fin": "2043-12-31"})["id"]
+    r = dos.appel(f"/api/exercices/{faux}", {}, "DELETE")
+    v("un exercice vide part sans confirmation", r.get("ok"), r)
+    v("… et il a bien disparu",
+      all(e["id"] != faux for e in
+          dos.appel(f"/api/exercices?societe={sid}")["exercices"]))
+
+    # ==================================================================
+    titre("4. Un exercice qui porte la comptabilite se defend")
+    # ==================================================================
+    message = dos.refuse(f"/api/exercices/{ex['id']}", {}, "DELETE")
+    v("il ne part pas d'un clic", bool(message), message)
+    v("… et il dit exactement ce qu'il emporterait",
+      "1 ecriture" in (message or "").lower().replace("é", "e"), message)
+    v("… en rappelant que les sauvegardes, elles, la gardent",
+      "sauvegarde" in (message or "").lower(), message)
+
+    # ==================================================================
+    titre("5. Le dernier exercice ne se supprime pas")
+    # ==================================================================
+    message = dos.refuse(f"/api/exercices/{ex['id']}",
+                         {"confirmation": "SUPPRIMER"}, "DELETE")
+    v("le seul exercice du dossier est protege", bool(message), message)
+    v("… en disant quoi faire d'abord",
+      "exercice" in (message or "").lower(), message)
+
+    # Avec un second exercice, la suppression confirmee passe.
+    autre = dos.appel("/api/exercices", {
+        "societe_id": sid, "libelle": "2044",
+        "date_debut": "2044-01-01", "date_fin": "2044-12-31"})["id"]
+    avant = dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"]
+    v("la comptabilite est bien la avant", avant == 1, avant)
+    r = dos.appel(f"/api/exercices/{ex['id']}",
+                  {"confirmation": "SUPPRIMER"}, "DELETE")
+    v("confirmee, la suppression aboutit", r.get("ok"), r)
+    v("… et elle emporte ce qui etait annonce",
+      dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == 0)
+    v("… en laissant une trace",
+      bool(dos.sql("SELECT id FROM audit WHERE entite = 'exercice' "
+                   "AND action = 'suppression'")))
+    v("l'autre exercice est intact",
+      [e["id"] for e in dos.appel(f"/api/exercices?societe={sid}")["exercices"]]
+      == [autre])
+
+
 SUITES = [
     ("conformite", "Conformite comptable -- une annee tenue", suite_conformite, True),
     ("limites", "Ce que le logiciel doit refuser", suite_limites, False),
@@ -3204,6 +3491,9 @@ SUITES = [
     ("correction", "Corriger une ecriture deja enregistree", suite_correction, False),
     ("paie", "Les primes valent ce qu'on a tape", suite_paie, False),
     ("transfert", "Reprendre son dossier sur un second poste", suite_transfert, False),
+    ("vente_mixte", "Une vente declaree et non declaree, payee en deux fois",
+     suite_vente_mixte, False),
+    ("exercices", "Corriger ou supprimer un exercice", suite_exercices, False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),

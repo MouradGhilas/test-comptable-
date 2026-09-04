@@ -72,18 +72,33 @@ def calcule_lignes(lignes_saisies: list[dict]) -> tuple[list[dict], int, int]:
     return preparees, total_ht, total_tva
 
 
+def base_timbre(mode_reglement: str | None, montant_ttc: int,
+                montant_espece: int = 0) -> int:
+    """Ce sur quoi porte le droit de timbre : la part réglée en espèces.
+
+    Le client apporte souvent un chèque **et** des espèces pour une même
+    vente. Le timbre ne se calcule alors ni sur rien, ni sur tout : sur la
+    part en espèces, et sur elle seule.
+    """
+    if mode_reglement == "espece":
+        return max(0, montant_ttc)
+    if mode_reglement == "mixte":
+        return max(0, min(int(montant_espece or 0), max(0, montant_ttc)))
+    return 0
+
+
 def calcule_timbre(societe_id: int, mode_reglement: str | None, montant_ttc: int,
-                   annee: int) -> int:
+                   annee: int, montant_espece: int = 0) -> int:
     """Droit de timbre applicable aux règlements en espèces."""
-    if mode_reglement != "espece":
+    base = base_timbre(mode_reglement, montant_ttc, montant_espece)
+    if base <= 0:
         return 0
     taux = db.parametre_fiscal_int(annee, "timbre_taux", 100)
     minimum = db.parametre_fiscal_int(annee, "timbre_minimum", 500)
     seuil = db.parametre_fiscal_int(annee, "timbre_seuil_espece", 0)
-    if montant_ttc < seuil:
+    if base < seuil:
         return 0
-    montant = util.applique_taux(montant_ttc, taux)
-    return max(montant, minimum) if montant_ttc > 0 else 0
+    return max(util.applique_taux(base, taux), minimum)
 
 
 def _filtres_factures(ctx) -> tuple[str, list]:
@@ -154,6 +169,19 @@ def api_detail(ctx):
             "SELECT e.*, j.code AS journal FROM ecritures e "
             "JOIN journaux j ON j.id = e.journal_id WHERE e.id = ?", (f["ecriture_id"],)
         )
+    if f.get("ecriture_hors_id"):
+        f["ecriture_hors"] = db.ligne(
+            "SELECT e.*, j.code AS journal FROM ecritures e "
+            "JOIN journaux j ON j.id = e.journal_id WHERE e.id = ?",
+            (f["ecriture_hors_id"],)
+        )
+    if f.get("tresorerie_hors_id"):
+        f["tresorerie_hors"] = db.valeur(
+            "SELECT libelle FROM comptes_tresorerie WHERE id = ?",
+            (f["tresorerie_hors_id"],))
+    # Le prix réellement convenu, celui qui doit tomber juste : ni la facture
+    # seule, ni la part encaissée à côté seule.
+    f["prix_reel"] = f["net_a_payer"] + (f.get("montant_hors") or 0)
     return f
 
 
@@ -162,12 +190,88 @@ CLES_COMPTEUR = {"vente": "facture_vente", "achat": "facture_achat",
                  "proforma": "proforma"}
 
 
+def perimetre_facture(valeur, defaut: str) -> str:
+    """« Déclaré + non déclaré » est une facture déclarée, plus une part à côté.
+
+    L'écran propose trois choix là où la base n'en connaît que deux : la
+    troisième valeur décrit la vente, pas le périmètre de la facture.
+    """
+    if str(valeur or "").strip().lower() in ("totalite", "totalité", "les_deux"):
+        return "declare"
+    return compta.normalise_perimetre(valeur, defaut)
+
+
+def _controle_part_hors(societe_id: int, sens: str, montant, compte,
+                        tresorerie_id, perimetre: str,
+                        lignes_pretes: list[dict]) -> tuple:
+    """Vérifie la part non déclarée d'une vente, et complète ce qui manque.
+
+    Une vente réelle est souvent double : une part facturée, déclarée, et une
+    part réglée à côté. Les deux se saisissent ensemble — c'est le prix
+    convenu qui doit tomber juste, pas l'une des deux moitiés.
+
+    Trois choses seulement sont exigées, et chacune parce que l'écriture ne
+    peut pas s'écrire sans : un montant, un compte de produit ou de charge,
+    et l'endroit où cette part est encaissée. Le reste est déduit.
+    """
+    montant = max(0, int(montant or 0))
+    if not montant:
+        return 0, None, None
+    if sens == "proforma":
+        raise ErreurApplicative(
+            "Une proforma n'est qu'une offre de prix : elle ne porte pas de "
+            "part non déclarée. Portez-la sur la facture définitive.")
+    if perimetre != "declare":
+        raise ErreurApplicative(
+            "Une facture déjà « hors déclaration » est entièrement hors "
+            "déclaration : elle ne porte pas en plus une part non déclarée. "
+            "Choisissez le périmètre « Déclaré + non déclaré ».")
+
+    compte = util.nettoie(compte) or _compte_hors_defaut(sens, lignes_pretes)
+    if not compte:
+        raise ErreurApplicative(
+            "Indiquez le compte de la part non déclarée "
+            f"({'produit' if sens.endswith('vente') or sens == 'vente' else 'charge'}).")
+    if not compta.compte_existe(societe_id, compte):
+        raise ErreurApplicative(
+            f"Le compte {compte} n'est pas au plan comptable. Créez-le dans "
+            "Paramètres → Plan comptable, puis revenez.")
+
+    tresorerie_id = int(tresorerie_id or 0) or None
+    if not tresorerie_id:
+        raise ErreurApplicative(
+            "Indiquez où cette part est encaissée — la caisse ou la banque "
+            "qui la reçoit. Sans cela l'écriture n'a pas de contrepartie, et "
+            "la somme ne serait suivie nulle part.")
+    tresorerie = db.ligne(
+        "SELECT * FROM comptes_tresorerie WHERE id = ? AND societe_id = ?",
+        (tresorerie_id, societe_id))
+    if not tresorerie:
+        raise ErreurApplicative("Compte de trésorerie introuvable.")
+    return montant, compte, tresorerie_id
+
+
+def _compte_hors_defaut(sens: str, lignes_pretes: list[dict]) -> str | None:
+    """Le compte de la part non déclarée suit celui de la part déclarée.
+
+    Une vente de logement reste une vente de logement, déclarée ou non : le
+    compte proposé est celui de la première ligne de la facture.
+    """
+    for l in lignes_pretes:
+        if l.get("compte"):
+            return l["compte"]
+    return "706" if "vente" in sens else "607"
+
+
 def cree_facture(societe_id: int, sens: str, date: str, lignes: list[dict], *,
                  tiers_id: int | None = None, numero: str | None = None,
                  date_echeance: str | None = None, objet: str | None = None,
                  reference: str | None = None, origine: str | None = None,
                  programme_id=None, lot_id=None, bien_id=None, bail_id=None,
                  contrat_vsp_id=None, mode_reglement: str | None = None,
+                 montant_espece: int = 0,
+                 montant_hors: int = 0, compte_hors: str | None = None,
+                 tresorerie_hors_id=None,
                  perimetre: str | None = None, notes: str | None = None,
                  conditions: str | None = None, utilisateur: str | None = None,
                  valider: bool = False) -> dict:
@@ -184,7 +288,16 @@ def cree_facture(societe_id: int, sens: str, date: str, lignes: list[dict], *,
 
     lignes_pretes, total_ht, total_tva = calcule_lignes(lignes)
     ttc = total_ht + total_tva
-    timbre = calcule_timbre(societe_id, mode_reglement, ttc, int(date[:4]))
+    montant_espece = max(0, int(montant_espece or 0))
+    timbre = calcule_timbre(societe_id, mode_reglement, ttc, int(date[:4]),
+                            montant_espece)
+    perimetre = perimetre_facture(
+        perimetre,
+        db.valeur("SELECT perimetre_defaut FROM societes WHERE id = ?",
+                  (societe_id,), "declare"))
+    montant_hors, compte_hors, tresorerie_hors_id = _controle_part_hors(
+        societe_id, sens, montant_hors, compte_hors, tresorerie_hors_id,
+        perimetre, lignes_pretes)
 
     numero = util.nettoie(numero)
     if sens == "achat" and not numero:
@@ -213,11 +326,11 @@ def cree_facture(societe_id: int, sens: str, date: str, lignes: list[dict], *,
         "montant_ht": total_ht, "montant_tva": total_tva, "montant_ttc": ttc,
         "timbre": timbre, "net_a_payer": ttc + timbre, "montant_regle": 0,
         "mode_reglement": mode_reglement,
+        "montant_espece": montant_espece,
+        "montant_hors": montant_hors, "compte_hors": compte_hors,
+        "tresorerie_hors_id": tresorerie_hors_id,
         "statut": "brouillon",
-        "perimetre": compta.normalise_perimetre(
-            perimetre,
-            db.valeur("SELECT perimetre_defaut FROM societes WHERE id = ?",
-                      (societe_id,), "declare")),
+        "perimetre": perimetre,
         "notes": util.nettoie(notes),
         "conditions": util.nettoie(conditions),
         "cree_le": util.maintenant(), "cree_par": utilisateur,
@@ -253,6 +366,10 @@ def api_cree(ctx):
             bail_id=ctx.entier("bail_id"),
             contrat_vsp_id=ctx.entier("contrat_vsp_id"),
             mode_reglement=ctx.champ("mode_reglement"),
+            montant_espece=ctx.montant("montant_espece"),
+            montant_hors=ctx.montant("montant_hors"),
+            compte_hors=ctx.champ("compte_hors"),
+            tresorerie_hors_id=ctx.entier("tresorerie_hors_id"),
             perimetre=ctx.champ("perimetre"),
             notes=ctx.champ("notes"),
             conditions=ctx.champ("conditions"),
@@ -275,7 +392,13 @@ def api_modifie(ctx):
     date = ctx.date("date", f["date"])
     mode = ctx.champ("mode_reglement")
     ttc = total_ht + total_tva
-    timbre = calcule_timbre(f["societe_id"], mode, ttc, int(date[:4]))
+    espece = max(0, ctx.montant("montant_espece"))
+    timbre = calcule_timbre(f["societe_id"], mode, ttc, int(date[:4]), espece)
+    perimetre = perimetre_facture(ctx.champ("perimetre"), f["perimetre"])
+    montant_hors, compte_hors, tresorerie_hors_id = _controle_part_hors(
+        f["societe_id"], f["sens"], ctx.montant("montant_hors"),
+        ctx.champ("compte_hors"), ctx.entier("tresorerie_hors_id"),
+        perimetre, lignes_pretes)
 
     with db.transaction():
         db.execute("DELETE FROM facture_lignes WHERE facture_id = ?", (identifiant,))
@@ -295,8 +418,10 @@ def api_modifie(ctx):
             "montant_ht": total_ht, "montant_tva": total_tva, "montant_ttc": ttc,
             "timbre": timbre, "net_a_payer": ttc + timbre,
             "mode_reglement": mode,
-            "perimetre": compta.normalise_perimetre(
-                ctx.champ("perimetre"), f["perimetre"]),
+            "montant_espece": espece,
+            "montant_hors": montant_hors, "compte_hors": compte_hors,
+            "tresorerie_hors_id": tresorerie_hors_id,
+            "perimetre": perimetre,
             "notes": util.nettoie(ctx.champ("notes")),
             "conditions": util.nettoie(ctx.champ("conditions")),
         })
@@ -387,15 +512,71 @@ def _valide(facture_id: int, utilisateur: str | None) -> int | None:
         ajoute(compte_fournisseur, credit=f["net_a_payer"], tiers_id=tiers["id"],
                echeance=f["date_echeance"])
 
+    operation = f.get("operation_ref") or (
+        f"OP-{util.maintenant().replace('-', '').replace(':', '').replace(' ', '-')}"
+        if f.get("montant_hors") else None)
+
     ecriture_id = compta.enregistre_ecriture(
         f["societe_id"], journal, f["date"], libelle, lignes_ecriture,
         piece=f["numero"], reference=f["reference"], module="facturation",
         source_type="facture", source_id=facture_id, utilisateur=utilisateur,
-        perimetre=f.get("perimetre"),
+        perimetre=f.get("perimetre"), operation_ref=operation,
     )
-    db.modifie("factures", facture_id, {"statut": "validee", "ecriture_id": ecriture_id})
+    maj = {"statut": "validee", "ecriture_id": ecriture_id}
+    if operation:
+        maj["operation_ref"] = operation
+        maj["ecriture_hors_id"] = _ecriture_part_hors(f, operation, utilisateur)
+    db.modifie("factures", facture_id, maj)
     db.trace("validation", "facture", facture_id, f["numero"], utilisateur)
     return ecriture_id
+
+
+def _ecriture_part_hors(f: dict, operation: str, utilisateur: str | None) -> int:
+    """L'écriture de la part non déclarée : encaissée, et rien d'autre.
+
+    Elle s'équilibre seule, comme la part déclarée s'équilibre seule. Les
+    deux portent la même référence d'opération : le journal les montre
+    côte à côte, et rien ne laisse croire qu'il s'agit de deux ventes.
+
+    Pas de TVA, pas de droit de timbre, pas de compte de tiers : cette part
+    ne passe par aucun des mécanismes déclaratifs. Elle va du produit à la
+    caisse, directement.
+    """
+    tresorerie = db.ligne("SELECT * FROM comptes_tresorerie WHERE id = ?",
+                          (f["tresorerie_hors_id"],))
+    if not tresorerie:
+        raise ErreurApplicative(
+            "Le compte de trésorerie de la part non déclarée n'existe plus. "
+            "Rouvrez la facture et indiquez où cette part est encaissée.")
+    montant = f["montant_hors"]
+    est_vente = f["sens"] in ("vente", "avoir_vente")
+    est_avoir = f["sens"].startswith("avoir")
+    libelle = (f"{'Facture' if not est_avoir else 'Avoir'} n° {f['numero']} — "
+               "part non déclarée")
+
+    tresor = {"compte": tresorerie["compte"], "libelle": libelle,
+              "programme_id": f["programme_id"], "lot_id": f["lot_id"],
+              "bien_id": f["bien_id"]}
+    contrepartie = {"compte": f["compte_hors"], "libelle": libelle,
+                    "programme_id": f["programme_id"], "lot_id": f["lot_id"],
+                    "bien_id": f["bien_id"]}
+    if est_vente:
+        lignes = [{**tresor, "debit": montant, "credit": 0},
+                  {**contrepartie, "debit": 0, "credit": montant}]
+    else:
+        lignes = [{**contrepartie, "debit": montant, "credit": 0},
+                  {**tresor, "debit": 0, "credit": montant}]
+    if est_avoir:
+        for l in lignes:
+            l["debit"], l["credit"] = l["credit"], l["debit"]
+
+    journal = "CA" if tresorerie["type"] not in ("banque", "ccp") else "BQ"
+    return compta.enregistre_ecriture(
+        f["societe_id"], journal, f["date"], libelle, lignes,
+        piece=f["numero"], reference=f["reference"], module="facturation",
+        source_type="facture", source_id=f["id"], utilisateur=utilisateur,
+        perimetre="hors_declaration", operation_ref=operation,
+    )
 
 
 @route("POST", "/api/factures/<id>/annuler")
@@ -408,8 +589,12 @@ def api_annule(ctx):
             "Cette facture a été réglée : supprimez d'abord les règlements."
         )
     with db.transaction():
-        if f["ecriture_id"]:
-            compta.extourne_ecriture(f["ecriture_id"], util.aujourdhui(), ctx.nom_utilisateur)
+        # Les deux parts d'une même vente s'annulent ensemble : en extourner
+        # une seule laisserait la vente à moitié debout.
+        for cle in ("ecriture_id", "ecriture_hors_id"):
+            if f.get(cle):
+                compta.extourne_ecriture(f[cle], util.aujourdhui(),
+                                         ctx.nom_utilisateur)
         db.modifie("factures", identifiant, {"statut": "annulee"})
         db.trace("annulation", "facture", identifiant, f["numero"], ctx.nom_utilisateur)
     return {"ok": True}
@@ -481,25 +666,90 @@ def api_cree_avoir(ctx):
 @route("POST", "/api/reglements")
 def api_cree_reglement(ctx):
     ctx.interdit_lecture_seule()
+    with db.transaction():
+        r = cree_reglement(
+            ctx.entier("societe_id"),
+            sens=ctx.champ("sens", "encaissement"),
+            date=ctx.date("date", util.aujourdhui()),
+            montant=ctx.montant("montant"),
+            tresorerie_id=ctx.entier("tresorerie_id"),
+            facture_id=ctx.entier("facture_id"),
+            tiers_id=ctx.entier("tiers_id"),
+            mode=ctx.champ("mode", "virement"),
+            reference=ctx.champ("reference"),
+            libelle=ctx.champ("libelle"),
+            perimetre=ctx.champ("perimetre"),
+            utilisateur=ctx.nom_utilisateur,
+        )
+    return r
+
+
+@route("POST", "/api/reglements/multiple")
+def api_cree_reglements(ctx):
+    """Un même encaissement payé en plusieurs fois, en une seule saisie.
+
+    Le client apporte un chèque **et** des espèces pour la même vente. Cela
+    fait bien deux règlements — deux comptes de trésorerie, deux références,
+    deux lignes au relevé — mais un seul geste, et c'est ainsi qu'il faut
+    pouvoir le saisir. La référence d'opération les garde ensemble.
+    """
+    ctx.interdit_lecture_seule()
     societe_id = ctx.entier("societe_id")
+    lignes = [l for l in (ctx.champ("lignes") or [])
+              if util.centimes(l.get("montant")) > 0]
+    if not lignes:
+        raise ErreurApplicative("Saisissez au moins un montant.")
+
     sens = ctx.champ("sens", "encaissement")
+    date = ctx.date("date", util.aujourdhui())
+    facture_id = ctx.entier("facture_id")
+    tiers_id = ctx.entier("tiers_id")
+    horodatage = util.maintenant().replace("-", "").replace(":", "").replace(" ", "-")
+    reference_op = f"REG-{horodatage}" if len(lignes) > 1 else None
+
+    faits = []
+    with db.transaction():
+        for l in lignes:
+            faits.append(cree_reglement(
+                societe_id,
+                sens=sens,
+                date=util.date_iso(l.get("date")) or date,
+                montant=util.centimes(l.get("montant")),
+                tresorerie_id=int(l.get("tresorerie_id") or 0) or None,
+                facture_id=facture_id,
+                tiers_id=tiers_id,
+                mode=l.get("mode") or "virement",
+                reference=l.get("reference"),
+                libelle=ctx.champ("libelle"),
+                perimetre=ctx.champ("perimetre"),
+                operation_ref=reference_op,
+                utilisateur=ctx.nom_utilisateur,
+            ))
+    return {"reglements": faits, "operation_ref": reference_op,
+            "total": sum(f["montant"] for f in faits)}
+
+
+def cree_reglement(societe_id: int, *, sens: str, date: str, montant: int,
+                   tresorerie_id, facture_id=None, tiers_id=None,
+                   mode: str = "virement", reference: str | None = None,
+                   libelle: str | None = None, perimetre: str | None = None,
+                   operation_ref: str | None = None,
+                   utilisateur: str | None = None) -> dict:
+    """Enregistre un règlement et son écriture. À appeler dans une transaction."""
     if sens not in ("encaissement", "decaissement"):
         raise ErreurApplicative("Sens de règlement invalide.")
-    montant = ctx.montant("montant")
     if montant <= 0:
         raise ErreurApplicative("Le montant du règlement doit être positif.")
-    date = ctx.date("date", util.aujourdhui())
     ex = compta.exercice_pour_date(societe_id, date)
     compta.exige_exercice_ouvert(ex)
 
-    tresorerie_id = ctx.entier("tresorerie_id")
-    tresorerie = db.ligne("SELECT * FROM comptes_tresorerie WHERE id = ?", (tresorerie_id,))
+    tresorerie = db.ligne("SELECT * FROM comptes_tresorerie WHERE id = ?",
+                          (tresorerie_id,)) if tresorerie_id else None
     if not tresorerie:
         raise ErreurApplicative("Sélectionnez le compte de trésorerie (banque ou caisse).")
 
-    facture_id = ctx.entier("facture_id")
     facture = db.ligne("SELECT * FROM factures WHERE id = ?", (facture_id,)) if facture_id else None
-    tiers_id = ctx.entier("tiers_id") or (facture["tiers_id"] if facture else None)
+    tiers_id = tiers_id or (facture["tiers_id"] if facture else None)
     if not tiers_id:
         raise ErreurApplicative("Indiquez le tiers concerné par le règlement.")
     tiers = tiers_ou_erreur(tiers_id)
@@ -515,14 +765,14 @@ def api_cree_reglement(ctx):
     compte_tiers = (compte_du_tiers(tiers) if not facture
                     else _compte_tiers_facture(facture, tiers))
     journal = "BQ" if tresorerie["type"] in ("banque", "ccp") else "CA"
-    libelle = ctx.champ("libelle") or (
+    libelle = libelle or (
         f"{'Encaissement' if sens == 'encaissement' else 'Règlement'} "
         f"{tiers['raison_sociale']}"
         + (f" — facture {facture['numero']}" if facture else "")
     )
 
     perimetre = compta.normalise_perimetre(
-        ctx.champ("perimetre") or (facture["perimetre"] if facture else None),
+        perimetre or (facture["perimetre"] if facture else None),
         db.valeur("SELECT perimetre_defaut FROM societes WHERE id = ?",
                   (societe_id,), "declare"))
 
@@ -541,35 +791,37 @@ def api_cree_reglement(ctx):
              "libelle": libelle},
         ]
 
-    with db.transaction():
-        ecriture_id = compta.enregistre_ecriture(
-            societe_id, journal, date, libelle, lignes_ecriture,
-            piece=util.nettoie(ctx.champ("reference")),
-            reference=facture["numero"] if facture else None,
-            module="reglement", source_type="reglement", source_id=None,
-            utilisateur=ctx.nom_utilisateur, perimetre=perimetre,
-        )
-        reglement_id = db.insere("reglements", {
-            "societe_id": societe_id, "exercice_id": ex["id"], "sens": sens,
-            "date": date, "tiers_id": tiers_id, "tresorerie_id": tresorerie_id,
-            "montant": montant, "mode": ctx.champ("mode", "virement"),
-            "reference": util.nettoie(ctx.champ("reference")),
-            "libelle": libelle, "facture_id": facture_id,
-            "perimetre": perimetre,
-            "ecriture_id": ecriture_id, "cree_le": util.maintenant(),
-        })
-        db.execute("UPDATE ecritures SET source_id = ? WHERE id = ?",
-                   (reglement_id, ecriture_id))
+    reference = util.nettoie(reference)
+    ecriture_id = compta.enregistre_ecriture(
+        societe_id, journal, date, libelle, lignes_ecriture,
+        piece=reference,
+        reference=facture["numero"] if facture else None,
+        module="reglement", source_type="reglement", source_id=None,
+        utilisateur=utilisateur, perimetre=perimetre,
+        operation_ref=operation_ref,
+    )
+    reglement_id = db.insere("reglements", {
+        "societe_id": societe_id, "exercice_id": ex["id"], "sens": sens,
+        "date": date, "tiers_id": tiers_id, "tresorerie_id": tresorerie["id"],
+        "montant": montant, "mode": mode or "virement",
+        "reference": reference,
+        "libelle": libelle, "facture_id": facture_id,
+        "perimetre": perimetre, "operation_ref": operation_ref,
+        "ecriture_id": ecriture_id, "cree_le": util.maintenant(),
+    })
+    db.execute("UPDATE ecritures SET source_id = ? WHERE id = ?",
+               (reglement_id, ecriture_id))
 
-        if facture:
-            regle = facture["montant_regle"] + montant
-            statut = ("payee" if regle >= facture["net_a_payer"]
-                      else "partielle" if regle > 0 else facture["statut"])
-            db.modifie("factures", facture_id,
-                       {"montant_regle": regle, "statut": statut})
-        db.trace("creation", "reglement", reglement_id, libelle, ctx.nom_utilisateur)
+    if facture:
+        regle = facture["montant_regle"] + montant
+        statut = ("payee" if regle >= facture["net_a_payer"]
+                  else "partielle" if regle > 0 else facture["statut"])
+        db.modifie("factures", facture_id,
+                   {"montant_regle": regle, "statut": statut})
+    db.trace("creation", "reglement", reglement_id, libelle, utilisateur)
 
-    return {"id": reglement_id, "ecriture_id": ecriture_id}
+    return {"id": reglement_id, "ecriture_id": ecriture_id, "montant": montant,
+            "mode": mode or "virement"}
 
 
 def _compte_tiers_facture(facture: dict, tiers: dict) -> str:

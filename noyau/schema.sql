@@ -353,7 +353,18 @@ CREATE TABLE IF NOT EXISTS factures (
     timbre          INTEGER NOT NULL DEFAULT 0,   -- droit de timbre (paiement espèces)
     net_a_payer     INTEGER NOT NULL DEFAULT 0,
     montant_regle   INTEGER NOT NULL DEFAULT 0,
-    mode_reglement  TEXT,                         -- espece | cheque | virement | traite
+    mode_reglement  TEXT,                -- espece | cheque | virement | traite | mixte
+    -- Part reglee en especes quand le client paie en plusieurs modes : le
+    -- droit de timbre ne porte que sur elle.
+    montant_espece  INTEGER NOT NULL DEFAULT 0,
+    -- Une vente porte souvent une part facturee et une part reglee a cote.
+    -- La seconde est isolee ici, avec son compte de produit et la caisse qui
+    -- l'encaisse ; elle donne une ecriture distincte, hors declaration.
+    montant_hors       INTEGER NOT NULL DEFAULT 0,
+    compte_hors        TEXT,
+    tresorerie_hors_id INTEGER REFERENCES comptes_tresorerie(id),
+    ecriture_hors_id   INTEGER REFERENCES ecritures(id) ON DELETE SET NULL,
+    operation_ref      TEXT,             -- lie les deux ecritures d'une vente
     -- brouillon | validee | payee | partielle | annulee
     statut          TEXT NOT NULL DEFAULT 'brouillon',
     perimetre       TEXT NOT NULL DEFAULT 'declare',
@@ -424,6 +435,9 @@ CREATE TABLE IF NOT EXISTS reglements (
     echeance_id   INTEGER,                     -- échéance VSP réglée
     quittance_id  INTEGER,
     perimetre     TEXT NOT NULL DEFAULT 'declare',
+    -- Un encaissement paye moitie cheque moitie especes fait deux reglements :
+    -- ils restent reconnaissables comme un seul geste.
+    operation_ref TEXT,
     ecriture_id   INTEGER REFERENCES ecritures(id) ON DELETE SET NULL,
     import_id     INTEGER REFERENCES imports(id) ON DELETE SET NULL,
     cree_le       TEXT NOT NULL
