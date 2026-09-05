@@ -321,6 +321,23 @@ nav a .pastille { margin-left: auto; background: var(--danger); color: #fff;
 .barre-selection > span { flex: 1; min-width: 200px; font-weight: 600;
                           color: var(--primaire); }
 
+/* Documentation : une fiche par chose a faire, repliee tant qu'on ne la
+   cherche pas. Le titre porte deja le « quand », pour choisir sans ouvrir. */
+.fiche-doc { border-bottom: 1px solid var(--bordure); padding: 10px 2px; }
+.fiche-doc:last-child { border-bottom: 0; }
+.fiche-doc > summary { cursor: pointer; padding: 4px 0; }
+.fiche-doc > summary:hover { color: var(--primaire); }
+.fiche-doc[open] > summary { margin-bottom: 8px; }
+.etapes-doc { margin: 0 0 10px 0; padding-left: 22px; }
+.etapes-doc li { margin: 6px 0; line-height: 1.55; }
+.pieges-doc { background: var(--alerte-fond); border-left: 3px solid var(--alerte);
+              border-radius: var(--rayon); padding: 8px 12px; }
+.pieges-doc .libelle { font-size: 11px; text-transform: uppercase;
+                       letter-spacing: .04em; color: var(--alerte);
+                       font-weight: 700; margin-bottom: 4px; }
+.pieges-doc ul { margin: 0; padding-left: 18px; }
+.pieges-doc li { margin: 5px 0; line-height: 1.55; }
+
 /* ---------- Tableaux ---------- */
 /* `overflow-x: auto` fait de l'enveloppe un conteneur de défilement : un
    en-tête `position: sticky` s'y accroche, mais à un conteneur qui n'a

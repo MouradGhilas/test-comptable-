@@ -54,6 +54,13 @@ const MENU = [
       { route: '/parametres/dossier', libelle: 'Paramètres', ico: '⚙️' },
     ],
   },
+  // Seule, en bas : on la cherche quand on est bloqué, pas quand on
+  // travaille. Elle ne se range donc dans aucun métier.
+  {
+    groupe: null, entrees: [
+      { route: '/documentation', libelle: 'Documentation', ico: '📚' },
+    ],
+  },
 ];
 
 function construitMenu() {

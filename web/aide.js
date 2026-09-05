@@ -449,6 +449,12 @@ function montreAide() {
       <p class="petit">Ce sont des rappels, pas des textes officiels. En cas de
       doute — et toujours pour un taux ou une date limite — la loi de finances
       de l'année fait foi.</p>`,
-    boutons: [{ libelle: 'Fermer' }],
+    // Cette fenêtre dit pourquoi l'écran fait ce qu'il fait. « Par où je
+    // commence » est une autre question, et elle a sa page.
+    boutons: [
+      { libelle: 'Voir la documentation',
+        action: () => { fermeModale(); navigue('/documentation'); } },
+      { libelle: 'Fermer' },
+    ],
   });
 }

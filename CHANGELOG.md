@@ -3,6 +3,25 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.12.0
+
+- **Une documentation dans la barre de gauche.** Vingt-cinq fiches, rangées
+  par domaine : installer et transporter, reprendre un dossier déjà tenu, le
+  quotidien, l'agence, la promotion, la paie et les déclarations, l'entretien
+  du dossier. Chacune dit **quand** on en a besoin, puis les gestes dans
+  l'ordre, et mène à l'écran concerné.
+- Chaque fiche porte une rubrique **« ce qui coince souvent »**. Elle n'est
+  pas décorative : elle recense les pannes réellement rencontrées, avec le
+  geste qui les évite — ne jamais installer depuis la fenêtre d'un `.zip`,
+  ne pas confondre « Montant HT » et « Prix unitaire », créer les exercices
+  avant d'importer plusieurs années, laisser « Déjà encaissée sur » vide tant
+  que le client n'a pas payé.
+- Une **recherche** filtre les fiches sur tout leur contenu, pièges compris :
+  taper « montant ht » mène droit à la bonne.
+- Le **« ? »** de chaque écran garde son rôle — il explique *pourquoi* cet
+  écran fait ce qu'il fait — et propose désormais d'ouvrir la documentation,
+  qui dit *comment s'y prendre*.
+
 ## 1.11.0
 
 - **Un import n'ajoute plus de zéros à des sommes justes.** « Montant HT »

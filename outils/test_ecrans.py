@@ -279,6 +279,34 @@ def parcours(page) -> None:
     v("la colonne « Reste » est la", "Reste" in contenu)
 
     # ======================================================================
+    titre("3 ter. La documentation, dans la barre de gauche")
+    # ======================================================================
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    v("l'entrée « Documentation » est au menu",
+      page.query_selector("#menu a[href='#/documentation']") is not None)
+    page.click("#menu a[href='#/documentation']")
+    page.wait_for_selector("#doc-liste", timeout=15000)
+    contenu = page.content()
+    v("les fiches sont là",
+      contenu.count("fiche-doc") >= 20, contenu.count("fiche-doc"))
+    v("… rangées par domaine", "Reprendre un dossier déjà tenu" in contenu)
+    v("… et chacune dit ce qui coince souvent",
+      "Ce qui coince souvent" in contenu)
+    page.fill("#doc-q", "montant ht")
+    page.wait_for_timeout(400)
+    ouvertes = page.eval_on_selector_all(
+        ".fiche-doc", "l => l.filter(f => !f.hidden).length")
+    v("la recherche ne garde que ce qui correspond",
+      0 < ouvertes < 8, ouvertes)
+    v("… et trouve bien le piège des montants d'import",
+      "Importer vos factures" in page.eval_on_selector_all(
+          ".fiche-doc:not([hidden]) summary", "l => l.map(s => s.textContent).join(' ')"))
+    page.fill("#doc-q", "")
+    page.wait_for_timeout(300)
+    v("… vider la recherche rend tout", page.is_hidden("#doc-vide"))
+
+    # ======================================================================
     titre("4. Corriger un exercice mal saisi")
     # ======================================================================
     page.keyboard.press("Escape")
