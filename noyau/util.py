@@ -63,6 +63,37 @@ def centimes(valeur) -> int:
     return -total if negatif else total
 
 
+def nombre(valeur, defaut: float = 0.0) -> float:
+    """Lit un nombre écrit à la française : « 1,5 », « 1 000,25 », « 2.5 ».
+
+    `float()` refuse la virgule décimale. Une quantité saisie « 1,00 » dans
+    un tableur francophone faisait donc échouer toute la ligne.
+    """
+    if valeur is None or valeur == "":
+        return defaut
+    if isinstance(valeur, (int, float)):
+        return float(valeur)
+    texte = re.sub(r"[^\d,.\-]", "", str(valeur).strip())
+    if not texte or texte in {"-", ".", ","}:
+        return defaut
+    # Une seule virgule ou un seul point en fin de nombre : séparateur
+    # décimal. Les autres séparent les milliers.
+    dernier = max(texte.rfind("."), texte.rfind(","))
+    if dernier == -1:
+        entier, decimales = texte, ""
+    else:
+        decimales = texte[dernier + 1:]
+        if len(decimales) == 3 and texte.count(texte[dernier]) >= 1:
+            entier, decimales = texte.replace(".", "").replace(",", ""), ""
+        else:
+            entier = texte[:dernier]
+    entier = entier.replace(".", "").replace(",", "") or "0"
+    try:
+        return float(f"{entier}.{decimales or 0}")
+    except ValueError:
+        return defaut
+
+
 def en_dinars(cts: int) -> float:
     """Centimes -> dinars (pour affichage/JSON uniquement)."""
     return round((cts or 0) / 100.0, 2)

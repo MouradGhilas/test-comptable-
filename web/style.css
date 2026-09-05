@@ -312,6 +312,15 @@ nav a .pastille { margin-left: auto; background: var(--danger); color: #fff;
 .colonne-situation.hors { border-left: 3px solid var(--alerte); }
 .colonne-situation.total { border-left: 3px solid var(--primaire); }
 
+/* Ce qu'on peut faire sur les lignes cochees. La barre n'apparait que quand
+   il y a une selection : sinon elle occupe la place sans rien proposer. */
+.barre-selection { display: flex; gap: 10px; align-items: center;
+                   flex-wrap: wrap; margin-bottom: 12px; padding: 8px 12px;
+                   background: var(--primaire-fond);
+                   border: 1px solid var(--primaire); border-radius: var(--rayon); }
+.barre-selection > span { flex: 1; min-width: 200px; font-weight: 600;
+                          color: var(--primaire); }
+
 /* ---------- Tableaux ---------- */
 /* `overflow-x: auto` fait de l'enveloppe un conteneur de défilement : un
    en-tête `position: sticky` s'y accroche, mais à un conteneur qui n'a

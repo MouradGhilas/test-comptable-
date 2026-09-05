@@ -3638,6 +3638,156 @@ def suite_vente_mixte(dos):
       releve_dec["libelle_perimetre"])
 
 
+def suite_reprise_factures(dos):
+    """Ce qu'une reprise de factures lui a coute : des zeros, et sa matinee.
+
+    « Lors de l'importation, il y a des clients il m'a rajoute des 00. »
+    « Ce n'est meme pas possible de supprimer les factures. »
+    « Une fois importe tu dois les valider une par une, c'est chiant. »
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "reprise", "mot_de_passe": "motdepasse123",
+        "nom_complet": "Comptable", "raison_sociale": "SARL REPRISE",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    ex = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]
+    annee = int(ex["date_debut"][:4])
+
+    def facture(numero, **extra):
+        corps = {"societe_id": sid, "sens": "vente", "date": f"{annee}-05-10",
+                 "numero": numero, "tiers_id": client,
+                 "lignes": [{"designation": "Vente logement", "quantite": 1,
+                             "prix_unitaire": "5000000", "taux_tva": 19,
+                             "compte": "7011"}]}
+        corps.update(extra)
+        return dos.appel("/api/factures", corps)
+
+    client = dos.appel("/api/tiers", {
+        "societe_id": sid, "type": "client",
+        "raison_sociale": "MESSAOUDI ZAYNEB"})["id"]
+
+    # ==================================================================
+    titre("1. Un montant de ligne n'est plus multiplie par la quantite")
+    # ==================================================================
+    # Son fichier donne le total de la ligne ET une quantite. Multiplier
+    # l'un par l'autre ajoute deux zeros a une somme juste.
+    f = dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "date": f"{annee}-05-11",
+        "tiers_id": client, "numero": "T-001",
+        "lignes": [{"designation": "Vente logement", "quantite": 100,
+                    "montant_ht": "4954100", "taux_tva": 0,
+                    "compte": "7011"}]})
+    d = dos.appel(f"/api/factures/{f['id']}")
+    v("le montant donne fait foi, la quantite n'y touche pas",
+      d["montant_ht"] == 495410000, fm(d["montant_ht"]))
+    f = dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "date": f"{annee}-05-11",
+        "tiers_id": client, "numero": "T-002",
+        "lignes": [{"designation": "Metres carres", "quantite": 100,
+                    "prix_unitaire": "49541", "taux_tva": 0,
+                    "compte": "7011"}]})
+    d = dos.appel(f"/api/factures/{f['id']}")
+    v("… mais un vrai prix unitaire se multiplie toujours",
+      d["montant_ht"] == 495410000, fm(d["montant_ht"]))
+    f = dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "date": f"{annee}-05-11",
+        "tiers_id": client, "numero": "T-003",
+        "lignes": [{"designation": "Vente", "quantite": "1,00",
+                    "prix_unitaire": "4954100", "taux_tva": 0,
+                    "compte": "7011"}]})
+    v("une quantite ecrite « 1,00 » ne fait plus echouer la ligne",
+      dos.appel(f"/api/factures/{f['id']}")["montant_ht"] == 495410000)
+
+    # ==================================================================
+    titre("2. Pas de droit de timbre sur une facture hors declaration")
+    # ==================================================================
+    # Le net a payer depassait le HT de 1 % : c'etait le timbre, une taxe
+    # declaree, ajoutee a une facture qui ne l'est pas.
+    f = facture("HD-001", perimetre="hors_declaration",
+                mode_reglement="espece")
+    hd = dos.appel(f"/api/factures/{f['id']}")
+    v("aucun timbre hors declaration", hd["timbre"] == 0, hd["timbre"])
+    v("… le net a payer vaut donc le TTC",
+      hd["net_a_payer"] == hd["montant_ttc"],
+      (hd["net_a_payer"], hd["montant_ttc"]))
+    f = facture("D-001", mode_reglement="espece")
+    dec = dos.appel(f"/api/factures/{f['id']}")
+    v("… alors qu'une facture declaree en especes le porte",
+      dec["timbre"] > 0, dec["timbre"])
+
+    # ==================================================================
+    titre("3. Les valider d'un coup, pas une par une")
+    # ==================================================================
+    ids = [facture(f"L-{n:03d}")["id"] for n in range(1, 6)]
+    v("cinq brouillons attendent",
+      dos.sql("SELECT COUNT(*) n FROM factures WHERE statut = 'brouillon'"
+              " AND numero LIKE 'L-%'")[0]["n"] == 5)
+    r = dos.appel("/api/factures/valider-lot", {"societe_id": sid, "ids": ids})
+    v("elles sont comptabilisees ensemble", r["validees"] == 5, r)
+    v("… et chacune a son ecriture",
+      dos.sql("SELECT COUNT(*) n FROM factures WHERE numero LIKE 'L-%' "
+              "AND ecriture_id IS NOT NULL")[0]["n"] == 5)
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+    r = dos.appel("/api/factures/valider-lot", {"societe_id": sid, "ids": ids})
+    v("les revalider ne les double pas", r["validees"] == 0, r)
+    v("… et le refus dit pourquoi",
+      all("déjà" in x["raison"] for x in r["refusees"]), r["refusees"])
+
+    # ==================================================================
+    titre("4. Une facture validee reste corrigeable tant qu'elle n'est pas reglee")
+    # ==================================================================
+    cible = ids[0]
+    avant = dos.appel(f"/api/factures/{cible}")
+    dos.appel(f"/api/factures/{cible}", {
+        "societe_id": sid, "date": f"{annee}-05-10", "tiers_id": client,
+        "numero": "L-001", "objet": "Corrige",
+        "lignes": [{"designation": "Vente logement", "quantite": 1,
+                    "prix_unitaire": "6000000", "taux_tva": 19,
+                    "compte": "7011"}]}, "PUT")
+    apres = dos.appel(f"/api/factures/{cible}")
+    v("la correction passe", apres["montant_ht"] == 600000000,
+      fm(apres["montant_ht"]))
+    v("… la facture reste comptabilisee", apres["statut"] == "validee",
+      apres["statut"])
+    v("… son ecriture a ete refaite, pas doublee",
+      apres["ecriture_id"] != avant["ecriture_id"]
+      and dos.sql("SELECT COUNT(*) n FROM ecritures WHERE source_type = 'facture' "
+                  "AND source_id = ?", (cible,))[0]["n"] == 1,
+      dos.sql("SELECT id FROM ecritures WHERE source_id = ?", (cible,)))
+    v("… et elle porte le nouveau montant",
+      dos.sql("SELECT SUM(debit) d FROM lignes WHERE ecriture_id = ?",
+              (apres["ecriture_id"],))[0]["d"] == apres["net_a_payer"])
+    v("la comptabilite tient toujours", dos.equilibre_global())
+
+    # ==================================================================
+    titre("5. Effacer une reprise ratee")
+    # ==================================================================
+    message = dos.refuse("/api/factures/supprimer-lot",
+                         {"societe_id": sid, "ids": ids[1:3]})
+    v("rien ne part sans confirmation", bool(message), message)
+    v("… et le message dit combien", "2 facture" in (message or ""), message)
+    r = dos.appel("/api/factures/supprimer-lot", {
+        "societe_id": sid, "ids": ids[1:3], "confirmation": "SUPPRIMER"})
+    v("confirmee, la suppression aboutit", r["supprimees"] == 2, r)
+    v("… les ecritures partent avec",
+      dos.sql("SELECT COUNT(*) n FROM ecritures WHERE source_type = 'facture' "
+              "AND source_id IN (?, ?)", tuple(ids[1:3]))[0]["n"] == 0)
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+
+    # Une facture reglee, elle, resiste.
+    tresorerie = dos.appel(f"/api/tresorerie?societe={sid}")["comptes"][0]["id"]
+    payee = dos.appel(f"/api/factures/{ids[3]}")
+    dos.appel("/api/reglements/multiple", {
+        "societe_id": sid, "sens": "encaissement", "facture_id": ids[3],
+        "tiers_id": client, "date": f"{annee}-05-20",
+        "lignes": [{"mode": "espece", "tresorerie_id": tresorerie,
+                    "montant": "10000"}]})
+    message = dos.refuse(f"/api/factures/{ids[3]}", {}, "DELETE")
+    v("une facture reglee ne s'efface pas", bool(message), message)
+    v("… en disant par quoi commencer",
+      "règlement" in (message or ""), message)
+
+
 def suite_exercices(dos):
     """Corriger un exercice mal saisi, ou l'enlever.
 
@@ -3743,6 +3893,8 @@ SUITES = [
     ("exercices", "Corriger ou supprimer un exercice", suite_exercices, False),
     ("dates_tableur", "Des dates venues d'un autre tableur", suite_dates_tableur,
      False),
+    ("reprise_factures", "Reprendre, corriger et effacer des factures",
+     suite_reprise_factures, False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),

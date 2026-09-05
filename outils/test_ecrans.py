@@ -64,8 +64,9 @@ def prepare_dossier() -> tuple[int, int]:
     poste("/api/connexion", {"identifiant": "demo",
                              "mot_de_passe": "motdepasse123"})
     sid = poste("/api/societes")["societes"][0]["id"]
-    poste("/api/tiers", {"societe_id": sid, "type": "client",
-                         "raison_sociale": "RAMDANI ELMEHDI"})
+    CLIENT.append(poste("/api/tiers", {
+        "societe_id": sid, "type": "client",
+        "raison_sociale": "RAMDANI ELMEHDI"})["id"])
     # Le sous-compte de caisse qu'il crée lui-même, à sept chiffres.
     poste("/api/comptes", {"societe_id": sid, "numero": "5300005",
                            "intitule": "Caisse annexe", "nature": "debit"})
@@ -73,11 +74,16 @@ def prepare_dossier() -> tuple[int, int]:
                               "libelle": "Caisse annexe", "type": "caisse",
                               "compte": "5300005"})
     SOCIETE.append(sid)
+    exercice = poste(f"/api/exercices?societe={sid}")["exercices"][0]
+    DATE_ESSAI.append(exercice["date_debut"][:4] + "-05-10")
     return sid, 0
 
 
-#: L'identifiant du dossier, pose par prepare_dossier().
+#: Le dossier, le client et une date de l'exercice courant, poses par
+#: prepare_dossier() : les sections suivantes s'en servent.
 SOCIETE: list[int] = []
+CLIENT: list[int] = []
+DATE_ESSAI: list[str] = []
 
 
 def parcours(page) -> None:
@@ -239,6 +245,38 @@ def parcours(page) -> None:
       any("A01" in l for l in libelles), libelles)
     v("… et son etat est dit dans la liste",
       any("vendu" in l for l in libelles), libelles)
+
+    # ======================================================================
+    titre("3 bis. Cocher des factures et les comptabiliser d'un coup")
+    # ======================================================================
+    # « Une fois importe tu dois les valider une par une, c'est chiant. »
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(400)
+    for numero in ("B-001", "B-002", "B-003"):
+        poste("/api/factures", {
+            "societe_id": SOCIETE[0], "sens": "vente", "numero": numero,
+            "tiers_id": CLIENT[0], "date": DATE_ESSAI[0],
+            "lignes": [{"designation": "Vente", "quantite": 1,
+                        "prix_unitaire": "100000", "taux_tva": 19,
+                        "compte": "7011"}]})
+    page.goto(BASE + "/#/factures", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    v("la barre d'actions est cachee sans selection",
+      page.is_hidden("#f-actions"))
+    page.check("#f-tout")
+    page.wait_for_timeout(300)
+    v("« tout selectionner » coche toutes les lignes",
+      page.eval_on_selector_all(".f-choix", "l => l.every(c => c.checked)"))
+    v("… et la barre d'actions apparait", page.is_visible("#f-actions"))
+    v("… en disant combien sont a comptabiliser",
+      "brouillon" in page.inner_text("#f-compte"), page.inner_text("#f-compte"))
+    page.click("#f-valider")
+    page.wait_for_timeout(2500)
+    contenu = page.content()
+    v("les brouillons sont comptabilises d'un coup",
+      "B-001" in contenu and contenu.count("brouillon") == 0,
+      [m for m in contenu.split("<") if "brouillon" in m][:2])
+    v("la colonne « Reste » est la", "Reste" in contenu)
 
     # ======================================================================
     titre("4. Corriger un exercice mal saisi")

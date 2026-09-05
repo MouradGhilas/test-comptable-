@@ -971,7 +971,18 @@ App.pages.factures = {
         ${indicateur('Reste à encaisser', fm(d.totaux.reste, true), '',
           d.totaux.reste > 0 ? 'danger' : 'succes')}
       </div>
+      <div class="barre-selection" id="f-actions" hidden>
+        <span id="f-compte"></span>
+        <button class="primaire" id="f-valider">Comptabiliser la sélection</button>
+        <button class="danger" id="f-supprimer">Supprimer la sélection</button>
+        <button class="plat" id="f-rien">Tout décocher</button>
+      </div>
       ${carte('', tableau([
+        { titre: '', titreBrut: '<input type="checkbox" id="f-tout" title="Tout sélectionner">',
+          largeur: '32px',
+          rendu: (f) => `<input type="checkbox" class="f-choix" value="${f.id}"
+                          data-statut="${ech(f.statut)}"
+                          onclick="event.stopPropagation()">` },
         { titre: 'N°', cle: 'numero', largeur: '110px' },
         { titre: 'Date', rendu: (f) => fdate(f.date) },
         { titre: 'Tiers', rendu: (f) => ech(f.tiers_nom || '') },
@@ -980,6 +991,11 @@ App.pages.factures = {
         { titre: 'TVA', classe: 'num', rendu: (f) => fm(f.montant_tva) },
         { titre: 'Net à payer', classe: 'num', rendu: (f) => `<strong>${fm(f.net_a_payer)}</strong>` },
         { titre: 'Réglé', classe: 'num', rendu: (f) => fm(f.montant_regle) },
+        // Ce qu'il regarde en premier devant un client : ce qui reste.
+        { titre: 'Reste', classe: 'num',
+          rendu: (f) => resteFacture(f) > 0
+            ? `<span class="rouge">${fm(resteFacture(f))}</span>`
+            : `<span class="discret">0,00</span>` },
         { titre: 'Statut', rendu: (f) => etiquette(f.statut) },
         { titre: 'Périmètre', rendu: (f) => badgePerimetre(f.perimetre) },
       ], d.factures, {
@@ -990,19 +1006,123 @@ App.pages.factures = {
     $('#f-q').onkeydown = (e) => {
       if (e.key === 'Enter') navigue(`/factures?sens=${sens}&q=${encodeURIComponent(e.target.value)}`);
     };
+    installeSelectionFactures(sens);
   },
 };
+
+/** Ce qui reste dû sur une facture, les deux parts comprises. */
+function resteFacture(f) {
+  const du = (f.net_a_payer || 0) + (f.montant_hors || 0);
+  const paye = (f.montant_regle || 0) + (f.montant_hors_regle || 0);
+  return f.statut === 'annulee' ? 0 : du - paye;
+}
+
+/* Un import dépose des dizaines de brouillons. Les valider une par une
+   n'apprend rien à personne et prend la matinée : on les coche, et on
+   comptabilise d'un coup. Même chose pour effacer une reprise ratée. */
+
+function installeSelectionFactures(sens) {
+  const cases = () => $$('.f-choix');
+  const choisies = () => cases().filter((c) => c.checked);
+
+  function rafraichit() {
+    const prises = choisies();
+    const barre = $('#f-actions');
+    barre.hidden = prises.length === 0;
+    const brouillons = prises.filter((c) => c.dataset.statut === 'brouillon').length;
+    $('#f-compte').textContent = `${prises.length} facture(s) sélectionnée(s)`
+      + (brouillons < prises.length
+        ? ` — ${brouillons} en brouillon à comptabiliser` : '');
+    $('#f-valider').disabled = brouillons === 0;
+    const tout = $('#f-tout');
+    if (tout) tout.checked = prises.length === cases().length && prises.length > 0;
+  }
+
+  cases().forEach((c) => { c.onchange = rafraichit; });
+  const tout = $('#f-tout');
+  if (tout) {
+    tout.onclick = (e) => { e.stopPropagation(); };
+    tout.onchange = () => {
+      cases().forEach((c) => { c.checked = tout.checked; });
+      rafraichit();
+    };
+  }
+  $('#f-rien').onclick = () => {
+    cases().forEach((c) => { c.checked = false; });
+    rafraichit();
+  };
+
+  $('#f-valider').onclick = async () => {
+    const ids = choisies().filter((c) => c.dataset.statut === 'brouillon')
+      .map((c) => c.value);
+    if (!ids.length) return;
+    try {
+      const d = await envoie('/api/factures/valider-lot', { ids });
+      notifie(d.message, d.refusees?.length ? 'alerte' : 'succes');
+      if (d.refusees?.length) montreRefus(d.refusees);
+      afficheRoute();
+    } catch (err) { erreur(err); }
+  };
+
+  $('#f-supprimer').onclick = () => {
+    const ids = choisies().map((c) => c.value);
+    if (!ids.length) return;
+    modale({
+      titre: `Supprimer ${ids.length} facture(s)`,
+      contenu: `<div class="message danger"><strong>Attention</strong>
+          Ces factures et les écritures qu'elles ont produites seront
+          effacées. Une facture déjà réglée sera conservée : supprimez
+          d'abord son règlement.</div>
+        <label class="champ"><span>Saisissez SUPPRIMER pour confirmer</span>
+          <input id="conf-suppr-factures" placeholder="SUPPRIMER"></label>`,
+      boutons: [{ libelle: 'Annuler' }, {
+        libelle: 'Supprimer', classe: 'danger',
+        action: async (r) => {
+          const d = await envoie('/api/factures/supprimer-lot', {
+            ids, confirmation: $('#conf-suppr-factures', r).value,
+          });
+          notifie(d.message, d.refusees?.length ? 'alerte' : 'succes');
+          if (d.refusees?.length) montreRefus(d.refusees);
+          afficheRoute();
+        },
+      }],
+    });
+  };
+
+  rafraichit();
+}
+
+/** Ce qui n'est pas passé, et pourquoi — plutôt qu'un décompte muet. */
+function montreRefus(refusees) {
+  modale({
+    titre: 'Ce qui n\'a pas pu se faire',
+    contenu: `<ul>${refusees.map((r) =>
+      `<li><strong>${ech(r.numero || r.id)}</strong> — ${ech(r.raison)}</li>`).join('')}</ul>`,
+    boutons: [{ libelle: 'Fermer' }],
+  });
+}
 
 async function ficheFacture(zone, id) {
   const f = await api(`/api/factures/${id}`);
   $('#titre-page').textContent = `Facture ${f.numero}`;
   sousTitre(`${f.tiers?.raison_sociale || ''} — ${fdate(f.date)}`);
+  const reste = resteFacture(f);
+  const rien_regle = !f.montant_regle && !f.montant_hors_regle;
+  const achat = f.sens.includes('achat');
+  // Le bouton de paiement est ce qu'il cherche en premier : il est là dès que
+  // la facture est comptabilisée et qu'il reste quelque chose à encaisser,
+  // sans dépendre d'un statut intermédiaire.
   actionsPage(`
+    ${f.statut !== 'brouillon' && f.statut !== 'annulee' && reste > 0
+      ? `<button class="primaire" onclick="regleFacture(${id})">
+           ${achat ? 'Régler' : 'Encaisser'} — reste ${fm(reste)}</button>` : ''}
+    ${f.statut === 'brouillon'
+      ? `<button class="primaire" onclick="valideFacture(${id})">Comptabiliser</button>` : ''}
+    ${f.statut !== 'annulee' && rien_regle
+      ? `<button onclick="editeFacture(${id})">Modifier</button>` : ''}
     <button onclick="window.open('/api/factures/${id}/impression','_blank')">Imprimer</button>
-    ${f.statut === 'brouillon' ? `<button onclick="editeFacture(${id})">Modifier</button>
-      <button class="primaire" onclick="valideFacture(${id})">Valider</button>` : ''}
-    ${f.statut === 'validee' || f.statut === 'partielle' ? `<button class="primaire" onclick="regleFacture(${id})">Encaisser</button>` : ''}
     ${f.statut !== 'brouillon' && f.statut !== 'annulee' ? `<button onclick="creeAvoir(${id})">Avoir</button>` : ''}
+    ${rien_regle ? `<button class="danger" onclick="supprimeFacture(${id}, '${ech(f.numero)}')">Supprimer</button>` : ''}
     <a class="bouton" href="#/factures?sens=${f.sens}">Retour</a>`);
 
   zone.innerHTML = `
@@ -1010,8 +1130,8 @@ async function ficheFacture(zone, id) {
       ${indicateur('Total HT', fm(f.montant_ht, true))}
       ${indicateur('TVA', fm(f.montant_tva, true))}
       ${indicateur('Net à payer', fm(f.net_a_payer, true), f.timbre ? `dont timbre ${fm(f.timbre)}` : '', 'accent')}
-      ${indicateur('Reste dû', fm(f.net_a_payer - f.montant_regle, true), etiquette(f.statut),
-        f.net_a_payer - f.montant_regle > 0 ? 'danger' : 'succes')}
+      ${indicateur('Reste dû', fm(reste, true), etiquette(f.statut),
+        reste > 0 ? 'danger' : 'succes')}
     </div>
     ${f.montant_hors ? `<div class="grille c3" style="margin-bottom:16px">
       ${indicateur('Facturé (déclaré)', fm(f.net_a_payer, true),
@@ -1283,10 +1403,29 @@ async function editeFacture(id, sens = 'vente') {
   });
 }
 
+/** Effacer une facture — et l'écriture qu'elle a produite avec elle. */
+async function supprimeFacture(id, numero) {
+  modale({
+    titre: `Supprimer la facture ${numero}`,
+    contenu: `<div class="message danger"><strong>Attention</strong>
+        Cette facture et l'écriture qu'elle a produite seront effacées.
+        C'est ainsi qu'on corrige une reprise ratée, plutôt qu'en empilant
+        des avoirs sur des factures qui n'auraient jamais dû exister.</div>`,
+    boutons: [{ libelle: 'Annuler' }, {
+      libelle: 'Supprimer', classe: 'danger',
+      action: async () => {
+        await api(`/api/factures/${id}`, { method: 'DELETE', corps: {} });
+        notifie(`Facture ${numero} supprimée.`, 'succes');
+        navigue('/factures');
+      },
+    }],
+  });
+}
+
 async function valideFacture(id) {
   try {
     await api(`/api/factures/${id}/valider`, { method: 'POST', corps: {} });
-    notifie('Facture validée : l\'écriture comptable a été générée.', 'succes');
+    notifie('Facture comptabilisée : l\'écriture a été générée.', 'succes');
     afficheRoute();
   } catch (err) { erreur(err); }
 }

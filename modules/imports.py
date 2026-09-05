@@ -229,8 +229,15 @@ _COLONNES_FACTURES = [
     Colonne("Quantité", "Nombre d'unités (1 par défaut)", "1",
             synonymes=("quantite", "qte")),
     Colonne("Unité", "Unité de mesure", "", synonymes=("unite",)),
-    Colonne("Prix unitaire", "Prix hors taxes de l'unité", "500000",
-            requis=True, synonymes=("prix", "pu", "prix unitaire ht", "montant ht")),
+    Colonne("Prix unitaire", "Prix hors taxes d'une unité", "500000",
+            synonymes=("prix", "pu", "prix unitaire ht")),
+    # « Montant HT » était un synonyme de « Prix unitaire ». Un fichier qui
+    # donne le total d'une ligne **et** une quantité voyait donc sa somme
+    # multipliée : 100 × 4 954 100 au lieu de 4 954 100. Les deux colonnes
+    # sont désormais distinctes, et le montant l'emporte quand il est là.
+    Colonne("Montant HT", "Montant de la ligne, taxes non comprises "
+                          "(l'emporte sur le prix unitaire)", "500000",
+            synonymes=("montant ht", "montant", "total ht", "montant hors taxes")),
     Colonne("Remise %", "Remise en pourcentage", "", synonymes=("remise",)),
     Colonne("Taux TVA", "19, 9 ou 0", "19", synonymes=("tva", "taux tva %")),
     Colonne("Compte", "Compte de produit ou de charge (facultatif)", "7061"),
@@ -1868,11 +1875,13 @@ def analyse_factures(societe_id, rangs, association, defaut_perimetre, sens):
         designation = _valeur(rang, association, "Désignation")
         prix = _valeur(rang, association, "Prix unitaire")
 
+        montant_ligne = _valeur(rang, association, "Montant HT")
+
         erreurs = []
         if not designation:
             erreurs.append("désignation manquante")
-        if not prix:
-            erreurs.append("prix unitaire manquant")
+        if not prix and not montant_ligne:
+            erreurs.append("ni montant HT ni prix unitaire")
 
         groupe = groupes.get(numero or f"auto-{numero_ligne}")
         if groupe is None:
@@ -1921,6 +1930,7 @@ def analyse_factures(societe_id, rangs, association, defaut_perimetre, sens):
             "quantite": _valeur(rang, association, "Quantité") or 1,
             "unite": _valeur(rang, association, "Unité") or None,
             "prix_unitaire": prix,
+            "montant_ht": montant_ligne or None,
             "remise_taux": _valeur(rang, association, "Remise %") or 0,
             "taux_tva": _valeur(rang, association, "Taux TVA") or 19,
             "compte": _valeur(rang, association, "Compte") or None,
@@ -1940,13 +1950,30 @@ def analyse_factures(societe_id, rangs, association, defaut_perimetre, sens):
     apercu = [{
         "reference": g["numero"], "date": g["date"], "tiers": g["tiers"],
         "libelle": g["objet"], "perimetre": g["perimetre"],
-        "nb_lignes": len(g["lignes"]), "lignes_fichier": g["lignes_fichier"],
+        "nb_lignes": len(g["lignes"]),
+        # Un aperçu qui annonce « 1 ligne sera écrite » sans dire combien
+        # laisse valider à l'aveugle : c'est ainsi qu'une somme multipliée
+        # par cent est passée inaperçue jusqu'au total de l'écran.
+        "montant": _montant_apercu(g["lignes"]),
+        "lignes_fichier": g["lignes_fichier"],
         "erreurs": g["erreurs"],
     } for g in (groupes[c] for c in ordre)]
 
     return {"prets": prets, "anomalies": anomalies, "apercu": apercu,
             "nb_valides": len(prets), "nb_rejetes": len(ordre) - len(prets),
             "a_creer": manquants.resume()}
+
+
+def _montant_apercu(lignes: list[dict]) -> int:
+    """Le total hors taxes d'une facture telle qu'elle sera écrite."""
+    from modules.facturation import calcule_lignes
+    if not lignes:
+        return 0
+    try:
+        _, total_ht, _ = calcule_lignes(lignes)
+    except Exception:                                          # noqa: BLE001
+        return 0
+    return total_ht
 
 
 SENS_REGLEMENT = {"encaissement", "decaissement"}

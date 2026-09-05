@@ -3,6 +3,39 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.11.0
+
+- **Un import n'ajoute plus de zéros à des sommes justes.** « Montant HT »
+  était un simple synonyme de « Prix unitaire » : un fichier qui donne le
+  **total d'une ligne** *et* une quantité voyait donc sa somme multipliée —
+  100 × 4 954 100 au lieu de 4 954 100. Les deux colonnes sont désormais
+  distinctes, et **le montant l'emporte** quand il est renseigné ; la
+  quantité n'est plus qu'une indication. Un prix unitaire, lui, continue de
+  se multiplier normalement.
+- Une quantité écrite « 1,00 » ne fait plus échouer la ligne : les nombres à
+  la française sont lus partout.
+- **L'aperçu d'import dit combien**, facture par facture. Il annonçait « 1
+  ligne sera écrite » sans un montant : c'est ainsi qu'une somme centuplée
+  est passée jusqu'au total de l'écran.
+- **Cocher des factures et les comptabiliser d'un coup.** Un import dépose
+  des brouillons ; les valider une par une, sur des dizaines de factures,
+  prenait la matinée. La liste gagne une colonne de cases, « tout
+  sélectionner », et deux actions : **Comptabiliser la sélection** et
+  **Supprimer la sélection**. Ce qui ne passe pas est nommé, avec sa raison.
+- **Une facture se supprime**, et son écriture avec elle — c'est ainsi qu'on
+  corrige une reprise ratée, plutôt qu'en empilant des avoirs sur des
+  factures qui n'auraient jamais dû exister. Une facture déjà réglée résiste
+  et dit par quoi commencer.
+- **Une facture validée redevient modifiable** tant que personne n'a payé :
+  son écriture est refaite, pas doublée.
+- **Le bouton de paiement est en haut à droite**, dès que la facture est
+  comptabilisée, et il porte le montant qui reste : *« Encaisser — reste
+  1 315 000,00 »*. La liste gagne elle aussi une colonne **Reste**, qui
+  compte les deux parts d'une vente.
+- **Plus de droit de timbre sur une facture hors déclaration.** Le net à
+  payer dépassait le HT de 1 % : c'était le timbre, une taxe déclarée,
+  ajoutée à une facture qui ne l'est pas.
+
 ## 1.10.1
 
 - **Les dates d'un fichier Excel sont enfin comprises.** Une reprise de

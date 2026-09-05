@@ -44,12 +44,22 @@ def calcule_lignes(lignes_saisies: list[dict]) -> tuple[list[dict], int, int]:
         designation = (l.get("designation") or "").strip()
         if not designation:
             continue
-        quantite = int(round(float(l.get("quantite") or 1) * 1000))
-        prix_unitaire = util.centimes(l.get("prix_unitaire"))
+        quantite = int(round(util.nombre(l.get("quantite"), 1) * 1000)) or 1000
         remise = util.vers_taux(l.get("remise_taux") or 0)
         taux_tva = util.vers_taux(l.get("taux_tva") if l.get("taux_tva") is not None else 19)
 
-        brut = util.part_proportionnelle(prix_unitaire, quantite, 1000)
+        # Un fichier donne tantôt un prix unitaire, tantôt le montant de la
+        # ligne déjà fait. Multiplier un total par la quantité ajoute des
+        # zéros à une somme juste : quand le montant est donné, il fait foi,
+        # et la quantité n'est plus qu'une indication.
+        montant_donne = l.get("montant_ht")
+        if montant_donne not in (None, ""):
+            brut = util.centimes(montant_donne)
+            prix_unitaire = (util.part_proportionnelle(brut, 1000, quantite)
+                             if quantite else brut)
+        else:
+            prix_unitaire = util.centimes(l.get("prix_unitaire"))
+            brut = util.part_proportionnelle(prix_unitaire, quantite, 1000)
         montant_ht = brut - util.applique_taux(brut, remise)
         montant_tva = util.applique_taux(montant_ht, taux_tva)
 
@@ -294,12 +304,15 @@ def cree_facture(societe_id: int, sens: str, date: str, lignes: list[dict], *,
     lignes_pretes, total_ht, total_tva = calcule_lignes(lignes)
     ttc = total_ht + total_tva
     montant_espece = max(0, int(montant_espece or 0))
-    timbre = calcule_timbre(societe_id, mode_reglement, ttc, int(date[:4]),
-                            montant_espece)
     perimetre = perimetre_facture(
         perimetre,
         db.valeur("SELECT perimetre_defaut FROM societes WHERE id = ?",
                   (societe_id,), "declare"))
+    # Le droit de timbre est une taxe déclarée : il n'a rien à faire sur une
+    # facture qui ne l'est pas. Il gonflait le net à payer de 1 %.
+    timbre = (0 if perimetre == "hors_declaration"
+              else calcule_timbre(societe_id, mode_reglement, ttc,
+                                  int(date[:4]), montant_espece))
     montant_hors, compte_hors, tresorerie_hors_id = _controle_part_hors(
         societe_id, sens, montant_hors, compte_hors, tresorerie_hors_id,
         perimetre, lignes_pretes)
@@ -388,18 +401,23 @@ def api_modifie(ctx):
     ctx.interdit_lecture_seule()
     identifiant = int(ctx.params["id"])
     f = facture_ou_erreur(identifiant)
-    if f["statut"] not in ("brouillon",):
+    # Une facture validée reste corrigeable tant que personne n'a payé : ses
+    # écritures sont refaites, pas empilées. Réglée, elle ne l'est plus — il
+    # faudrait défaire un encaissement, et cela se fait ailleurs, exprès.
+    if f["statut"] == "annulee":
+        raise ErreurApplicative("Cette facture est annulée : elle ne se modifie plus.")
+    if f["statut"] != "brouillon" and (f["montant_regle"] or f["montant_hors_regle"]):
         raise ErreurApplicative(
-            "Seule une facture en brouillon est modifiable. Pour une facture validée, "
-            "établissez un avoir."
-        )
+            "Cette facture a déjà reçu un règlement : supprimez d'abord le "
+            "règlement, ou établissez un avoir.")
     lignes_pretes, total_ht, total_tva = calcule_lignes(ctx.champ("lignes") or [])
     date = ctx.date("date", f["date"])
     mode = ctx.champ("mode_reglement")
     ttc = total_ht + total_tva
     espece = max(0, ctx.montant("montant_espece"))
-    timbre = calcule_timbre(f["societe_id"], mode, ttc, int(date[:4]), espece)
     perimetre = perimetre_facture(ctx.champ("perimetre"), f["perimetre"])
+    timbre = (0 if perimetre == "hors_declaration"
+              else calcule_timbre(f["societe_id"], mode, ttc, int(date[:4]), espece))
     montant_hors, compte_hors, tresorerie_hors_id = _controle_part_hors(
         f["societe_id"], f["sens"], ctx.montant("montant_hors"),
         ctx.champ("compte_hors"), ctx.entier("tresorerie_hors_id"),
@@ -431,9 +449,26 @@ def api_modifie(ctx):
             "conditions": util.nettoie(ctx.champ("conditions")),
         })
         db.trace("modification", "facture", identifiant, None, ctx.nom_utilisateur)
-        if ctx.booleen("valider"):
+        etait_validee = f["statut"] != "brouillon"
+        if etait_validee:
+            _defait_comptabilisation(f, ctx.nom_utilisateur)
+        if etait_validee or ctx.booleen("valider"):
             _valide(identifiant, ctx.nom_utilisateur)
     return {"ok": True}
+
+
+def _defait_comptabilisation(f: dict, utilisateur: str | None) -> None:
+    """Retire les écritures d'une facture pour qu'elles soient refaites.
+
+    Corriger une facture ne doit pas laisser derrière elle l'écriture de la
+    version précédente : elle est retirée, et la validation la réécrit. Rien
+    n'est perdu — le journal d'audit garde la trace de l'une et de l'autre.
+    """
+    for cle in ("ecriture_id", "ecriture_hors_id"):
+        if f.get(cle):
+            compta.supprime_ecriture(f[cle], utilisateur, forcer=True)
+    db.modifie("factures", f["id"], {
+        "statut": "brouillon", "ecriture_id": None, "ecriture_hors_id": None})
 
 
 @route("POST", "/api/factures/<id>/valider")
@@ -622,17 +657,85 @@ def api_annule(ctx):
 @route("DELETE", "/api/factures/<id>")
 def api_supprime(ctx):
     ctx.exige_role("admin", "comptable")
-    identifiant = int(ctx.params["id"])
-    f = facture_ou_erreur(identifiant)
-    if f["statut"] != "brouillon":
-        raise ErreurApplicative(
-            "Seule une facture en brouillon peut être supprimée. "
-            "Utilisez « Annuler » pour une facture validée."
-        )
     with db.transaction():
-        db.supprime("factures", identifiant)
-        db.trace("suppression", "facture", identifiant, f["numero"], ctx.nom_utilisateur)
-    return {"ok": True}
+        numero = _supprime_facture(int(ctx.params["id"]), ctx.nom_utilisateur)
+    return {"ok": True, "numero": numero}
+
+
+def _supprime_facture(identifiant: int, utilisateur: str | None) -> str:
+    """Retire une facture et, s'il y en a, les écritures qu'elle a produites.
+
+    Une reprise ratée se corrige en effaçant, pas en empilant des avoirs sur
+    des factures qui n'auraient jamais dû exister. Un règlement, en revanche,
+    arrête tout : de l'argent est passé, et cela se défait ailleurs.
+    """
+    f = facture_ou_erreur(identifiant)
+    if f["montant_regle"] or f["montant_hors_regle"]:
+        raise ErreurApplicative(
+            f"La facture n° {f['numero']} a reçu un règlement. Supprimez "
+            "d'abord le règlement, depuis la fiche de la facture.")
+    for cle in ("ecriture_id", "ecriture_hors_id"):
+        if f.get(cle):
+            compta.supprime_ecriture(f[cle], utilisateur, forcer=True)
+    db.supprime("factures", identifiant)
+    db.trace("suppression", "facture", identifiant, f["numero"], utilisateur)
+    return f["numero"]
+
+
+@route("POST", "/api/factures/valider-lot")
+def api_valide_lot(ctx):
+    """Comptabiliser d'un coup les factures d'une reprise.
+
+    Un import dépose des brouillons : les valider une par une, sur des
+    dizaines de factures, n'apprend rien à personne et prend la matinée.
+    """
+    ctx.interdit_lecture_seule()
+    identifiants = [int(i) for i in (ctx.champ("ids") or []) if str(i).strip()]
+    if not identifiants:
+        raise ErreurApplicative("Sélectionnez au moins une facture.")
+    faites, refusees = [], []
+    with db.transaction():
+        for identifiant in identifiants:
+            f = db.ligne("SELECT * FROM factures WHERE id = ?", (identifiant,))
+            if not f:
+                continue
+            if f["statut"] != "brouillon":
+                refusees.append({"numero": f["numero"],
+                                 "raison": "déjà validée"})
+                continue
+            try:
+                _valide(identifiant, ctx.nom_utilisateur)
+                faites.append(f["numero"])
+            except ErreurApplicative as err:
+                # Une facture qui coince ne doit pas retenir les autres : on
+                # dit laquelle, et pourquoi.
+                refusees.append({"numero": f["numero"], "raison": str(err)})
+    return {"validees": len(faites), "numeros": faites, "refusees": refusees,
+            "message": f"{len(faites)} facture(s) comptabilisée(s)."
+                       + (f" {len(refusees)} refusée(s)." if refusees else "")}
+
+
+@route("POST", "/api/factures/supprimer-lot")
+def api_supprime_lot(ctx):
+    """Effacer d'un coup les factures d'une reprise ratée."""
+    ctx.exige_role("admin", "comptable")
+    identifiants = [int(i) for i in (ctx.champ("ids") or []) if str(i).strip()]
+    if not identifiants:
+        raise ErreurApplicative("Sélectionnez au moins une facture.")
+    if ctx.champ("confirmation") != "SUPPRIMER":
+        raise ErreurApplicative(
+            f"{len(identifiants)} facture(s) et leurs écritures seront "
+            "effacées. Saisissez SUPPRIMER pour confirmer.")
+    faites, refusees = [], []
+    with db.transaction():
+        for identifiant in identifiants:
+            try:
+                faites.append(_supprime_facture(identifiant, ctx.nom_utilisateur))
+            except ErreurApplicative as err:
+                refusees.append({"id": identifiant, "raison": str(err)})
+    return {"supprimees": len(faites), "refusees": refusees,
+            "message": f"{len(faites)} facture(s) supprimée(s)."
+                       + (f" {len(refusees)} conservée(s)." if refusees else "")}
 
 
 @route("POST", "/api/factures/<id>/avoir")

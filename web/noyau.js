@@ -504,7 +504,9 @@ function tableau(colonnes, lignes, options = {}) {
     || grille.some((cellules) => String(cellules[i] ?? '').trim() !== ''));
 
   const entetes = colonnes.map((c, i) => gardees[i]
-    ? `<th class="${c.classe || ''}" ${c.largeur ? `style="width:${c.largeur}"` : ''}>${ech(c.titre)}</th>`
+    // `titreBrut` porte un contrôle — une case « tout cocher », par exemple.
+    // Le titre ordinaire, lui, reste échappé : il vient parfois des données.
+    ? `<th class="${c.classe || ''}" ${c.largeur ? `style="width:${c.largeur}"` : ''}>${c.titreBrut || ech(c.titre)}</th>`
     : '').join('');
   const nbColonnes = gardees.filter(Boolean).length;
 
