@@ -3788,6 +3788,177 @@ def suite_reprise_factures(dos):
       "règlement" in (message or ""), message)
 
 
+def suite_grand_livre_vide(dos):
+    """« Il va au grand livre et aucune n'est vraiment passee. »
+
+    C'etait exact : l'import deposait des brouillons, et un brouillon n'a pas
+    d'ecriture. L'ecran restait blanc sans un mot. Deux causes muettes, en
+    fait — celle-la, et le perimetre de la barre de gauche.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "gl", "mot_de_passe": "motdepasse123",
+        "nom_complet": "Comptable", "raison_sociale": "SARL GRAND LIVRE",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    ex = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]
+    exid, annee = ex["id"], int(ex["date_debut"][:4])
+    series = [45195, 45449]
+
+    def gl(perimetre=None, du="2021-01-01", au="2026-12-31"):
+        # La periode couvre les dates du fichier, sans quoi le decompte des
+        # brouillons porterait sur un intervalle ou il n'y en a aucun.
+        suffixe = f"&perimetre={perimetre}" if perimetre else ""
+        return dos.appel(f"/api/grand-livre?societe={sid}&exercice={exid}"
+                         f"&du={du}&au={au}{suffixe}")
+
+    for a in range(2021, 2027):
+        if a != annee:
+            dos.appel("/api/exercices", {
+                "societe_id": sid, "libelle": str(a),
+                "date_debut": f"{a}-01-01", "date_fin": f"{a}-12-31"})
+
+    # ==================================================================
+    titre("1. Importees en brouillon, elles ne sont nulle part")
+    # ==================================================================
+    dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "factures_vente",
+        "contenu": b64_octets(classeur_etranger(series)),
+        "fichier": "ventes.xlsx", "comptabiliser": 0})
+    v("les factures sont bien la",
+      dos.sql("SELECT COUNT(*) n FROM factures")[0]["n"] == 2)
+    v("… mais aucune ecriture",
+      dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == 0)
+
+    # ==================================================================
+    titre("2. Et le grand livre le dit, au lieu de rester blanc")
+    # ==================================================================
+    d = gl()
+    v("le grand livre est vide", not d["groupes"])
+    v("… et il dit combien de factures attendent en brouillon",
+      d["vide_parce_que"]["factures_brouillon"] == 2, d["vide_parce_que"])
+    v("… sans inventer d'ecritures hors perimetre",
+      d["vide_parce_que"]["ecritures_periode"] == 0, d["vide_parce_que"])
+    v("… il annonce aussi son perimetre", bool(d["libelle_perimetre"]),
+      d.get("libelle_perimetre"))
+
+    # ==================================================================
+    titre("3. Comptabilisees a l'import, elles y sont")
+    # ==================================================================
+    dos.appel("/api/factures/supprimer-lot", {
+        "societe_id": sid, "confirmation": "SUPPRIMER",
+        "ids": [f["id"] for f in dos.sql("SELECT id FROM factures")]})
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "factures_vente",
+        "contenu": b64_octets(classeur_etranger(series)),
+        "fichier": "ventes.xlsx"})
+    v("l'import les comptabilise d'office", r["comptabilisees"] == 2, r)
+    v("… le compte rendu le dit", not r["non_comptabilisees"],
+      r["non_comptabilisees"])
+    v("… et les ecritures existent",
+      dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == 2)
+    v("la comptabilite est equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("4. L'autre cause muette : le perimetre")
+    # ==================================================================
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "OD", "date": f"{annee}-06-15",
+        "libelle": "Vente hors declaration", "perimetre": "hors_declaration",
+        "valider": True,
+        "lignes": [{"compte": "411", "debit": "50000", "credit": "0"},
+                   {"compte": "7011", "debit": "0", "credit": "50000"}]})
+    d = gl("hors_declaration")
+    v("la vue hors declaration montre cette ecriture", bool(d["groupes"]),
+      d.get("vide_parce_que"))
+    autre = gl("declare", du=f"{annee}-06-01", au=f"{annee}-06-30")
+    v("la vue declaree, elle, ne montre rien sur ce mois", not autre["groupes"])
+    v("… et dit que des ecritures existent hors de ce perimetre",
+      autre["vide_parce_que"]["hors_perimetre"] > 0, autre["vide_parce_que"])
+
+
+def suite_vsp_hors(dos):
+    """Une vente sur plan porte, elle aussi, une part hors declaration."""
+    dos.appel("/api/installation", {
+        "identifiant": "vsp", "mot_de_passe": "motdepasse123",
+        "nom_complet": "Comptable", "raison_sociale": "SARL PROMOTION",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    ex = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]
+    annee = int(ex["date_debut"][:4])
+    acquereur = dos.appel("/api/tiers", {
+        "societe_id": sid, "type": "client",
+        "raison_sociale": "BENHADDAD SAMIR"})["id"]
+    dos.appel("/api/comptes", {"societe_id": sid, "numero": "5300005",
+                               "intitule": "Caisse annexe", "nature": "debit"})
+    caisse = dos.appel("/api/tresorerie", {
+        "societe_id": sid, "code": "CA2", "libelle": "Caisse annexe",
+        "type": "caisse", "compte": "5300005"})["id"]
+    programme = dos.appel("/api/programmes", {
+        "societe_id": sid, "code": "PRG1", "intitule": "Residence La Reunion",
+        "wilaya": "16 Alger"})["id"]
+    lot = dos.appel("/api/lots", {
+        "societe_id": sid, "programme_id": programme, "numero": "A01",
+        "type_lot": "logement", "typologie": "F3",
+        "prix_vente": "5000000"})["id"]
+
+    # ==================================================================
+    titre("1. Le contrat porte les deux parts")
+    # ==================================================================
+    contrat = dos.appel("/api/contrats-vsp", {
+        "societe_id": sid, "lot_id": lot, "acquereur_id": acquereur,
+        "date_contrat": f"{annee}-03-10", "prix_total": "5000000",
+        "montant_hors": "1500000", "compte_hors": "7011",
+        "modele_echeancier": "VSP_STANDARD"})
+    c = dos.appel(f"/api/contrats-vsp/{contrat['id']}")
+    v("le prix declare reste celui de l'echeancier",
+      c["prix_total"] == 500000000, fm(c["prix_total"]))
+    v("la part non declaree est portee a part",
+      c["montant_hors"] == 150000000, fm(c["montant_hors"]))
+    v("… et le prix reellement convenu est donne",
+      c["prix_reel"] == 650000000, fm(c["prix_reel"]))
+    v("… rien n'en est encore encaisse", c["reste_hors"] == 150000000,
+      c["reste_hors"])
+    total_echeances = sum(e["montant"] for e in c["echeances"])
+    v("l'echeancier ne porte que le declare",
+      total_echeances == 500000000, fm(total_echeances))
+
+    # ==================================================================
+    titre("2. Elle s'encaisse a part, hors declaration")
+    # ==================================================================
+    r = dos.appel(f"/api/contrats-vsp/{contrat['id']}/encaisser-hors", {
+        "societe_id": sid, "tresorerie_id": caisse,
+        "date": f"{annee}-03-15", "montant": "600000"})
+    v("l'encaissement passe", r.get("ok"), r)
+    c = dos.appel(f"/api/contrats-vsp/{contrat['id']}")
+    v("… le reste se met a jour", c["reste_hors"] == 90000000,
+      fm(c["reste_hors"]))
+    lignes = dos.sql(
+        "SELECT l.compte, l.debit, l.credit FROM lignes l "
+        "JOIN ecritures e ON e.id = l.ecriture_id "
+        "WHERE e.perimetre = 'hors_declaration' ORDER BY l.id")
+    v("l'ecriture va de la caisse annexe au compte de produit",
+      {(x["compte"], x["debit"], x["credit"]) for x in lignes}
+      == {("5300005", 60000000, 0), ("7011", 0, 60000000)}, lignes)
+    v("… sans TVA ni avance VSP",
+      not any(x["compte"].startswith(("445", "419")) for x in lignes), lignes)
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+
+    message = dos.refuse(f"/api/contrats-vsp/{contrat['id']}/encaisser-hors", {
+        "societe_id": sid, "tresorerie_id": caisse,
+        "date": f"{annee}-03-16", "montant": "1000000"})
+    v("on ne peut pas encaisser plus que le reste", bool(message), message)
+
+    # ==================================================================
+    titre("3. Rien de tout cela n'atteint la declaration")
+    # ==================================================================
+    g = dos.appel(f"/api/g50?societe={sid}&periode={annee}-03")
+    v("la G 50 ne porte pas la part non declaree",
+      not contient_marqueur(g), contient_marqueur(g)[:4])
+    v("… et annonce ce qu'elle ecarte",
+      (g.get("hors_declaration") or {}).get("produits") == 60000000,
+      g.get("hors_declaration"))
+
+
 def suite_exercices(dos):
     """Corriger un exercice mal saisi, ou l'enlever.
 
@@ -3895,6 +4066,10 @@ SUITES = [
      False),
     ("reprise_factures", "Reprendre, corriger et effacer des factures",
      suite_reprise_factures, False),
+    ("grand_livre_vide", "Un grand livre vide dit pourquoi", suite_grand_livre_vide,
+     False),
+    ("vsp_hors", "Une vente sur plan et sa part non declaree", suite_vsp_hors,
+     False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),

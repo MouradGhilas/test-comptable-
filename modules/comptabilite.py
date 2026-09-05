@@ -1065,7 +1065,37 @@ def api_grand_livre(ctx):
         courant["lignes"].append(l)
     for g in groupes:
         g["solde"] = g["total_debit"] - g["total_credit"]
-    return {"groupes": groupes}
+    reponse = {"groupes": groupes,
+               "perimetre": ctx.perimetre() or "tous",
+               "libelle_perimetre": LIBELLES_VUE.get(ctx.perimetre() or "tous")}
+    if not groupes:
+        reponse["vide_parce_que"] = _pourquoi_vide(
+            societe_id, ctx.arg("du") or ex["date_debut"],
+            ctx.arg("au") or ex["date_fin"], ctx.perimetre())
+    return reponse
+
+
+def _pourquoi_vide(societe_id: int, du: str, au: str, perimetre) -> dict:
+    """Un grand livre vide a deux causes muettes, et il faut les nommer.
+
+    Ou bien des factures sont restees en brouillon — elles n'ont alors
+    aucune ecriture, et « rien n'est passe » est litteralement vrai ; ou
+    bien le perimetre choisi dans la barre de gauche ecarte tout ce qui
+    existe. Dans les deux cas l'ecran restait blanc, sans un mot.
+    """
+    total = db.valeur(
+        "SELECT COUNT(*) FROM ecritures WHERE societe_id = ? "
+        "AND date >= ? AND date <= ?", (societe_id, du, au), 0)
+    brouillons = db.valeur(
+        "SELECT COUNT(*) FROM factures WHERE societe_id = ? "
+        "AND statut = 'brouillon' AND date >= ? AND date <= ?",
+        (societe_id, du, au), 0)
+    return {
+        # Des écritures existent sur la période, mais pas dans ce périmètre.
+        "hors_perimetre": total if perimetre in ("declare", "hors_declaration") else 0,
+        "factures_brouillon": brouillons,
+        "ecritures_periode": total,
+    }
 
 
 @route("GET", "/api/balance")

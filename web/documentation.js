@@ -145,6 +145,10 @@ const TUTORIELS = [
           + 'L\'application refuse d\'inventer une période comptable.',
           'Une reprise ratée s\'efface : cochez les factures fautives et '
           + '« Supprimer la sélection ». Leurs écritures partent avec elles.',
+          'Laissez cochée la case <b>« Comptabiliser ces factures tout de '
+          + 'suite »</b>. Décochée, elles restent en brouillon : elles '
+          + 'n\'ont alors <b>aucune écriture</b>, et le grand livre reste '
+          + 'vide — ce qui est exact, et déroutant.',
         ],
       },
       {
@@ -345,6 +349,10 @@ const TUTORIELS = [
         ],
         route: '/promotion/contrats',
         pieges: [
+          'Une part <b>non déclarée</b> se saisit sur le contrat, champ '
+          + '« Dont part non déclarée ». Elle n\'entre ni dans l\'échéancier, '
+          + 'ni dans la TVA, ni dans les états fiscaux, et s\'encaisse par son '
+          + 'propre bouton, sur la caisse de votre choix.',
           'Un lot déjà marqué « vendu » ou « réservé » reste proposable tant '
           + 'qu\'aucun contrat vivant ne le prend : c\'est le cas normal d\'un '
           + 'dossier repris en cours de route.',
@@ -416,6 +424,26 @@ const TUTORIELS = [
           + 'gardent tout.',
           'Le dernier exercice du dossier ne se supprime pas : créez le bon '
           + 'd\'abord.',
+        ],
+      },
+      {
+        titre: 'Le grand livre ne montre rien : pourquoi',
+        quand: 'Vous avez saisi ou importé, et l\'écran reste vide.',
+        etapes: [
+          'Regardez le <b>périmètre</b>, dans la barre de gauche : sur '
+          + '« Déclaré », les écritures hors déclaration n\'apparaissent pas. '
+          + 'Passez sur « Tout — vue réelle ».',
+          'Ouvrez la liste des <b>factures</b> : celles en <b>brouillon</b> '
+          + 'n\'ont pas d\'écriture. Cochez-les, puis « Comptabiliser la '
+          + 'sélection ».',
+          'Vérifiez enfin les <b>dates</b> demandées en haut de l\'écran : '
+          + 'elles se limitent à l\'exercice courant par défaut.',
+        ],
+        route: '/comptabilite/grand-livre',
+        pieges: [
+          'Le grand livre vous dit désormais laquelle de ces raisons '
+          + 'l\'explique, avec les nombres. Un écran vide qui ne dit rien '
+          + 'était la vraie panne.',
         ],
       },
       {

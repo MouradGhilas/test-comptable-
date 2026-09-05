@@ -3,6 +3,30 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.13.0
+
+- **L'import comptabilise les factures.** Elles arrivaient en brouillon —
+  donc <em>sans aucune écriture</em> — et le grand livre restait vide :
+  « aucune n'est vraiment passée » était littéralement exact. Une case
+  **« Comptabiliser ces factures tout de suite »**, cochée par défaut, passe
+  les écritures dans la foulée ; le compte rendu dit combien l'ont été, et
+  nomme celles qui ne l'ont pas pu.
+- **Un grand livre vide dit pourquoi il est vide.** Deux causes, l'une et
+  l'autre muettes jusqu'ici : des factures restées en brouillon, ou le
+  périmètre de la barre de gauche qui écarte tout ce qui existe. L'écran
+  annonce désormais son périmètre — comme la balance — et, quand il ne montre
+  rien, il énonce laquelle des deux raisons s'applique, avec les nombres et
+  le bouton pour y aller.
+- **Un contrat de vente sur plan porte sa part non déclarée.** Champ
+  « Dont part non déclarée » avec son compte de produit ; le prix déclaré
+  continue seul d'alimenter l'échéancier, la TVA et les états fiscaux. Cette
+  part s'encaisse par son propre bouton, sur la caisse de votre choix :
+  l'écriture va de la trésorerie au compte choisi, hors déclaration, sans
+  TVA ni avance 4191. Le contrat affiche **non déclaré · reste · prix réel**,
+  et la liste des contrats gagne une colonne.
+- Deux fiches de documentation de plus : « Le grand livre ne montre rien :
+  pourquoi », et la part non déclarée dans la fiche des contrats VSP.
+
 ## 1.12.0
 
 - **Une documentation dans la barre de gauche.** Vingt-cinq fiches, rangées

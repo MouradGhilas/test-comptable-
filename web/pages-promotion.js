@@ -433,6 +433,10 @@ function tableContrats(contrats) {
     { titre: 'Acquéreur', cle: 'acquereur' },
     { titre: 'Date', rendu: (c) => fdate(c.date_contrat) },
     { titre: 'Prix TTC', classe: 'num', rendu: (c) => fm(c.prix_total) },
+    { titre: 'Non déclaré', classe: 'num', masquerSiVide: true,
+      rendu: (c) => c.montant_hors
+        ? `<span class="${(c.montant_hors - (c.montant_hors_encaisse || 0)) > 0
+            ? 'rouge' : 'discret'}">${fm(c.montant_hors)}</span>` : '' },
     { titre: 'Encaissé', classe: 'num', rendu: (c) => fm(c.montant_encaisse) },
     { titre: 'Reste', classe: 'num', rendu: (c) => fm(c.prix_total - c.montant_encaisse) },
     { titre: 'FGCMPI', classe: 'centre', rendu: (c) => c.fgcmpi_atteste ? '✓' : '<span class="orange" title="Garantie FGCMPI non enregistrée">!</span>' },
@@ -460,8 +464,12 @@ App.pages['promotion/contrat'] = {
     sousTitre(`${c.programme} — lot ${c.lot_numero} — ${c.acquereur}`);
     actionsPage(`
       <button onclick="window.open('/api/contrats-vsp/${c.id}/impression','_blank')">Échéancier imprimable</button>
+      ${c.reste_hors > 0
+        ? `<button class="primaire" onclick="encaissePartHors(${c.id})">
+             Encaisser le non déclaré — reste ${fm(c.reste_hors)}</button>` : ''}
       ${c.statut === 'en_cours' || c.statut === 'solde'
-        ? `<button class="primaire" onclick="livreLot(${c.id})">Livrer le lot</button>
+        ? `<button onclick="editeContrat(${c.id})">Modifier</button>
+           <button class="primaire" onclick="livreLot(${c.id})">Livrer le lot</button>
            <button class="danger" onclick="resilieContrat(${c.id})">Résilier</button>` : ''}
       <a class="bouton" href="#/promotion/contrats">Retour</a>`);
 
@@ -475,6 +483,17 @@ App.pages['promotion/contrat'] = {
         ${indicateur('Statut', etiquette(c.statut),
           c.date_livraison ? `livré le ${fdate(c.date_livraison)}` : '')}
       </div>
+
+      ${c.montant_hors ? `<div class="grille c3" style="margin-bottom:16px">
+        ${indicateur('Non déclaré', fm(c.montant_hors, true),
+          `${ech(c.compte_hors || '')} — encaissé ${fm(c.montant_hors_encaisse)}`,
+          c.reste_hors > 0 ? 'attention' : 'succes')}
+        ${indicateur('Reste non déclaré', fm(c.reste_hors, true), '',
+          c.reste_hors > 0 ? 'attention' : 'succes')}
+        ${indicateur('Prix réel', fm(c.prix_reel, true),
+          c.reste_reel > 0 ? `reste ${fm(c.reste_reel)} en tout`
+            : 'intégralement encaissé', 'accent')}
+      </div>` : ''}
 
       ${c.fgcmpi_atteste ? '' : `<div class="message alerte">
         <strong>Garantie FGCMPI non enregistrée</strong>
@@ -563,6 +582,14 @@ function lotsVendables(lots) {
   return { options, message, sousContrat };
 }
 
+/* Les comptes de produit qu'une vente de lot peut porter. */
+const COMPTES_PRODUIT_VSP = [
+  ['7011', '7011 — Ventes de logements'],
+  ['7012', '7012 — Ventes de locaux commerciaux'],
+  ['704', '704 — Ventes de travaux'],
+  ['708', '708 — Produits des activités annexes'],
+];
+
 async function editeContrat(id, lotId) {
   // Tous les lots, pas seulement les « disponible » : le tri se fait sur ce
   // que le serveur refuse vraiment — un lot deja sous contrat.
@@ -593,7 +620,16 @@ async function editeContrat(id, lotId) {
     },
     { nom: 'date_reservation', libelle: 'Date de réservation', type: 'date' },
     { nom: 'date_contrat', libelle: 'Date du contrat', type: 'date', requis: true, defaut: aujourdhui() },
-    { nom: 'prix_total', libelle: 'Prix de vente TTC', type: 'montant', aide: 'Vide = prix du lot' },
+    { nom: 'prix_total', libelle: 'Prix de vente TTC (déclaré)', type: 'montant',
+      aide: 'Vide = prix du lot' },
+    // Une vente de logement se fait souvent pour partie a cote. Cette part a
+    // son montant et son compte ; elle n'entre ni dans l'echeancier declare,
+    // ni dans la TVA, ni dans les etats fiscaux.
+    { nom: 'montant_hors', libelle: 'Dont part non déclarée', type: 'montant',
+      aide: 'Suivie à part, avec son propre encaissement. Laissez vide s\'il n\'y en a pas.' },
+    { nom: 'compte_hors', libelle: 'Compte de la part non déclarée',
+      type: 'select', options: COMPTES_PRODUIT_VSP,
+      aide: 'Par défaut 7011 — Ventes de logements.' },
     { nom: 'taux_tva', libelle: 'TVA', type: 'taux', defaut: 1900 },
     { groupe: 'Formalités' },
     { nom: 'notaire_id', libelle: 'Notaire', type: 'select', options: notaires,
@@ -680,6 +716,40 @@ async function appelDeFonds(id) {
     notifie('Échéance marquée comme appelée et exigible.', 'succes');
     afficheRoute();
   } catch (err) { erreur(err); }
+}
+
+/** Encaisser la part non déclarée d'une vente sur plan.
+
+    Elle ne passe par aucun mécanisme déclaratif : ni TVA, ni avance 4191,
+    ni échéancier. L'écriture va de la caisse au compte choisi, hors
+    déclaration, et le contrat sait ce qui reste à recevoir. */
+async function encaissePartHors(id) {
+  const c = await api(`/api/contrats-vsp/${id}`);
+  const champs = [
+    { nom: 'tresorerie_id', libelle: 'Encaissé sur', type: 'select',
+      requis: true, vide: false, options: await optionsTresorerie(),
+      vide_message: 'Aucun compte de trésorerie. Créez la caisse qui reçoit '
+        + 'cette part : Trésorerie → + Compte.' },
+    { nom: 'date', libelle: 'Date', type: 'date', requis: true, defaut: aujourdhui() },
+    { nom: 'montant', libelle: 'Montant', type: 'montant', requis: true,
+      defaut: c.reste_hors },
+  ];
+  modale({
+    titre: `Part non déclarée — contrat ${c.numero}`,
+    contenu: avecNote(formulaire(champs), 'info',
+      `Reste à recevoir sur cette part : ${fm(c.reste_hors, true)}.
+       L'écriture est passée hors déclaration, sans TVA, et n'entre dans
+       aucun état fiscal.`),
+    boutons: [{ libelle: 'Annuler' }, {
+      libelle: 'Encaisser', classe: 'primaire',
+      action: async (r) => {
+        const d = await envoie(`/api/contrats-vsp/${id}/encaisser-hors`,
+                               litFormulaire(r, champs));
+        notifie(d.message, 'succes');
+        afficheRoute();
+      },
+    }],
+  });
 }
 
 async function livreLot(id) {

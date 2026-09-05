@@ -611,6 +611,7 @@ App.pages['comptabilite/grand-livre'] = {
         <label class="champ"><span><input type="checkbox" id="gl-nl" ${p.non_lettrees === '1' ? 'checked' : ''}> Non lettrées</span></label>
         <button onclick="filtreGrandLivre()">Afficher</button>
       </div>
+      ${bandeauPerimetre(d.perimetre)}
       ${d.groupes.length ? d.groupes.map((g) => carte(
         `${g.compte} — ${g.intitule || ''}`,
         tableau([
@@ -633,9 +634,37 @@ App.pages['comptabilite/grand-livre'] = {
             { contenu: `<strong>${fm(g.total_credit)}</strong>`, classe: 'num' },
             { contenu: `<strong>${fmc(g.solde)}</strong>`, classe: 'num solde' }, {}],
         }), '', true)).join('')
-        : '<div class="vide"><span class="grand">📖</span>Aucun mouvement sur cette sélection.</div>'}`;
+        : grandLivreVide(d)}`;
   },
 };
+
+/* Un grand livre blanc a deux causes muettes, et « rien n'est passé » est
+   alors litteralement vrai : des factures restees en brouillon n'ont aucune
+   ecriture, ou le perimetre de la barre de gauche ecarte tout ce qui existe.
+   L'ecran le disait par un vide. Il le dit maintenant par une phrase. */
+function grandLivreVide(d) {
+  const raison = d.vide_parce_que || {};
+  const pistes = [];
+  if (raison.factures_brouillon) {
+    pistes.push(`<li><strong>${raison.factures_brouillon} facture(s) sont en
+      brouillon</strong> sur cette période : une facture en brouillon ne
+      produit pas d'écriture. Ouvrez la liste des factures, cochez-les, puis
+      « Comptabiliser la sélection ».
+      <button class="petit-bouton" onclick="navigue('/factures')">Voir les factures</button></li>`);
+  }
+  if (raison.hors_perimetre) {
+    pistes.push(`<li><strong>${raison.hors_perimetre} écriture(s) existent sur
+      cette période</strong>, mais hors du périmètre choisi dans la barre de
+      gauche. Passez le périmètre sur « Tout — vue réelle » pour les voir.</li>`);
+  }
+  if (!pistes.length && !raison.ecritures_periode) {
+    pistes.push('<li>Aucune écriture n\'a encore été passée sur cette période.</li>');
+  }
+  return `<div class="vide"><span class="grand">📖</span>
+      Aucun mouvement sur cette sélection.
+      ${pistes.length ? `<ul class="pistes-vide">${pistes.join('')}</ul>` : ''}
+    </div>`;
+}
 
 function filtreGrandLivre() {
   const p = new URLSearchParams();

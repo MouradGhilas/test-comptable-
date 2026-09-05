@@ -2310,6 +2310,11 @@ def importe(ctx, cle, octets, rejouer=True) -> dict:
     rattaches = rattache_reglements(societe_id) if crees else 0
 
     return {"crees": crees, "rejetes": resultat["nb_rejetes"],
+            # Une facture ecrite n'est pas une facture comptabilisee : le
+            # compte rendu doit distinguer les deux, sans quoi on croit avoir
+            # repris une comptabilite qui n'est nulle part.
+            "comptabilisees": bilan.get("comptabilisees", 0),
+            "non_comptabilisees": bilan.get("non_comptabilisees", []),
             "ignorees": resultat.get("nb_ignorees", 0),
             "completes": resultat.get("nb_completes", 0),
             "en_attente": en_attente,
@@ -2611,8 +2616,17 @@ def _importe_balance(ctx, societe_id, balance) -> dict:
 
 
 def _importe_factures(ctx, societe_id, groupes) -> dict:
+    """Écrit les factures, et les comptabilise sauf demande contraire.
+
+    Elles arrivaient en brouillon : aucune écriture, donc rien au grand
+    livre, et rien à l'écran pour le dire. « Il me dit qu'aucune n'est
+    vraiment passée » — c'était exact. Reprendre des factures anciennes,
+    c'est reprendre leur comptabilité : elles sont comptabilisées d'office,
+    et qui veut les relire d'abord décoche la case.
+    """
     from modules import facturation
-    identifiants = []
+    comptabiliser = ctx.booleen("comptabiliser", True)
+    identifiants, comptabilisees, refus = [], 0, []
     for groupe in groupes:
         creee = facturation.cree_facture(
             societe_id, groupe["sens"], groupe["date"], groupe["lignes"],
@@ -2624,10 +2638,20 @@ def _importe_factures(ctx, societe_id, groupes) -> dict:
             mode_reglement=groupe["mode_reglement"],
             perimetre=groupe["perimetre"],
             utilisateur=ctx.nom_utilisateur,
-            valider=False,       # brouillon : l'écriture attend la relecture
+            valider=False,
         )
         identifiants.append(creee["id"])
-    return {"nb": len(groupes), "factures": identifiants}
+        if not comptabiliser:
+            continue
+        try:
+            facturation._valide(creee["id"], ctx.nom_utilisateur)
+            comptabilisees += 1
+        except ErreurApplicative as err:
+            # Une facture qui ne passe pas reste en brouillon plutôt que
+            # d'arrêter la reprise : elle est nommée dans le compte rendu.
+            refus.append({"numero": creee["numero"], "raison": str(err)})
+    return {"nb": len(groupes), "factures": identifiants,
+            "comptabilisees": comptabilisees, "non_comptabilisees": refus}
 
 
 def _importe_reglements(ctx, societe_id, rangs) -> dict:

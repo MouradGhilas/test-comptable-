@@ -141,7 +141,7 @@ SCHEMA = Path(__file__).parent / "schema.sql"
 
 #: Version du schéma attendue par cette version du programme.
 #: À incrémenter dès qu'une migration est ajoutée ci-dessous.
-VERSION_SCHEMA = 11
+VERSION_SCHEMA = 12
 
 
 def colonnes(table: str) -> set[str]:
@@ -404,6 +404,20 @@ def _migration_11() -> None:
     ajoute_colonne("reglements", "part", "TEXT")
 
 
+def _migration_12() -> None:
+    """Une vente sur plan porte, elle aussi, une part hors déclaration.
+
+    Le contrat VSP ne connaissait qu'un prix, forcément déclaré. Or une vente
+    de logement se fait souvent pour partie à côté, comme une facture. Cette
+    part a son montant, son compte et son encaissement propre ; elle n'entre
+    ni dans l'échéancier déclaré, ni dans les états fiscaux.
+    """
+    ajoute_colonne("contrats_vsp", "montant_hors", "INTEGER NOT NULL DEFAULT 0")
+    ajoute_colonne("contrats_vsp", "compte_hors", "TEXT")
+    ajoute_colonne("contrats_vsp", "montant_hors_encaisse",
+                   "INTEGER NOT NULL DEFAULT 0")
+
+
 #: version -> fonction de migration. Exécutées dans l'ordre croissant.
 MIGRATIONS = {
     2: _migration_2,
@@ -416,6 +430,7 @@ MIGRATIONS = {
     9: _migration_9,
     10: _migration_10,
     11: _migration_11,
+    12: _migration_12,
 }
 
 

@@ -338,6 +338,12 @@ nav a .pastille { margin-left: auto; background: var(--danger); color: #fff;
 .pieges-doc ul { margin: 0; padding-left: 18px; }
 .pieges-doc li { margin: 5px 0; line-height: 1.55; }
 
+/* Un ecran vide qui explique son vide : la liste des raisons possibles,
+   avec de quoi y aller. */
+.pistes-vide { text-align: left; max-width: 620px; margin: 14px auto 0;
+               padding-left: 20px; font-size: 13px; line-height: 1.6; }
+.pistes-vide li { margin: 8px 0; }
+
 /* ---------- Tableaux ---------- */
 /* `overflow-x: auto` fait de l'enveloppe un conteneur de défilement : un
    en-tête `position: sticky` s'y accroche, mais à un conteneur qui n'a

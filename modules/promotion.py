@@ -557,6 +557,11 @@ def api_contrat(ctx):
     c["echeances"] = db.lignes(
         "SELECT * FROM echeances_vsp WHERE contrat_id = ? ORDER BY ordre", (identifiant,))
     c["reste_a_encaisser"] = c["prix_total"] - c["montant_encaisse"]
+    hors = c.get("montant_hors") or 0
+    hors_encaisse = c.get("montant_hors_encaisse") or 0
+    c["prix_reel"] = c["prix_total"] + hors
+    c["reste_hors"] = hors - hors_encaisse
+    c["reste_reel"] = c["reste_a_encaisser"] + c["reste_hors"]
     c["taux_encaissement"] = (util.part_proportionnelle(util.BASE_TAUX, c["montant_encaisse"],
                                                        c["prix_total"])
                               if c["prix_total"] else 0)
@@ -572,6 +577,28 @@ def api_modeles(ctx):
     for m in modeles:
         m["lignes"] = json.loads(m["lignes"])
     return {"modeles": modeles}
+
+
+#: Compte de produit propose pour la part non declaree d'une vente de lot.
+COMPTE_HORS_DEFAUT = "7011"
+
+
+def _part_hors_contrat(societe_id: int, ctx) -> dict:
+    """La part du prix convenue hors déclaration, et où elle s'inscrit.
+
+    Elle ne touche ni le prix déclaré, ni l'échéancier, ni la TVA : elle a
+    son montant et son compte, et s'encaisse à part. Zéro, elle n'existe
+    simplement pas.
+    """
+    montant = max(0, ctx.montant("montant_hors"))
+    if not montant:
+        return {"montant_hors": 0, "compte_hors": None}
+    compte = util.nettoie(ctx.champ("compte_hors")) or COMPTE_HORS_DEFAUT
+    if not compta.compte_existe(societe_id, compte):
+        raise ErreurApplicative(
+            f"Le compte {compte} n'est pas au plan comptable. Créez-le dans "
+            "Paramètres → Plan comptable, puis revenez.")
+    return {"montant_hors": montant, "compte_hors": compte}
 
 
 @route("POST", "/api/contrats-vsp")
@@ -624,6 +651,7 @@ def api_cree_contrat(ctx):
             "fgcmpi_numero": util.nettoie(ctx.champ("fgcmpi_numero")),
             "fgcmpi_prime": ctx.montant("fgcmpi_prime"),
             "montant_encaisse": 0, "statut": "en_cours",
+            **_part_hors_contrat(societe_id, ctx),
             "notes": util.nettoie(ctx.champ("notes")),
             "cree_le": util.maintenant(),
         })
@@ -707,6 +735,7 @@ def api_modifie_contrat(ctx):
             "date_publication": ctx.date("date_publication"),
             "prix_total": prix_total, "prix_ht": prix_ht, "tva": tva,
             "taux_tva": taux_tva,
+            **_part_hors_modifiee(c, ctx),
             "mode_financement": ctx.champ("mode_financement"),
             "banque": util.nettoie(ctx.champ("banque")),
             "montant_credit": ctx.montant("montant_credit"),
@@ -717,6 +746,75 @@ def api_modifie_contrat(ctx):
             "notes": util.nettoie(ctx.champ("notes")),
         })
     return {"ok": True}
+
+
+def _part_hors_modifiee(contrat: dict, ctx) -> dict:
+    """La part non déclarée corrigée, sans passer sous ce qui est encaissé."""
+    part = _part_hors_contrat(contrat["societe_id"], ctx)
+    deja = contrat["montant_hors_encaisse"] or 0
+    if part["montant_hors"] < deja:
+        raise ErreurApplicative(
+            "La part non déclarée ne peut pas descendre sous ce qui en a déjà "
+            f"été encaissé ({util.formate_montant(deja)}).")
+    return part
+
+
+@route("POST", "/api/contrats-vsp/<id>/encaisser-hors")
+def api_encaisse_part_hors(ctx):
+    """Encaissement de la part non déclarée d'une vente sur plan.
+
+    L'écriture va de la trésorerie au compte choisi, hors déclaration. Elle
+    ne passe par aucun des mécanismes déclaratifs : ni TVA, ni avance 4191,
+    ni échéancier. Le contrat, lui, sait ce qui reste à recevoir.
+    """
+    ctx.interdit_lecture_seule()
+    contrat = contrat_ou_erreur(int(ctx.params["id"]))
+    reste = (contrat["montant_hors"] or 0) - (contrat["montant_hors_encaisse"] or 0)
+    if reste <= 0:
+        raise ErreurApplicative(
+            "Ce contrat ne porte pas de part non déclarée à encaisser."
+            if not contrat["montant_hors"] else
+            "La part non déclarée de ce contrat est déjà entièrement encaissée.")
+
+    montant = ctx.montant("montant") or reste
+    if montant <= 0:
+        raise ErreurApplicative("Montant d'encaissement invalide.")
+    if montant > reste:
+        raise ErreurApplicative(
+            "Montant supérieur au reste dû sur la part non déclarée "
+            f"({util.formate_montant(reste)}).")
+
+    tresorerie = db.ligne("SELECT * FROM comptes_tresorerie WHERE id = ?",
+                          (ctx.entier("tresorerie_id"),))
+    if not tresorerie:
+        raise ErreurApplicative("Sélectionnez le compte qui reçoit cette part.")
+
+    date = ctx.date("date", util.aujourdhui())
+    libelle = (f"Encaissement part non déclarée — contrat {contrat['numero']}")
+    axes = {"programme_id": contrat["programme_id"], "lot_id": contrat["lot_id"]}
+    lignes = [
+        {"compte": tresorerie["compte"], "debit": montant, "credit": 0,
+         "libelle": libelle, **axes},
+        {"compte": contrat["compte_hors"] or COMPTE_HORS_DEFAUT,
+         "debit": 0, "credit": montant, "libelle": libelle, **axes},
+    ]
+    with db.transaction():
+        ecriture_id = compta.enregistre_ecriture(
+            contrat["societe_id"],
+            "BQ" if tresorerie["type"] in ("banque", "ccp") else "CA",
+            date, libelle, lignes, reference=contrat["numero"],
+            module="promotion", source_type="contrat_vsp",
+            source_id=contrat["id"], utilisateur=ctx.nom_utilisateur,
+            perimetre="hors_declaration",
+        )
+        db.modifie("contrats_vsp", contrat["id"], {
+            "montant_hors_encaisse": (contrat["montant_hors_encaisse"] or 0) + montant})
+        db.trace("encaissement_hors", "contrat_vsp", contrat["id"],
+                 {"montant": montant}, ctx.nom_utilisateur)
+    return {"ok": True, "ecriture_id": ecriture_id,
+            "reste_hors": reste - montant,
+            "message": f"{util.formate_montant(montant)} encaissé(s) sur la "
+                       "part non déclarée."}
 
 
 @route("GET", "/api/echeances-vsp")

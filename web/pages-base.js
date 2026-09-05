@@ -2163,6 +2163,12 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
 
   zone.innerHTML = diagnostic + resume + prealables + aRemplir + dejaLa + lecture + ignorees
     + lignesIgnorees + detail + `
+    ${modele.startsWith('factures_') ? `
+    <label class="rangee" style="margin-top:12px; gap:8px; align-items:center">
+      <input type="checkbox" id="import-comptabiliser" checked>
+      <span>Comptabiliser ces factures tout de suite — sans quoi elles
+        restent en brouillon et n'apparaissent pas au grand livre.</span>
+    </label>` : ''}
     <div class="rangee" style="margin-top:12px">
       ${d.nb_valides || anomalies.length ? `<button class="primaire" id="bouton-importer">
         ${libelleImport}</button>` : ''}
@@ -2174,9 +2180,11 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
     bouton.disabled = true;                 // un double clic doublerait l'import
     bouton.textContent = 'Import en cours…';
     try {
+      const comptabiliser = $('#import-comptabiliser', zone)?.checked !== false;
       const r = await envoie('/api/import/valider',
         { modele, contenu, ...options,
           fichier: _fichierImport?.name || '',
+          comptabiliser: comptabiliser ? 1 : 0,
           ignorer_anomalies: anomalies.length ? 1 : 0 });
       const NOMS_PREALABLES = { comptes: 'compte(s)', tiers: 'tiers',
                                 journaux: 'journal/journaux', biens: 'bien(s)',
@@ -2191,8 +2199,15 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
       const brouillon = modele === 'ecritures'
         ? 'Les écritures sont en brouillon : relisez-les au journal avant de les valider.'
         : (modele.startsWith('factures_')
-          ? 'Les factures sont en brouillon : elles ne génèrent leur écriture '
-            + 'comptable qu\'une fois validées.' : '');
+          ? (comptabiliser
+            ? `${r.comptabilisees || 0} facture(s) comptabilisée(s) : leurs `
+              + 'écritures sont au grand livre.'
+              + (r.non_comptabilisees?.length
+                ? ` ${r.non_comptabilisees.length} n'a pas pu l'être et reste `
+                  + 'en brouillon.' : '')
+            : 'Les factures sont en brouillon : cochez-les sur la liste et '
+              + '« Comptabiliser la sélection » pour qu\'elles passent au '
+              + 'grand livre.') : '');
       zone.innerHTML = `<div class="message succes">
         <strong>Import terminé</strong>
         ${r.crees} ligne(s) enregistrée(s)${

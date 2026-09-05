@@ -732,10 +732,16 @@ CREATE TABLE IF NOT EXISTS contrats_vsp (
     notaire_id        INTEGER REFERENCES tiers(id),
     num_acte_notarie  TEXT,
     date_publication  TEXT,
-    prix_total        INTEGER NOT NULL DEFAULT 0,   -- TTC
+    prix_total        INTEGER NOT NULL DEFAULT 0,   -- TTC declare
     prix_ht           INTEGER NOT NULL DEFAULT 0,
     tva               INTEGER NOT NULL DEFAULT 0,
     taux_tva          INTEGER NOT NULL DEFAULT 1900,
+    -- Part du prix convenue hors declaration. Elle ne touche ni l'echeancier
+    -- declare ni les etats fiscaux : elle a son montant, son compte et son
+    -- propre encaissement.
+    montant_hors           INTEGER NOT NULL DEFAULT 0,
+    compte_hors            TEXT,
+    montant_hors_encaisse  INTEGER NOT NULL DEFAULT 0,
     -- Financement
     mode_financement  TEXT,                          -- fonds_propres | credit_bancaire | cnl_aide | mixte
     banque            TEXT,
