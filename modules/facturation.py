@@ -694,7 +694,15 @@ def _supprime_facture(identifiant: int, utilisateur: str | None) -> str:
 
     for cle in ("ecriture_id", "ecriture_hors_id"):
         if f.get(cle):
-            compta.supprime_ecriture(f[cle], utilisateur, forcer=True)
+            try:
+                compta.supprime_ecriture(f[cle], utilisateur, forcer=True)
+            except ErreurApplicative as err:
+                # Un exercice clôturé, le plus souvent. Le message parlait
+                # d'écriture ; il doit parler de la facture qu'on essayait
+                # d'effacer, sans quoi on ne fait pas le lien.
+                raise ErreurApplicative(
+                    f"La facture n° {f['numero']} n'a pas pu être supprimée : "
+                    f"{err}") from err
     db.supprime("factures", identifiant)
     db.trace("suppression", "facture", identifiant, f["numero"], utilisateur)
     return f["numero"]

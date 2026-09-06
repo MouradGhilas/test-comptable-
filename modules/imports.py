@@ -1041,6 +1041,25 @@ def _valeur(rang: list, association: dict, nom: str) -> str:
     return "" if valeur is None else str(valeur).strip()
 
 
+#: Ce que l'application sait lire comme date. Le message le dit, plutôt que
+#: de laisser chercher : « ce n'est pas normal qu'une date ne soit pas
+#: compréhensible » — et c'est vrai de toutes celles-ci.
+FORMES_DATE = ("31/12/2024", "2024-12-31", "20241231", "31122024",
+               "31/12/24", "31 décembre 2024")
+
+
+def date_illisible(valeur) -> str:
+    """Le message d'une date qu'on n'a pas su lire, avec ce qui est accepté."""
+    return (f"date « {valeur} » illisible — écrivez-la par exemple "
+            + ", ".join(FORMES_DATE[:4]))
+
+
+#: Compte d'attente du plan SCF. Y porter un écart n'est pas un pis-aller :
+#: c'est ce à quoi il sert. La somme qui y dort est la liste, chiffrée, de ce
+#: qui reste à imputer.
+COMPTE_ATTENTE = "471"
+
+
 def _perimetre(valeur: str, defaut: str) -> str:
     propre = _sans_accent(valeur)
     if not propre:
@@ -1337,8 +1356,9 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
             try:
                 enregistrement[colonne.champ] = CONVERTISSEURS[colonne.type](valeur)
             except (ValueError, TypeError):
-                erreurs.append(f"« {colonne.nom} » : valeur « {valeur} » "
-                               "incompréhensible")
+                erreurs.append(
+                    date_illisible(valeur) if colonne.type == "date"
+                    else f"« {colonne.nom} » : valeur « {valeur} » illisible")
 
         reference = (str(enregistrement.get(cle_unique, "")).lower()
                      if cle_unique and not erreurs else "")
@@ -1702,7 +1722,7 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
             iso = _date(date)
             if not iso:
                 erreurs.append(
-                    f"date « {date} » incompréhensible" if date
+                    date_illisible(date) if date
                     else "date manquante, et aucune date à reprendre plus haut")
             if not journal_saisi:
                 erreurs.append("journal manquant")
@@ -1746,12 +1766,31 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
             # d'ajouter un déséquilibre qui n'est qu'une conséquence.
             continue
         if groupe["debit"] != groupe["credit"]:
-            message = (f"écriture déséquilibrée : débit "
-                       f"{util.formate_montant(groupe['debit'])} ≠ crédit "
-                       f"{util.formate_montant(groupe['credit'])}")
-            groupe["erreurs"].append(message)
-            anomalies.append({"ligne": groupe["lignes_fichier"][0],
-                              "message": message})
+            # Un import n'a pas à renvoyer quelqu'un corriger son fichier :
+            # l'écart part au compte d'attente 471, l'écriture entre, et il
+            # la reprend quand il veut. La partie double est préservée — sans
+            # elle la balance, le bilan et la G 50 diraient n'importe quoi —
+            # mais l'écart n'est pas caché : il porte un nom, un compte, et
+            # se retrouve dans Santé du dossier.
+            ecart = groupe["debit"] - groupe["credit"]
+            groupe["lignes"].append({
+                "compte": COMPTE_ATTENTE,
+                "libelle": "Écart d'import à imputer",
+                "debit": -ecart if ecart < 0 else 0,
+                "credit": ecart if ecart > 0 else 0,
+                "tiers_id": None, "tiers_nom": None,
+            })
+            groupe["ecart_attente"] = ecart
+            manquants.compte(COMPTE_ATTENTE)
+            anomalies.append({
+                "ligne": groupe["lignes_fichier"][0],
+                "message": (
+                    f"débit {util.formate_montant(groupe['debit'])} ≠ crédit "
+                    f"{util.formate_montant(groupe['credit'])} : l'écart de "
+                    f"{util.formate_montant(abs(ecart))} est porté au compte "
+                    f"{COMPTE_ATTENTE} — l'écriture est enregistrée"),
+                "bloquant": False,
+            })
         elif len(groupe["lignes"]) < 2:
             message = "une écriture comporte au moins deux lignes"
             groupe["erreurs"].append(message)
@@ -1893,7 +1932,7 @@ def analyse_factures(societe_id, rangs, association, defaut_perimetre, sens):
             elif numero in existantes:
                 erreurs.append(f"la facture n° {numero} existe déjà")
             if not iso:
-                erreurs.append(f"date « {date} » incompréhensible")
+                erreurs.append(date_illisible(date))
             if not tiers:
                 erreurs.append("tiers manquant")
             elif tiers_id is None:
@@ -2009,7 +2048,7 @@ def analyse_reglements(societe_id, rangs, association):
         if not numero:
             erreurs.append("« N° facture » est obligatoire")
         if not date:
-            erreurs.append("date de règlement incompréhensible")
+            erreurs.append(date_illisible(_valeur(rang, association, "Date")))
         if montant <= 0:
             erreurs.append("montant absent ou nul")
         if sens and sens not in SENS_REGLEMENT:
@@ -2164,6 +2203,11 @@ def _lignes_rejetees(resultat: dict) -> dict:
                        ([vue["ligne"]] if vue.get("ligne") else [])):
             rejetees[numero] = raison
     for anomalie in resultat.get("anomalies") or []:
+        # Une remarque n'est pas un rejet : l'écriture dont l'écart est parti
+        # au compte d'attente est écrite. La mettre aussi en attente la ferait
+        # entrer une seconde fois au premier rejeu.
+        if anomalie.get("bloquant") is False:
+            continue
         numero = anomalie.get("ligne")
         if numero and numero not in rejetees:
             rejetees[numero] = anomalie.get("message", "")

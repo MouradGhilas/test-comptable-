@@ -145,6 +145,15 @@ const TUTORIELS = [
           + 'L\'application refuse d\'inventer une période comptable.',
           'Une reprise ratée s\'efface : cochez les factures fautives et '
           + '« Supprimer la sélection ». Leurs écritures partent avec elles.',
+          'Les <b>dates</b> sont lues sous toutes leurs formes : 31/12/2024, '
+          + '2024-12-31, 20241231, 31122024, 31/12/24, « 31 décembre 2024 », '
+          + 'et le numéro de série d\'un tableur. Seul reste refusé ce qui '
+          + 'est vraiment ambigu, comme « 100624 » — six chiffres qui peuvent '
+          + 'se lire dans les deux sens.',
+          'Une écriture qui <b>ne s\'équilibre pas</b> n\'est plus refusée : '
+          + 'l\'écart part au compte <b>471 — Compte d\'attente</b> et '
+          + 'l\'écriture entre. Vous le retrouvez dans Santé du dossier, et '
+          + 'vous l\'imputez quand vous voulez.',
           'Laissez cochée la case <b>« Comptabiliser ces factures tout de '
           + 'suite »</b>. Décochée, elles restent en brouillon : elles '
           + 'n\'ont alors <b>aucune écriture</b>, et le grand livre reste '
@@ -424,6 +433,26 @@ const TUTORIELS = [
           + 'gardent tout.',
           'Le dernier exercice du dossier ne se supprime pas : créez le bon '
           + 'd\'abord.',
+        ],
+      },
+      {
+        titre: 'Vider le compte d\'attente 471',
+        quand: 'Santé du dossier signale des écarts à imputer.',
+        etapes: [
+          'Un import a accepté des écritures qui ne s\'équilibraient pas, en '
+          + 'portant l\'écart au compte 471 : la comptabilité reste juste, '
+          + 'mais ces sommes n\'ont pas encore leur vrai compte.',
+          '<b>Santé du dossier</b> les liste, avec le montant et l\'écriture '
+          + 'qui l\'a produit.',
+          'Ouvrez chaque écriture (<b>double-clic</b> sur sa ligne du journal) '
+          + 'et remplacez le 471 par le compte qui convient.',
+          'Le solde du 471 doit finir à zéro.',
+        ],
+        route: '/sante',
+        pieges: [
+          'Tant que le 471 n\'est pas soldé, votre bilan porte une somme qui '
+          + 'n\'est imputée nulle part. Ce n\'est pas faux — la partie double '
+          + 'tient — mais ce n\'est pas fini.',
         ],
       },
       {

@@ -3,6 +3,31 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.14.0
+
+- **Une date est une date, quelle que soit son écriture.** `20200101` était
+  refusé, et il avait raison de trouver ça anormal. Sont désormais lus :
+  `31/12/2024`, `2024-12-31`, `20241231`, `31122024`, `31/12/24`, `2024/6/1`,
+  `15 mars 2024`, une date suivie d'une heure, un fichier anglophone
+  (`03/15/2024`), et le numéro de série d'un tableur. Reste refusé ce qui
+  n'est pas une date (`2024` seul, `32/13/2024`) et ce qui est **réellement
+  ambigu** : `100624` se lit aussi bien 24/06/2010 que 10/06/2024, et deviner
+  mettrait une facture dans le mauvais exercice, en silence.
+- Quand une date résiste vraiment, le message montre désormais les formes
+  acceptées au lieu de dire seulement « incompréhensible ».
+- **Une écriture qui ne s'équilibre pas n'est plus refusée à l'import.**
+  L'écart est porté au compte **471 — Compte d'attente**, qui existe pour
+  cela, et l'écriture entre. La partie double reste vraie — sans elle la
+  balance, le bilan et la G 50 diraient n'importe quoi — mais l'écart n'est
+  pas caché : il porte un libellé, un compte, et **Santé du dossier** le
+  réclame, chiffré, avec l'écriture qui l'a produit. Vous l'imputez quand
+  vous voulez ; le 471 doit finir à zéro.
+- **Un refus de suppression ne passe plus inaperçu.** Il s'affichait dans une
+  notification qui s'efface au bout de quatre secondes : le bouton semblait
+  n'avoir rien fait. Le motif reste maintenant **dans la fenêtre**, qui ne se
+  ferme pas, et il nomme la facture, le montant déjà reçu, ou l'exercice
+  clôturé qui bloque.
+
 ## 1.13.1
 
 - **Une facture « déjà encaissée » se supprime enfin.** Quand la part non

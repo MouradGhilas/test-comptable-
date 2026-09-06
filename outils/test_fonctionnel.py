@@ -716,6 +716,40 @@ def executer():
     # qu'une cellule porte une date : il porte un nombre de jours, et un
     # style. Nous ne reconnaissions que le style de nos propres modèles.
     from noyau import tableur
+    # « Ses dates sont ecrites 20200101 comme ca, et le logiciel dit date
+    # incomprehensible — ce n'est pas normal qu'une date ne le soit pas. »
+    formes = {
+        "20200101": "2020-01-01",     # AAAAMMJJ colle
+        "31122024": "2024-12-31",     # JJMMAAAA colle
+        "10102020": "2020-10-10",     # lisible des deux facons : l'an 1010 non
+        "2024-06-10": "2024-06-10",
+        "10/06/2024": "2024-06-10",
+        "10-06-24": "2024-06-10",     # annee sur deux chiffres
+        "2024/6/1": "2024-06-01",     # chiffres non completes
+        "03/15/2024": "2024-03-15",   # fichier anglophone : 15 ne peut etre un mois
+        "15 mars 2024": "2024-03-15",
+        "15 décembre 2024": "2024-12-15",
+        "2024-06-10T00:00:00": "2024-06-10",
+        "10/06/2024 08:30": "2024-06-10",
+        "45195": "2023-09-26",        # numero de serie d'un tableur
+    }
+    mauvaises = [f"{brut} -> {util.date_iso(brut)} au lieu de {attendu}"
+                 for brut, attendu in formes.items()
+                 if util.date_iso(brut) != attendu]
+    verifie(f"Les {len(formes)} facons d'ecrire une date sont comprises",
+            not mauvaises, mauvaises[:4])
+
+    refusees = {
+        "2024": "une annee seule",
+        "100624": "six chiffres : AAMMJJ ou JJMMAA, on ne peut pas trancher",
+        "32/13/2024": "ni jour ni mois valides",
+        "bonjour": "ce n'est pas une date",
+    }
+    passees = [f"{brut} ({raison}) -> {util.date_iso(brut)}"
+               for brut, raison in refusees.items() if util.date_iso(brut)]
+    verifie("Ce qui n'est pas une date, ou reste ambigu, est refuse",
+            not passees, passees)
+
     verifie("Un numéro de série est compris comme une date",
             util.date_iso("45195") == "2023-09-26", util.date_iso("45195"))
     verifie("… avec l'heure éventuelle en plus",

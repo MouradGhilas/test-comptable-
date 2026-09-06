@@ -290,6 +290,42 @@ def _sauvegarde(societe_id, ex, anomalies):
         route_ecran="/parametres/sauvegarde"))
 
 
+def _attente_a_imputer(societe_id, ex, anomalies):
+    """Ce qui dort au compte d'attente, et attend d'être imputé.
+
+    Un import ne renvoie plus personne corriger son fichier : une écriture
+    qui ne s'équilibre pas entre quand même, son écart porté au 471. La
+    partie double reste vraie — donc la balance, le bilan et la G 50 aussi —
+    mais l'écart n'est pas réglé pour autant. Il est ici, chiffré, avec les
+    écritures qui l'ont produit.
+    """
+    lignes = db.lignes(
+        "SELECT e.id, e.numero, e.date, e.libelle, j.code AS journal, "
+        "       l.debit, l.credit "
+        "FROM lignes l JOIN ecritures e ON e.id = l.ecriture_id "
+        "JOIN journaux j ON j.id = e.journal_id "
+        "WHERE e.societe_id = ? AND e.exercice_id = ? AND l.compte = '471' "
+        "ORDER BY e.date",
+        (societe_id, ex["id"]))
+    if not lignes:
+        return
+    solde = sum(l["debit"] - l["credit"] for l in lignes)
+    anomalies.append(_anomalie(
+        "attente_a_imputer", "alerte",
+        f"{len(lignes)} écart(s) attendent au compte 471",
+        "Ces écritures ne s'équilibraient pas dans le fichier importé : "
+        "l'écart a été porté au compte d'attente pour qu'elles entrent quand "
+        "même. La comptabilité reste juste, mais ces sommes n'ont pas encore "
+        "leur vrai compte. Ouvrez chaque écriture et remplacez le 471 par le "
+        "compte qui convient — le solde du 471 doit finir à zéro.",
+        nombre=len(lignes), montant=abs(solde),
+        detail=[f"{l['journal']} {l['numero']} du {util.date_fr(l['date'])} — "
+                f"{l['libelle']} : "
+                f"{util.formate_montant(l['debit'] or l['credit'])}"
+                for l in lignes[:20]],
+        route_ecran="/comptabilite/ecritures"))
+
+
 def _emplacement(societe_id, ex, anomalies):
     """Où vit la comptabilité — la panne qui n'a besoin d'aucun bogue.
 
@@ -426,7 +462,7 @@ def _bulletins_a_refaire(societe_id, ex, anomalies):
         route_ecran="/paie/bulletins"))
 
 
-CONTROLES = [_emplacement, _equilibre, _numerotation, _caisse,
+CONTROLES = [_emplacement, _equilibre, _attente_a_imputer, _numerotation, _caisse,
              _factures_sans_ecriture, _tiers_inverses, _tva_declaree,
              _brouillons, _justificatifs, _lettrage, _fiches_a_completer,
              _primes_invraisemblables, _bulletins_a_refaire, _sauvegarde]

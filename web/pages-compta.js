@@ -1103,16 +1103,27 @@ function installeSelectionFactures(sens) {
           effacées. Une facture déjà réglée sera conservée : supprimez
           d'abord son règlement.</div>
         <label class="champ"><span>Saisissez SUPPRIMER pour confirmer</span>
-          <input id="conf-suppr-factures" placeholder="SUPPRIMER"></label>`,
+          <input id="conf-suppr-factures" placeholder="SUPPRIMER"></label>
+        <div id="suppr-lot-refus"></div>`,
       boutons: [{ libelle: 'Annuler' }, {
         libelle: 'Supprimer', classe: 'danger',
         action: async (r) => {
-          const d = await envoie('/api/factures/supprimer-lot', {
-            ids, confirmation: $('#conf-suppr-factures', r).value,
-          });
+          let d;
+          try {
+            d = await envoie('/api/factures/supprimer-lot', {
+              ids, confirmation: $('#conf-suppr-factures', r).value,
+            });
+          } catch (err) {
+            // Le plus souvent : la confirmation n'est pas saisie. Le dire
+            // dans la fenêtre, pas dans une notification qui s'efface.
+            $('#suppr-lot-refus', r).innerHTML = `<div class="message danger">
+              <strong>Rien n'a été supprimé</strong>${ech(err.message)}</div>`;
+            return false;
+          }
           notifie(d.message, d.refusees?.length ? 'alerte' : 'succes');
           if (d.refusees?.length) montreRefus(d.refusees);
           afficheRoute();
+          return true;
         },
       }],
     });
@@ -1439,13 +1450,25 @@ async function supprimeFacture(id, numero) {
     contenu: `<div class="message danger"><strong>Attention</strong>
         Cette facture et l'écriture qu'elle a produite seront effacées.
         C'est ainsi qu'on corrige une reprise ratée, plutôt qu'en empilant
-        des avoirs sur des factures qui n'auraient jamais dû exister.</div>`,
+        des avoirs sur des factures qui n'auraient jamais dû exister.</div>
+      <div id="suppr-refus"></div>`,
     boutons: [{ libelle: 'Annuler' }, {
       libelle: 'Supprimer', classe: 'danger',
-      action: async () => {
-        await api(`/api/factures/${id}`, { method: 'DELETE', corps: {} });
+      action: async (corps) => {
+        try {
+          await api(`/api/factures/${id}`, { method: 'DELETE', corps: {} });
+        } catch (err) {
+          // Un refus annoncé par une notification qui s'efface au bout de
+          // quatre secondes laisse croire que le bouton n'a rien fait. Il
+          // reste donc ici, sous les yeux, et la fenêtre ne se ferme pas.
+          $('#suppr-refus', corps).innerHTML = `<div class="message danger">
+            <strong>La facture n'a pas été supprimée</strong>
+            ${ech(err.message)}</div>`;
+          return false;
+        }
         notifie(`Facture ${numero} supprimée.`, 'succes');
         navigue('/factures');
+        return true;
       },
     }],
   });

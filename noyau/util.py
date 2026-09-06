@@ -230,26 +230,116 @@ def _depuis_serie_tableur(texte: str) -> str | None:
     return (_ORIGINE_TABLEUR + _dt.timedelta(days=jours)).isoformat()
 
 
-def date_iso(valeur, defaut: str | None = None) -> str | None:
-    """Normalise une date vers 'AAAA-MM-JJ'.
+#: Mois écrits en toutes lettres, tels qu'on les trouve dans un fichier tenu
+#: à la main. Sans accent et en minuscules : la comparaison s'y ramène.
+_MOIS = {
+    "janvier": 1, "janv": 1, "jan": 1,
+    "fevrier": 2, "fev": 2, "feb": 2,
+    "mars": 3, "mar": 3,
+    "avril": 4, "avr": 4, "apr": 4,
+    "mai": 5, "may": 5,
+    "juin": 6, "jun": 6,
+    "juillet": 7, "juil": 7, "jul": 7,
+    "aout": 8, "aou": 8, "aug": 8,
+    "septembre": 9, "sept": 9, "sep": 9,
+    "octobre": 10, "oct": 10,
+    "novembre": 11, "nov": 11,
+    "decembre": 12, "dec": 12,
+}
 
-    Accepte jj/mm/aaaa, aaaa-mm-jj, aaaa-mm, et le numéro de série d'un
-    tableur.
+
+#: Une date comptable plausible. Sert à départager deux lectures possibles
+#: d'un nombre collé : « 10102020 » est le 10/10/2020, pas l'an 1010.
+_ANNEE_MIN, _ANNEE_MAX = 1990, 2100
+
+
+def _assemble(annee: int, mois: int, jour: int, plausible: bool = False) -> str | None:
+    """Une date, si ces trois nombres en font une."""
+    if plausible and not _ANNEE_MIN <= annee <= _ANNEE_MAX:
+        return None
+    try:
+        return _dt.date(annee, mois, jour).isoformat()
+    except ValueError:
+        return None
+
+
+def _annee_complete(annee: int) -> int:
+    """« 24 » désigne 2024, « 98 » désigne 1998. Le pivot est à 70."""
+    if annee >= 100:
+        return annee
+    return 2000 + annee if annee < 70 else 1900 + annee
+
+
+def date_iso(valeur, defaut: str | None = None) -> str | None:
+    """Normalise une date vers « AAAA-MM-JJ », dans toutes ses écritures.
+
+    Un fichier de reprise vient d'ailleurs : d'un autre logiciel, d'un
+    tableur, d'une saisie à la main. Refuser « 20200101 » parce qu'il n'y a
+    pas de séparateur bloquait une reprise entière sur une date parfaitement
+    lisible. Sont acceptés : AAAA-MM-JJ, JJ/MM/AAAA et ses variantes de
+    séparateur, AAAAMMJJ et JJMMAAAA collés, l'année sur deux chiffres, le
+    mois en toutes lettres, une date suivie d'une heure, et le numéro de
+    série d'un tableur.
+
+    Ce qui reste refusé l'est parce que ce n'en est pas une : « 2024 » seul,
+    « 32/13/2024 », un texte quelconque.
     """
-    if not valeur:
+    if valeur in (None, ""):
         return defaut
     texte = str(valeur).strip()
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", texte):
-        return _date_reelle(texte, defaut)
-    m = re.fullmatch(r"(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})", texte)
+    if not texte:
+        return defaut
+
+    # Une date peut traîner une heure derrière elle : « 2024-06-10T00:00:00 »,
+    # « 10/06/2024 08:30 ». L'heure ne change pas le jour.
+    texte = re.split(r"[T ]", texte, maxsplit=1)[0] if re.match(
+        r"^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}[T ]", texte) else texte
+
+    # 1. AAAA-MM-JJ, et ses variantes de séparateur.
+    m = re.fullmatch(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", texte)
     if m:
-        j, mo, a = m.groups()
-        return _date_reelle(f"{a}-{int(mo):02d}-{int(j):02d}", defaut)
-    if re.fullmatch(r"\d{4}-\d{2}", texte):
-        return _date_reelle(texte + "-01", defaut)
+        a, mo, j = (int(x) for x in m.groups())
+        return _assemble(a, mo, j) or defaut
+
+    # 2. JJ/MM/AAAA, JJ-MM-AA… Si le premier nombre ne peut pas être un jour
+    #    et le second si, c'est que le fichier vient d'un logiciel anglophone.
+    m = re.fullmatch(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})", texte)
+    if m:
+        premier, second, a = (int(x) for x in m.groups())
+        a = _annee_complete(a)
+        return (_assemble(a, second, premier)
+                or _assemble(a, premier, second) or defaut)
+
+    # 3. AAAA-MM, pris au premier du mois.
+    m = re.fullmatch(r"(\d{4})[-/.](\d{1,2})", texte)
+    if m:
+        return _assemble(int(m.group(1)), int(m.group(2)), 1) or defaut
+
+    # 4. Le mois en toutes lettres : « 15 mars 2024 », « mars 2024 ».
+    m = re.fullmatch(r"(?:(\d{1,2})\s+)?([A-Za-zÀ-ÿ]{3,10})\.?\s+(\d{2,4})", texte)
+    if m:
+        mois = _MOIS.get(sans_accents(m.group(2)).lower())
+        if mois:
+            return _assemble(_annee_complete(int(m.group(3))), mois,
+                             int(m.group(1) or 1)) or defaut
+
+    # 5. Huit chiffres collés : AAAAMMJJ, ou JJMMAAAA. Le contrôle de
+    #    plausibilité tranche : « 10102020 » se lit des deux façons, mais
+    #    l'an 1010 n'est pas une date comptable.
+    if re.fullmatch(r"\d{8}", texte):
+        return (_assemble(int(texte[:4]), int(texte[4:6]), int(texte[6:]), True)
+                or _assemble(int(texte[4:]), int(texte[2:4]), int(texte[:2]), True)
+                or defaut)
+
+    # Six chiffres collés — « 100624 » — se lisent aussi bien AAMMJJ que
+    # JJMMAA, et les deux donnent une date plausible. Deviner mettrait une
+    # facture de 2024 dans l'exercice 2010, en silence : mieux vaut la mettre
+    # de côté et la faire corriger.
+
+    # 6. Le numéro de série d'un tableur.
     serie = _depuis_serie_tableur(texte)
     if serie:
-        return _date_reelle(serie, defaut)
+        return serie
     return defaut
 
 

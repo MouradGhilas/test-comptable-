@@ -2041,9 +2041,29 @@ function groupeAnomalies(anomalies) {
 }
 
 function afficheControleImport(zone, d, modele, contenu, options = {}) {
-  const anomalies = d.anomalies || [];
+  const toutes = d.anomalies || [];
+  // Une remarque n'est pas un refus. Un écart d'équilibre part au compte
+  // d'attente et l'écriture entre quand même : le dire avec les lignes
+  // réellement mises de côté ferait croire à une reprise à moitié perdue.
+  const anomalies = toutes.filter((a) => a.bloquant !== false);
+  const remarques = toutes.filter((a) => a.bloquant === false);
   const groupes = groupeAnomalies(anomalies);
   const nbIgnorees = d.nb_ignorees || 0;
+
+  const ecarts = remarques.length ? `
+    <div class="message alerte">
+      <strong>${remarques.length} écriture(s) ne s'équilibrent pas — elles
+        entrent quand même</strong>
+      L'écart est porté au compte <b>471 — Compte d'attente</b>, qui existe
+      pour cela : la partie double reste vraie, donc la balance, le bilan et
+      la G 50 restent justes, et l'écart n'est pas perdu. Vous le retrouvez
+      dans <b>Santé du dossier</b>, et vous l'imputez quand vous voulez.
+      <details><summary>Voir les ${remarques.length}</summary>
+        <div class="petit">${remarques.slice(0, 40).map((a) =>
+          `ligne ${a.ligne} : ${ech(a.message)}`).join('<br>')}${
+          remarques.length > 40 ? `<br>… et ${remarques.length - 40} autre(s)`
+            : ''}</div></details>
+    </div>` : '';
 
   // Comment le fichier a été lu : une colonne prise pour une autre se voit
   // là, et nulle part ailleurs.
@@ -2161,7 +2181,7 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
       + `${anomalies.length} mise(s) de côté`
     : `Importer ${d.nb_valides} ligne(s)`;
 
-  zone.innerHTML = diagnostic + resume + prealables + aRemplir + dejaLa + lecture + ignorees
+  zone.innerHTML = diagnostic + resume + ecarts + prealables + aRemplir + dejaLa + lecture + ignorees
     + lignesIgnorees + detail + `
     ${modele.startsWith('factures_') ? `
     <label class="rangee" style="margin-top:12px; gap:8px; align-items:center">

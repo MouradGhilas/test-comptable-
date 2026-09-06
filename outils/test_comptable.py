@@ -2425,8 +2425,8 @@ def suite_attente(dos):
     ECR = """N° écriture;Date;Journal;Libellé;Compte;Tiers;Débit;Crédit
 1;15/03/{a};OD;Achat correct;607;;12000;
 1;;;;401;;;12000
-2;16/03/{a};OD;Ecriture desequilibree;607;;5000;
-2;;;;401;;;4000
+2;le mois dernier;OD;Ecriture sans date lisible;607;;5000;
+2;;;;401;;;5000
 3;17/03/{a};OD;Vente correcte;411;;25000;
 3;;;;701;;;25000
 """.format(a=annee)
@@ -2441,7 +2441,7 @@ def suite_attente(dos):
     v("… celles qui posent question sont mises de cote",
       r.get("en_attente") == 2, r)
     v("la comptabilite reste equilibree", dos.equilibre_global())
-    v("… et le desequilibre n'est pas entre en base",
+    v("… et l'ecriture sans date n'est pas entree en base",
       dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == 2)
 
     # ==================================================================
@@ -2460,7 +2460,7 @@ def suite_attente(dos):
     v("… les valeurs brutes",
       att["lignes"][0]["valeurs"][6] == "5000", att["lignes"][0]["valeurs"])
     v("… et la raison, en clair",
-      "quilibr" in (att["lignes"][0]["raison"] or ""),
+      "illisible" in (att["lignes"][0]["raison"] or ""),
       att["lignes"][0]["raison"])
 
     # ==================================================================
@@ -2469,8 +2469,8 @@ def suite_attente(dos):
     corrections = []
     for ligne in att["lignes"]:
         valeurs = list(ligne["valeurs"])
-        if valeurs[7] == "4000":
-            valeurs[7] = "5000"
+        if valeurs[1] and not valeurs[1][0].isdigit():
+            valeurs[1] = f"16/03/{annee}"      # la date, corrigee sur place
         corrections.append({"id": ligne["id"], "valeurs": valeurs})
     r = dos.appel("/api/attente/corriger",
                   {"societe_id": sid, "lignes": corrections})
@@ -3102,6 +3102,32 @@ def suite_dates_tableur(dos):
           "societe_id": sid, "modele": "factures_vente",
           "contenu": b64_octets(classeur_texte(["10/06/2024"])),
           "nom": "x.xlsx"})["apercu"][0]["date"] == "2024-06-10")
+
+    # ==================================================================
+    titre("4. Les dates collees de son fichier : 20200101")
+    # ==================================================================
+    # « Ses dates sont ecrites 20200101 comme ca, et le logiciel dit date
+    #   incomprehensible. Ce n'est pas normal qu'une date ne le soit pas. »
+    collees = ["20200101", "20241231", "31122024", "15 mars 2024"]
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "factures_vente",
+        "contenu": b64_octets(classeur_texte(collees)), "nom": "collees.xlsx"})
+    v("aucune n'est mise de cote", a["nb_rejetes"] == 0,
+      [x["message"] for x in (a.get("anomalies") or [])][:4])
+    v("… et chacune est lue correctement",
+      [x["date"] for x in a["apercu"]]
+      == ["2020-01-01", "2024-12-31", "2024-12-31", "2024-03-15"],
+      [x["date"] for x in a["apercu"]])
+
+    # Ce qui reste illisible doit dire ce qui est accepte.
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "factures_vente",
+        "contenu": b64_octets(classeur_texte(["pas une date"])),
+        "nom": "x.xlsx"})
+    message = (a.get("anomalies") or [{}])[0].get("message", "")
+    v("une vraie non-date est refusee", a["nb_rejetes"] == 1, a["nb_rejetes"])
+    v("… et le message montre les formes acceptees",
+      "31/12/2024" in message and "20241231" in message, message)
 
 
 def classeur_texte(dates: list[str]) -> bytes:
@@ -4151,6 +4177,123 @@ def suite_aller_retour(dos):
       (avant_lot, fin_lot))
     v("la comptabilite est equilibree", dos.equilibre_global())
 
+    # ==================================================================
+    titre("6. Tout refus nomme la facture et sa raison")
+    # ==================================================================
+    message = dos.refuse(f"/api/factures/{gardee}", {}, "DELETE")
+    v("une facture reglee est refusee", bool(message), message)
+    v("… le message la nomme", "VE — 2024-00040" in (message or ""), message)
+    sans_espaces = "".join(c for c in (message or "") if not c.isspace())
+    v("… et dit le montant recu", "500000,00" in sans_espaces, message)
+
+    # Une facture dont l'exercice est cloture : le refus doit parler d'elle,
+    # pas d'une « ecriture » que personne n'a demande a toucher.
+    bloquee = dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "tiers_id": client,
+        "numero": "VE — 2024-00042", "date": f"{annee}-07-10", "valider": True,
+        "lignes": [{"designation": "Sur exercice a clore", "quantite": 1,
+                    "prix_unitaire": "100000", "taux_tva": 19,
+                    "compte": "7011"}]})["id"]
+    dos.ecrit("UPDATE exercices SET cloture = 1 WHERE id = ?", (exid,))
+    message = dos.refuse(f"/api/factures/{bloquee}", {}, "DELETE")
+    v("une facture sur exercice cloture est refusee", bool(message), message)
+    v("… en la nommant, elle", "VE — 2024-00042" in (message or ""), message)
+    v("… et en disant que l'exercice est cloture",
+      "clôtur" in (message or ""), message)
+    dos.ecrit("UPDATE exercices SET cloture = 0 WHERE id = ?", (exid,))
+
+
+def suite_import_desequilibre(dos):
+    """« Laisse-le importer ce qu'il veut. »
+
+    Une ecriture qui ne s'equilibre pas etait refusee. L'ecart part
+    desormais au compte d'attente 471 : elle entre, la partie double reste
+    vraie — sans quoi la balance, le bilan et la G 50 diraient n'importe
+    quoi — et l'ecart n'est pas cache pour autant.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "des", "mot_de_passe": "motdepasse123",
+        "nom_complet": "Comptable", "raison_sociale": "SARL ECARTS",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    ex = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]
+    exid, annee = ex["id"], int(ex["date_debut"][:4])
+
+    # Deux ecritures : l'une juste, l'autre a 3 000,00 pres.
+    fichier = (
+        "Piece;Date;Journal;Libelle;Compte;Debit;Credit\n"
+        f"OD-1;15/03/{annee};OD;Vente correcte;411;119000;0\n"
+        f"OD-1;15/03/{annee};OD;Vente correcte;701;0;100000\n"
+        f"OD-1;15/03/{annee};OD;Vente correcte;4457;0;19000\n"
+        f"OD-2;16/03/{annee};OD;Vente incomplete;411;119000;0\n"
+        f"OD-2;16/03/{annee};OD;Vente incomplete;701;0;116000\n")
+
+    # ==================================================================
+    titre("1. Rien n'est refuse")
+    # ==================================================================
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "ecritures", "contenu": b64(fichier)})
+    v("les deux ecritures sont pretes", a["nb_valides"] == 2, a["nb_valides"])
+    v("… aucune n'est mise de cote", a["nb_rejetes"] == 0, a["nb_rejetes"])
+    remarques = [x for x in a["anomalies"] if x.get("bloquant") is False]
+    v("… mais l'ecart est annonce", len(remarques) == 1, a["anomalies"])
+    v("… avec son montant et le compte qui l'accueille",
+      "471" in remarques[0]["message"]
+      and "3 000,00" in remarques[0]["message"].replace("\u202f", " ")
+      .replace("\xa0", " "), remarques[0]["message"])
+
+    # ==================================================================
+    titre("2. Elles entrent, et la comptabilite reste vraie")
+    # ==================================================================
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "ecritures", "contenu": b64(fichier),
+        "fichier": "journal.csv"})
+    v("les deux sont enregistrees", r["crees"] == 2, r)
+    v("la partie double tient", dos.equilibre_global())
+    b = dos.appel(f"/api/balance?societe={sid}&exercice={exid}")
+    v("… et la balance s'equilibre",
+      b["totaux"]["debit"] == b["totaux"]["credit"],
+      (b["totaux"]["debit"], b["totaux"]["credit"]))
+    attente = dos.sql(
+        "SELECT COALESCE(SUM(debit - credit), 0) s FROM lignes "
+        "WHERE compte = '471'")[0]["s"]
+    v("l'ecart est au compte d'attente, au centime",
+      attente == -300000, fm(attente))
+
+    # ==================================================================
+    titre("3. Et il ne dort pas la : Sante du dossier le reclame")
+    # ==================================================================
+    sante = dos.appel(f"/api/sante?societe={sid}&exercice={exid}")
+    ligne = next((x for x in sante["anomalies"]
+                  if x["cle"] == "attente_a_imputer"), None)
+    v("l'ecart est signale", bool(ligne), [x["cle"] for x in sante["anomalies"]])
+    v("… avec son montant", ligne and ligne["montant"] == 300000,
+      ligne and ligne["montant"])
+    v("… et l'ecriture qui l'a produit",
+      ligne and any("Vente incomplete" in d for d in ligne["detail"]),
+      ligne and ligne["detail"])
+    v("… en disant qu'il faut l'imputer",
+      ligne and "471" in ligne["explication"], ligne and ligne["explication"])
+
+    # ==================================================================
+    titre("4. Une fois corrigee, le compte d'attente se vide")
+    # ==================================================================
+    ecriture = dos.sql(
+        "SELECT DISTINCT e.id FROM ecritures e JOIN lignes l "
+        "ON l.ecriture_id = e.id WHERE l.compte = '471'")[0]["id"]
+    dos.appel(f"/api/ecritures/{ecriture}", {
+        "societe_id": sid, "journal": "OD", "date": f"{annee}-03-16",
+        "libelle": "Vente incomplete corrigee",
+        "lignes": [{"compte": "411", "debit": "119000", "credit": "0"},
+                   {"compte": "701", "debit": "0", "credit": "116000"},
+                   {"compte": "4457", "debit": "0", "credit": "3000"}]}, "PUT")
+    v("le compte d'attente est vide",
+      dos.sql("SELECT COUNT(*) n FROM lignes WHERE compte = '471'")[0]["n"] == 0)
+    sante = dos.appel(f"/api/sante?societe={sid}&exercice={exid}")
+    v("… et Sante ne le reclame plus",
+      not any(x["cle"] == "attente_a_imputer" for x in sante["anomalies"]))
+    v("la comptabilite tient toujours", dos.equilibre_global())
+
 
 def suite_exercices(dos):
     """Corriger un exercice mal saisi, ou l'enlever.
@@ -4265,6 +4408,8 @@ SUITES = [
      False),
     ("aller_retour", "Ecrire puis defaire, sans rien laisser", suite_aller_retour,
      False),
+    ("import_desequilibre", "Importer une ecriture qui ne s'equilibre pas",
+     suite_import_desequilibre, False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),
