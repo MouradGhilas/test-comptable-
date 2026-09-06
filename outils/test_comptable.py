@@ -4295,6 +4295,84 @@ def suite_import_desequilibre(dos):
     v("la comptabilite tient toujours", dos.equilibre_global())
 
 
+def suite_numeros_repetes(dos):
+    """Cinq ans de journal, et « 001 » qui revient chaque mois.
+
+    Sa capture montrait 7 330 lignes en attente, toutes « ecriture
+    desequilibree » — alors que les montants s'appariaient parfaitement.
+    Les lignes etaient regroupees sur le seul numero d'ecriture : toutes
+    celles portant « 001 », de 2020 a 2024, tombaient dans un meme total.
+    Une ecriture, c'est un journal, une date et un numero.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "rep", "mot_de_passe": "motdepasse123",
+        "nom_complet": "Comptable", "raison_sociale": "SARL JOURNAL",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    ex = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]
+    annee = int(ex["date_debut"][:4])
+    for a in range(2020, annee):
+        dos.appel("/api/exercices", {
+            "societe_id": sid, "libelle": str(a),
+            "date_debut": f"{a}-01-01", "date_fin": f"{a}-12-31"})
+
+    # Le meme numero « 001 » a douze dates differentes, chaque fois equilibre.
+    lignes = ["N° écriture;Date;Journal;Libellé;Compte;Débit;Crédit"]
+    attendu = 0
+    for a in (2020, 2021, 2022):
+        for mois in range(1, 5):
+            attendu += 1
+            montant = 100000 + mois * 1000
+            lignes.append(f"001;{a}-{mois:02d}-15;od;Achat du mois;607;{montant};0")
+            lignes.append(f"001;{a}-{mois:02d}-15;od;Achat du mois;401;0;{montant}")
+    fichier = "\n".join(lignes) + "\n"
+
+    # ==================================================================
+    titre("1. Chaque date fait son ecriture, pas un total commun")
+    # ==================================================================
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "ecritures", "contenu": b64(fichier)})
+    v(f"les {attendu} ecritures sont reconnues separement",
+      a["nb_valides"] == attendu, a["nb_valides"])
+    v("… aucune n'est mise de cote", a["nb_rejetes"] == 0, a["nb_rejetes"])
+    v("… et aucun ecart n'a ete porte au compte d'attente",
+      not [x for x in a["anomalies"] if x.get("bloquant") is False],
+      a["anomalies"][:3])
+
+    # ==================================================================
+    titre("2. Elles entrent, chacune a sa date")
+    # ==================================================================
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "ecritures", "contenu": b64(fichier),
+        "fichier": "journal.csv"})
+    v(f"les {attendu} ecritures sont enregistrees", r["crees"] == attendu, r)
+    v("… rien n'attend", r["en_attente"] == 0, r)
+    dates = [e["date"] for e in dos.sql("SELECT date FROM ecritures ORDER BY date")]
+    v("… a douze dates distinctes", len(set(dates)) == attendu, sorted(set(dates)))
+    v("aucune ligne au compte d'attente",
+      dos.sql("SELECT COUNT(*) n FROM lignes WHERE compte = '471'")[0]["n"] == 0)
+    v("la comptabilite est equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("3. Les lignes d'une meme ecriture restent ensemble")
+    # ==================================================================
+    # Un fichier ou seule la premiere ligne porte le numero et la date.
+    suite_fichier = (
+        "N° écriture;Date;Journal;Libellé;Compte;Débit;Crédit\n"
+        f"007;2021-06-10;od;Vente a trois lignes;411;119000;0\n"
+        ";;;;701;0;100000\n"
+        ";;;;4457;0;19000\n")
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "ecritures",
+        "contenu": b64(suite_fichier), "fichier": "suite.csv"})
+    v("une seule ecriture, de trois lignes", r["crees"] == 1, r)
+    v("… et ses trois lignes y sont",
+      dos.sql("SELECT COUNT(*) n FROM lignes l JOIN ecritures e "
+              "ON e.id = l.ecriture_id WHERE e.libelle = 'Vente a trois lignes'"
+              )[0]["n"] == 3)
+    v("la comptabilite tient toujours", dos.equilibre_global())
+
+
 def suite_exercices(dos):
     """Corriger un exercice mal saisi, ou l'enlever.
 
@@ -4410,6 +4488,8 @@ SUITES = [
      False),
     ("import_desequilibre", "Importer une ecriture qui ne s'equilibre pas",
      suite_import_desequilibre, False),
+    ("numeros_repetes", "Un numero d'ecriture qui revient chaque mois",
+     suite_numeros_repetes, False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),

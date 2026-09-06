@@ -1677,13 +1677,13 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
             continue
 
         # Une cellule vide continue l'écriture précédente.
-        cle = _valeur(rang, association, "N° écriture") or reprise["cle"]
+        numero_ecr = _valeur(rang, association, "N° écriture") or reprise["cle"]
         date = _valeur(rang, association, "Date") or reprise["date"]
         journal_saisi = _valeur(rang, association, "Journal") or reprise["journal"]
         libelle = libelle_brut or reprise["libelle"]
         piece = _valeur(rang, association, "N° de pièce") or reprise["piece"]
         perimetre = _valeur(rang, association, "Périmètre") or reprise["perimetre"]
-        reprise.update({"cle": cle, "date": date, "journal": journal_saisi,
+        reprise.update({"cle": numero_ecr, "date": date, "journal": journal_saisi,
                         "libelle": libelle, "piece": piece, "perimetre": perimetre})
 
         if journal_saisi not in journaux_resolus:
@@ -1691,8 +1691,16 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
         journal, erreur_journal = journaux_resolus[journal_saisi]
 
         erreurs = []
-        if not cle:
-            cle = f"auto-{date}-{libelle}-{journal_saisi}"
+        if not numero_ecr:
+            numero_ecr = f"auto-{date}-{libelle}-{journal_saisi}"
+
+        # Le numéro seul ne désigne pas une écriture. Un journal recommence à
+        # 1 chaque année, et souvent chaque mois : « 001 » existe autant de
+        # fois qu'il y a de périodes. Regrouper sur ce seul numéro réunissait
+        # en une seule écriture toutes celles qui le portaient — cinq ans de
+        # journal dans un même total, forcément déséquilibré. Une écriture,
+        # c'est un journal, une date et un numéro.
+        cle = (journal_saisi, date, numero_ecr)
         if not compte:
             erreurs.append("compte manquant")
         elif not compte.isdigit():
@@ -1729,7 +1737,8 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
             if not libelle:
                 erreurs.append("libellé manquant")
             groupe = groupes[cle] = {
-                "cle": cle, "date": iso, "journal": journal, "libelle": libelle,
+                "cle": numero_ecr, "date": iso, "journal": journal,
+                "libelle": libelle,
                 "piece": piece,
                 "perimetre": _perimetre(perimetre, defaut_perimetre),
                 "lignes": [], "lignes_fichier": [], "erreurs": [],

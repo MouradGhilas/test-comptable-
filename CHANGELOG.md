@@ -3,6 +3,21 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.14.1
+
+- **Cinq ans de journal ne forment plus une seule écriture.** Sa capture
+  montrait **7 330 lignes en attente**, toutes « écriture déséquilibrée »,
+  alors que les montants s'appariaient parfaitement. La cause : les lignes
+  étaient regroupées sur le **seul numéro d'écriture**. Or un journal
+  recommence à 1 chaque année, souvent chaque mois : toutes les lignes
+  portant « 001 », de 2020 à 2024, tombaient dans un même total — forcément
+  faux. Une écriture est désormais identifiée par son **journal, sa date et
+  son numéro**, ce qu'elle est réellement.
+- Vérifié sur le même fichier des deux côtés : la version précédente en
+  faisait **2 écritures pour 27 lignes**, celle-ci en fait **14**, chacune à
+  sa date. Les lignes d'une même écriture — celles dont seule la première
+  porte le numéro — restent bien ensemble.
+
 ## 1.14.0
 
 - **Une date est une date, quelle que soit son écriture.** `20200101` était
