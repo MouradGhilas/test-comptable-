@@ -436,6 +436,31 @@ const TUTORIELS = [
         ],
       },
       {
+        titre: 'Des lignes attendent après un import',
+        quand: 'L\'import annonce des lignes « mises de côté ».',
+        etapes: [
+          'Descendez jusqu\'à <b>Lignes en attente</b>, sous l\'écran d\'import.',
+          '<b>Commencez par « Réessayer »</b> : si l\'application a été mise à '
+          + 'jour depuis, ou si ce qui leur manquait existe maintenant, elles '
+          + 'passent <b>toutes</b> d\'un seul clic — sans rien retoucher et '
+          + 'sans redéposer le fichier.',
+          'Ce qui résiste encore se corrige <b>dans la grille</b>, à l\'écran, '
+          + 'puis « Reprendre les lignes corrigées ».',
+          'Un lot qui n\'a plus lieu d\'être se vide d\'un geste : « Vider ce '
+          + 'lot », ou « Vider la liste ».',
+        ],
+        route: '/parametres/import',
+        pieges: [
+          'Ne corrigez pas votre fichier pour le redéposer : les lignes sont '
+          + 'là, avec leurs valeurs d\'origine, et se corrigent sur place.',
+          'Au-delà de 200 lignes, l\'écran n\'en affiche qu\'une partie — sinon '
+          + 'la page ne répondrait plus — mais « Réessayer » et « Vider » '
+          + 'portent bien sur <b>la totalité</b>.',
+          'Vider est sans retour : ces lignes ne se retrouvent pas, il faudrait '
+          + 'redéposer le fichier.',
+        ],
+      },
+      {
         titre: 'Vider le compte d\'attente 471',
         quand: 'Santé du dossier signale des écarts à imputer.',
         etapes: [

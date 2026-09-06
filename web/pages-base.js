@@ -1831,16 +1831,35 @@ async function rafraichitAttente(racine) {
                                 lignes: [] }).lignes.push(l);
   }
 
+  const parModele = d.par_modele || {};
+  const tronquee = d.nombre > (d.affichees || d.lignes.length);
+
   hote.innerHTML = carte(`Lignes en attente (${d.nombre})`, `
-    <p class="petit">Ces lignes n'ont pas pu être écrites telles quelles.
-    Elles ne sont pas perdues&nbsp;: corrigez la valeur dans la grille et
-    cliquez sur <em>Reprendre</em>. Celles qui attendent quelque chose qui
-    n'existe pas encore — une facture, un bail — repartiront d'elles-mêmes
-    au prochain import.</p>
+    <div class="message info">
+      <strong>Commencez par « Réessayer »</strong>
+      Ces lignes ne sont pas perdues. Si l'application a été mise à jour
+      depuis, ou si ce qui leur manquait existe maintenant, elles passeront
+      <b>toutes</b> d'un seul clic, sans rien retoucher — et sans redéposer
+      le fichier. Ce n'est qu'ensuite qu'il vaut la peine d'en corriger une à
+      la main.
+    </div>
+    <p class="petit">Pour corriger : modifiez la valeur dans la grille, puis
+    <em>Reprendre les lignes corrigées</em>. Celles qui attendent quelque
+    chose qui n'existe pas encore — une facture, un bail — repartiront
+    d'elles-mêmes au prochain import.</p>
+    ${tronquee ? `<div class="message info">
+      <strong>${d.affichees} lignes affichées sur ${d.nombre}</strong>
+      Au-delà, la page ne serait plus tenable. Corrigez celles-ci et
+      reprenez-les : les suivantes apparaîtront. Si ce lot n'a plus lieu
+      d'être — un fichier redéposé depuis, par exemple — videz-le d'un coup
+      avec le bouton du lot.</div>` : ''}
     ${Object.values(lots).map((lot, index) => `
       <div class="lot-attente">
         <h4>${ech(lot.libelle)}${lot.fichier
-          ? ` <span class="tres-petit">— ${ech(lot.fichier)}</span>` : ''}</h4>
+          ? ` <span class="tres-petit">— ${ech(lot.fichier)}</span>` : ''}
+          <button class="petit-bouton" data-vider="${ech(lot.modele)}"
+            data-combien="${parModele[lot.modele] || lot.lignes.length}">
+            Vider ce lot (${parModele[lot.modele] || lot.lignes.length})</button></h4>
         <div style="overflow-x:auto">
         <table class="tableau"><thead><tr>
           <th style="width:52px">Ligne</th>
@@ -1858,9 +1877,45 @@ async function rafraichitAttente(racine) {
         </tbody></table></div>
       </div>`).join('')}
     <div class="rangee" style="margin-top:12px">
-      <button class="primaire" id="attente-reprendre">Reprendre ces lignes</button>
-      <button id="attente-rejouer">Réessayer sans rien changer</button>
+      <button class="primaire" id="attente-rejouer">
+        Réessayer les ${d.nombre} lignes, sans rien changer</button>
+      <button id="attente-reprendre">Reprendre les lignes corrigées ci-dessus</button>
+      <button class="danger" id="attente-vider">Vider la liste (${d.nombre})</button>
     </div>`);
+
+  // Vider un lot, ou tout : sept mille lignes ne se retirent pas une par une.
+  const vide = (corps, quoi) => modale({
+    titre: `Vider ${quoi}`,
+    contenu: `<div class="message danger"><strong>Attention</strong>
+        Ces lignes ne seront pas reprises. Elles ne se retrouvent pas&nbsp;:
+        si vous changez d'avis, il faudra redéposer le fichier.</div>
+      <label class="champ"><span>Saisissez VIDER pour confirmer</span>
+        <input id="conf-vider-attente" placeholder="VIDER"></label>
+      <div id="vider-refus"></div>`,
+    boutons: [{ libelle: 'Annuler' }, {
+      libelle: 'Vider', classe: 'danger',
+      action: async (r) => {
+        try {
+          const rep = await envoie('/api/attente',
+            { ...corps, confirmation: $('#conf-vider-attente', r).value }, 'DELETE');
+          notifie(rep.message, 'succes');
+        } catch (err) {
+          $('#vider-refus', r).innerHTML =
+            `<div class="message danger">${ech(err.message)}</div>`;
+          return false;
+        }
+        rafraichitAttente(document);
+        return true;
+      },
+    }],
+  });
+
+  $('#attente-vider', hote).onclick = () =>
+    vide({ tout: 1 }, `la liste d'attente (${d.nombre} lignes)`);
+  hote.querySelectorAll('[data-vider]').forEach((b) => {
+    b.onclick = () => vide({ modele: b.dataset.vider },
+                           `ce lot (${b.dataset.combien} lignes)`);
+  });
 
   $('#attente-reprendre', hote).onclick = async () => {
     const bouton = $('#attente-reprendre', hote);
@@ -1882,11 +1937,20 @@ async function rafraichitAttente(racine) {
     }
   };
   $('#attente-rejouer', hote).onclick = async () => {
+    // Sept mille lignes prennent quelques secondes : sans ce retour, on
+    // clique une seconde fois, et on doute.
+    const bouton = $('#attente-rejouer', hote);
+    bouton.disabled = true;
+    bouton.textContent = `Nouvel essai sur ${d.nombre} ligne(s)…`;
     try {
       const r = await envoie('/api/attente/rejouer', {});
       notifie(r.message, r.repris ? 'succes' : 'info', 7000);
       rafraichitAttente(document);
-    } catch (err) { notifie(err.message, 'danger'); }
+    } catch (err) {
+      notifie(err.message, 'danger');
+      bouton.disabled = false;
+      bouton.textContent = `Réessayer les ${d.nombre} lignes, sans rien changer`;
+    }
   };
   hote.querySelectorAll('[data-retirer]').forEach((b) => {
     b.onclick = async () => {

@@ -3,6 +3,24 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.14.2
+
+- **La liste d'attente se traite en masse, plus une ligne à la fois.** Elle
+  n'offrait qu'un « ✕ » par ligne, avec sa demande de confirmation : à 7 330
+  lignes, cela faisait 7 330 clics. Deux boutons maintenant — **« Vider ce
+  lot »** et **« Vider la liste »** — qui retirent tout d'un geste, après le
+  mot VIDER, en disant combien et en rappelant qu'il faudra redéposer le
+  fichier.
+- **Mais le bon geste, c'est « Réessayer ».** C'est lui qui passe en premier,
+  et il porte le compte : *« Réessayer les 7 330 lignes, sans rien changer »*.
+  Après une mise à jour, ou dès que ce qui leur manquait existe, elles
+  repartent **toutes** d'un seul clic — sans rien retoucher, sans redéposer
+  le fichier. Vider n'est qu'un dernier recours, et l'écran le dit.
+- **L'écran ne s'écroule plus sous le nombre.** Il recevait la liste entière
+  et en faisait autant de champs de saisie. Il en affiche désormais 200, dit
+  combien il en reste, et **« Réessayer » comme « Vider » portent sur la
+  totalité** — le plafond d'affichage n'est pas un plafond de traitement.
+
 ## 1.14.1
 
 - **Cinq ans de journal ne forment plus une seule écriture.** Sa capture

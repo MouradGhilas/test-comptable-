@@ -2440,12 +2440,27 @@ def _en_csv(entetes: list, rangs: list) -> bytes:
     return tampon.getvalue().encode("utf-8-sig")
 
 
-def lignes_en_attente(societe_id: int, modele: str | None = None) -> list:
+#: Au-delà, l'écran ne servirait plus à rien : sept mille lignes de saisie
+#: dans une page en font une page morte. On en montre un échantillon, et on
+#: dit combien il en reste.
+PLAFOND_ATTENTE = 200
+
+
+def lignes_en_attente(societe_id: int, modele: str | None = None,
+                      limite: int | None = None) -> list:
     return db.lignes(
         "SELECT * FROM lignes_attente WHERE societe_id = ?"
         + (" AND modele = ?" if modele else "")
-        + " ORDER BY modele, ligne",
+        + " ORDER BY modele, ligne"
+        + (f" LIMIT {int(limite)}" if limite else ""),
         (societe_id, modele) if modele else (societe_id,))
+
+
+def compte_attente(societe_id: int, modele: str | None = None) -> int:
+    return db.valeur(
+        "SELECT COUNT(*) FROM lignes_attente WHERE societe_id = ?"
+        + (" AND modele = ?" if modele else ""),
+        (societe_id, modele) if modele else (societe_id,), 0)
 
 
 def rejoue_attente(ctx, societe_id: int, modele: str | None = None) -> dict:
@@ -2536,8 +2551,10 @@ def rattache_reglements(societe_id: int) -> int:
 def api_attente(ctx):
     """Ce qui n'a pas pu être écrit, tel qu'il était dans le fichier."""
     societe_id = ctx.arg_int("societe")
+    modele = ctx.arg("modele") or None
+    total = compte_attente(societe_id, modele)
     lignes = []
-    for l in lignes_en_attente(societe_id, ctx.arg("modele") or None):
+    for l in lignes_en_attente(societe_id, modele, PLAFOND_ATTENTE):
         lignes.append({
             "id": l["id"], "modele": l["modele"],
             "modele_libelle": MODELES.get(l["modele"], {}).get("libelle",
@@ -2548,7 +2565,13 @@ def api_attente(ctx):
             "raison": l["raison"], "essais": l["essais"],
             "cree_le": l["cree_le"],
         })
-    return {"lignes": lignes, "nombre": len(lignes)}
+    # Combien attendent, par sorte : de quoi proposer « tout retirer » sur
+    # un lot sans avoir à charger le lot entier.
+    par_modele = {r["modele"]: r["n"] for r in db.lignes(
+        "SELECT modele, COUNT(*) AS n FROM lignes_attente WHERE societe_id = ? "
+        "GROUP BY modele", (societe_id,))}
+    return {"lignes": lignes, "nombre": total, "affichees": len(lignes),
+            "plafond": PLAFOND_ATTENTE, "par_modele": par_modele}
 
 
 @route("POST", "/api/attente/corriger")
@@ -2595,13 +2618,42 @@ def api_oublie_attente(ctx):
     ctx.interdit_lecture_seule()
     ctx.exige_role("admin", "comptable")
     societe_id = ctx.entier("societe_id") or ctx.arg_int("societe")
+
+    # Retirer sept mille lignes une par une n'est pas une option. « Tout »
+    # vide la liste, ou une de ses sortes, d'un seul geste — après le mot,
+    # parce que ces lignes ne se retrouvent pas : il faudrait redéposer le
+    # fichier.
+    modele = ctx.champ("modele") or None
+    if ctx.booleen("tout") or modele:
+        combien = compte_attente(societe_id, modele)
+        if not combien:
+            return {"retires": 0, "message": "La liste d'attente est déjà vide."}
+        if ctx.champ("confirmation") != "VIDER":
+            quoi = (f"les {combien} ligne(s) de « "
+                    + MODELES.get(modele, {}).get("libelle", modele) + " »"
+                    if modele else f"les {combien} ligne(s) en attente")
+            raise ErreurApplicative(
+                f"Cette action retire {quoi}. Elles ne seront pas reprises — "
+                "redéposez le fichier si vous changez d'avis. Saisissez VIDER "
+                "pour confirmer.")
+        with db.transaction():
+            db.execute(
+                "DELETE FROM lignes_attente WHERE societe_id = ?"
+                + (" AND modele = ?" if modele else ""),
+                (societe_id, modele) if modele else (societe_id,))
+            db.trace("vidage", "attente", None,
+                     {"modele": modele, "nombre": combien}, ctx.nom_utilisateur)
+        return {"retires": combien,
+                "message": f"{combien} ligne(s) retirée(s) de l'attente."}
+
     identifiants = ctx.champ("ids") or []
     retires = 0
-    for identifiant in identifiants:
-        if db.ligne("SELECT id FROM lignes_attente WHERE id = ? AND "
-                    "societe_id = ?", (identifiant, societe_id)):
-            db.supprime("lignes_attente", identifiant)
-            retires += 1
+    with db.transaction():
+        for identifiant in identifiants:
+            if db.ligne("SELECT id FROM lignes_attente WHERE id = ? AND "
+                        "societe_id = ?", (identifiant, societe_id)):
+                db.supprime("lignes_attente", identifiant)
+                retires += 1
     return {"retires": retires,
             "message": f"{retires} ligne(s) retirée(s) de l'attente."}
 

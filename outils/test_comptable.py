@@ -4373,6 +4373,68 @@ def suite_numeros_repetes(dos):
     v("la comptabilite tient toujours", dos.equilibre_global())
 
 
+def suite_attente_en_masse(dos):
+    """Sept mille lignes en attente ne se traitent pas une par une.
+
+    L'ecran n'offrait qu'un « retirer » par ligne, et la liste entiere etait
+    envoyee au navigateur : a sept mille, la page ne repond plus et le geste
+    demande sept mille clics.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "masse", "mot_de_passe": "motdepasse123",
+        "nom_complet": "Comptable", "raison_sociale": "SARL MASSE",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    annee = int(dos.appel(f"/api/exercices?societe={sid}")
+                ["exercices"][0]["date_debut"][:4])
+
+    # 300 quittances qui citent des baux inexistants : elles attendent.
+    lignes = ["N° quittance;Bail;Période;Date d'échéance;Loyer;Total"]
+    for n in range(1, 301):
+        lignes.append(f"QT-{n:04d};BX-{n:04d};{annee}-04;05/04/{annee};45000;45000")
+    fichier = "\n".join(lignes) + "\n"
+    dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "quittances", "contenu": b64(fichier),
+        "fichier": "quittances.csv"})
+
+    # ==================================================================
+    titre("1. L'ecran en montre assez, et dit le vrai nombre")
+    # ==================================================================
+    att = dos.appel(f"/api/attente?societe={sid}")
+    v("les 300 lignes attendent", att["nombre"] == 300, att["nombre"])
+    v("… mais l'ecran n'en recoit pas 300",
+      att["affichees"] == att["plafond"] < 300,
+      (att["affichees"], att["plafond"]))
+    v("… et le compte par sorte est donne",
+      att["par_modele"].get("quittances") == 300, att["par_modele"])
+
+    # ==================================================================
+    titre("2. « Reessayer » les reprend toutes, pas seulement l'ecran")
+    # ==================================================================
+    # Le rejeu porte sur la liste entiere : le plafond d'affichage ne doit
+    # pas devenir un plafond de traitement.
+    r = dos.appel("/api/attente/rejouer", {"societe_id": sid})
+    v("le rejeu a bien vu les 300",
+      dos.appel(f"/api/attente?societe={sid}")["nombre"] == 300, r)
+
+    # ==================================================================
+    titre("3. Vider se fait d'un geste, apres le mot")
+    # ==================================================================
+    message = dos.refuse("/api/attente", {"societe_id": sid, "tout": 1}, "DELETE")
+    v("rien ne part sans confirmation", bool(message), message)
+    v("… et le message dit combien", "300" in (message or ""), message)
+    v("… et qu'il faudra redeposer le fichier",
+      "redéposez" in (message or ""), message)
+    r = dos.appel("/api/attente", {"societe_id": sid, "tout": 1,
+                                   "confirmation": "VIDER"}, "DELETE")
+    v("confirmee, la liste se vide d'un coup", r["retires"] == 300, r)
+    v("… et elle est bien vide",
+      dos.appel(f"/api/attente?societe={sid}")["nombre"] == 0)
+    v("… en laissant une trace",
+      bool(dos.sql("SELECT id FROM audit WHERE action = 'vidage' "
+                   "AND entite = 'attente'")))
+
+
 def suite_exercices(dos):
     """Corriger un exercice mal saisi, ou l'enlever.
 
@@ -4490,6 +4552,8 @@ SUITES = [
      suite_import_desequilibre, False),
     ("numeros_repetes", "Un numero d'ecriture qui revient chaque mois",
      suite_numeros_repetes, False),
+    ("attente_masse", "Vider ou rejouer une attente de masse",
+     suite_attente_en_masse, False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),
