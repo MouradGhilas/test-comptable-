@@ -3,6 +3,27 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.13.1
+
+- **Une facture « déjà encaissée » se supprime enfin.** Quand la part non
+  déclarée était marquée *« Déjà encaissée sur »*, la validation créait
+  elle-même le règlement correspondant — et la suppression le prenait ensuite
+  pour un paiement reçu du client, qu'il fallait retirer d'abord. La facture
+  naissait donc avec un règlement qu'elle n'avait jamais reçu, et ne pouvait
+  **plus jamais** être effacée. L'encaissement que la validation a créé part
+  désormais avec la facture ; un vrai règlement, lui, continue de la protéger,
+  en disant son montant.
+- **Une suppression en lot ne laisse plus de demi-geste.** Chaque facture est
+  traitée dans son propre point de reprise : celle qui résiste est entièrement
+  remise en place, et les autres passent quand même. Sans cela, une facture
+  bloquée en cours de route pouvait perdre son écriture sans perdre sa
+  facture. Même chose pour la comptabilisation en lot.
+- Nouvelle suite d'essais **« écrire puis défaire »** : cinq factures de
+  toutes natures — déclarée, hors déclaration, mixte, achat, brouillon — sont
+  créées puis supprimées, et le dossier doit revenir **au centime près** à son
+  état d'avant : mêmes totaux débit et crédit, mêmes nombres d'écritures, de
+  lignes, de factures et de règlements, et **aucun orphelin**.
+
 ## 1.13.0
 
 - **L'import comptabilise les factures.** Elles arrivaient en brouillon —

@@ -3959,6 +3959,199 @@ def suite_vsp_hors(dos):
       g.get("hors_declaration"))
 
 
+def suite_aller_retour(dos):
+    """L'ecriture dans les deux sens : ce qui est ecrit doit se defaire net.
+
+    « Il appuie sur supprimer mais elle ne se supprime pas vraiment. » La
+    suppression depuis la fiche, elle, aboutit — verifie ici de bout en bout.
+    Ce que cette suite exige en plus, c'est qu'elle ne laisse RIEN : ni
+    ecriture, ni ligne, ni ligne de facture, et une balance identique au
+    centime pres a celle d'avant.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "ar", "mot_de_passe": "motdepasse123",
+        "nom_complet": "Comptable", "raison_sociale": "SARL ALLER RETOUR",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    ex = dos.appel(f"/api/exercices?societe={sid}")["exercices"][0]
+    exid, du, au = ex["id"], ex["date_debut"], ex["date_fin"]
+    annee = int(du[:4])
+    client = dos.appel("/api/tiers", {
+        "societe_id": sid, "type": "client",
+        "raison_sociale": "MESSAOUDI ZAYNEB"})["id"]
+    fournisseur = dos.appel("/api/tiers", {
+        "societe_id": sid, "type": "fournisseur",
+        "raison_sociale": "ETS BENALI"})["id"]
+    dos.appel("/api/comptes", {"societe_id": sid, "numero": "5300005",
+                               "intitule": "Caisse annexe", "nature": "debit"})
+    caisse = dos.appel("/api/tresorerie", {
+        "societe_id": sid, "code": "CA2", "libelle": "Caisse annexe",
+        "type": "caisse", "compte": "5300005"})["id"]
+
+    def photo():
+        """Tout ce qui doit revenir a l'identique."""
+        b = dos.appel(f"/api/balance?societe={sid}&exercice={exid}&du={du}&au={au}")
+        compte = lambda t: dos.sql(f"SELECT COUNT(*) n FROM {t}")[0]["n"]
+        return {
+            "debit": b["totaux"]["debit"], "credit": b["totaux"]["credit"],
+            "ecritures": compte("ecritures"), "lignes": compte("lignes"),
+            "factures": compte("factures"),
+            "facture_lignes": compte("facture_lignes"),
+            "reglements": compte("reglements"),
+        }
+
+    # Un dossier qui n'est pas vide : la suppression doit rendre CET etat-la,
+    # pas un dossier neuf.
+    dos.appel("/api/ecritures", {
+        "societe_id": sid, "journal": "OD", "date": f"{annee}-01-15",
+        "libelle": "Apport initial", "valider": True,
+        "lignes": [{"compte": "512", "debit": "1000000", "credit": "0"},
+                   {"compte": "101", "debit": "0", "credit": "1000000"}]})
+    depart = photo()
+
+    # ==================================================================
+    titre("1. Cinq factures de toutes natures, comptabilisees")
+    # ==================================================================
+    faites = []
+    faites.append(dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "tiers_id": client,
+        "numero": "VE — 2024-00027", "date": f"{annee}-06-10",
+        "perimetre": "declare", "mode_reglement": "espece", "valider": True,
+        "lignes": [{"designation": "VENTE LOGT RESIDENCE LA REUION",
+                    "quantite": 1, "prix_unitaire": "11634700",
+                    "taux_tva": 9, "compte": "7011"}]})["id"])
+    faites.append(dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "tiers_id": client,
+        "numero": "VE — 2024-00028", "date": f"{annee}-06-11",
+        "perimetre": "hors_declaration", "valider": True,
+        "lignes": [{"designation": "VENTE LOGT RESIDENCE LA REUION",
+                    "quantite": 1, "prix_unitaire": "5000000",
+                    "taux_tva": 0, "compte": "7011"}]})["id"])
+    faites.append(dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "tiers_id": client,
+        "numero": "VE — 2024-00029", "date": f"{annee}-06-12",
+        "perimetre": "totalite", "montant_hors": "1500000",
+        "compte_hors": "7011", "tresorerie_hors_id": caisse, "valider": True,
+        "lignes": [{"designation": "Vente mixte", "quantite": 1,
+                    "prix_unitaire": "3000000", "taux_tva": 19,
+                    "compte": "7011"}]})["id"])
+    faites.append(dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "achat", "tiers_id": fournisseur,
+        "numero": "FA-2024-114", "date": f"{annee}-06-13", "valider": True,
+        "lignes": [{"designation": "Ciment", "quantite": 200,
+                    "prix_unitaire": "1200", "taux_tva": 19,
+                    "compte": "607"}]})["id"])
+    brouillon = dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "tiers_id": client,
+        "numero": "VE — 2024-00030", "date": f"{annee}-06-14",
+        "lignes": [{"designation": "Restee en brouillon", "quantite": 1,
+                    "prix_unitaire": "700000", "taux_tva": 19,
+                    "compte": "7011"}]})["id"]
+    faites.append(brouillon)
+
+    apres_creation = photo()
+    # Six ecritures : une par facture comptabilisee (4), la seconde de la
+    # vente mixte, et l'encaissement que « deja encaissee sur » declenche.
+    v("chaque facture comptabilisee a produit son ecriture",
+      apres_creation["ecritures"] == depart["ecritures"] + 6,
+      (depart["ecritures"], apres_creation["ecritures"]))
+    v("… la mixte en a produit deux",
+      dos.sql("SELECT COUNT(*) n FROM ecritures WHERE source_type = 'facture'")[0]["n"] == 5)
+    v("… et son « deja encaissee » a fait son reglement",
+      dos.sql("SELECT COUNT(*) n FROM reglements")[0]["n"] == 1)
+    v("… le brouillon, aucune",
+      not dos.sql("SELECT ecriture_id FROM factures WHERE id = ?",
+                  (brouillon,))[0]["ecriture_id"])
+    v("la comptabilite est equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("2. Une par une, depuis sa fiche")
+    # ==================================================================
+    r = dos.appel(f"/api/factures/{faites[0]}", {}, "DELETE")
+    v("la suppression repond", r.get("ok"), r)
+    v("… et la facture n'est plus la",
+      not dos.sql("SELECT id FROM factures WHERE id = ?", (faites[0],)))
+    v("… son ecriture non plus",
+      not dos.sql("SELECT id FROM ecritures WHERE source_type = 'facture' "
+                  "AND source_id = ?", (faites[0],)))
+    v("… ni ses lignes de facture",
+      not dos.sql("SELECT id FROM facture_lignes WHERE facture_id = ?",
+                  (faites[0],)))
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("3. Le reste en lot, et le dossier revient a son etat de depart")
+    # ==================================================================
+    r = dos.appel("/api/factures/supprimer-lot", {
+        "societe_id": sid, "ids": faites[1:], "confirmation": "SUPPRIMER"})
+    v("les quatre autres partent ensemble", r["supprimees"] == 4, r)
+    fin = photo()
+    for cle in ("debit", "credit", "ecritures", "lignes", "factures",
+                "facture_lignes", "reglements"):
+        v(f"« {cle} » est revenu exactement a son etat d'avant",
+          fin[cle] == depart[cle], f"{cle} : {depart[cle]} -> {fin[cle]}")
+
+    # ==================================================================
+    titre("4. Rien d'orphelin ne subsiste")
+    # ==================================================================
+    v("aucune ligne sans ecriture",
+      not dos.sql("SELECT l.id FROM lignes l LEFT JOIN ecritures e "
+                  "ON e.id = l.ecriture_id WHERE e.id IS NULL"))
+    v("aucune ligne de facture sans facture",
+      not dos.sql("SELECT fl.id FROM facture_lignes fl LEFT JOIN factures f "
+                  "ON f.id = fl.facture_id WHERE f.id IS NULL"))
+    v("aucune ecriture ne renvoie a une facture disparue",
+      not dos.sql("SELECT e.id FROM ecritures e LEFT JOIN factures f "
+                  "ON f.id = e.source_id WHERE e.source_type = 'facture' "
+                  "AND f.id IS NULL"))
+    v("l'apport initial, lui, est intact",
+      dos.sql("SELECT COUNT(*) n FROM ecritures")[0]["n"] == 1)
+    v("la comptabilite est equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("5. Une facture qui resiste ne laisse pas les autres a moitie")
+    # ==================================================================
+    gardee = dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "tiers_id": client,
+        "numero": "VE — 2024-00040", "date": f"{annee}-07-01", "valider": True,
+        "lignes": [{"designation": "Reglee", "quantite": 1,
+                    "prix_unitaire": "1000000", "taux_tva": 19,
+                    "compte": "7011"}]})["id"]
+    jetable = dos.appel("/api/factures", {
+        "societe_id": sid, "sens": "vente", "tiers_id": client,
+        "numero": "VE — 2024-00041", "date": f"{annee}-07-02", "valider": True,
+        "lignes": [{"designation": "Jetable", "quantite": 1,
+                    "prix_unitaire": "800000", "taux_tva": 19,
+                    "compte": "7011"}]})["id"]
+    tresorerie = dos.appel(f"/api/tresorerie?societe={sid}")["comptes"][0]["id"]
+    dos.appel("/api/reglements/multiple", {
+        "societe_id": sid, "sens": "encaissement", "facture_id": gardee,
+        "tiers_id": client, "date": f"{annee}-07-05",
+        "lignes": [{"mode": "cheque", "tresorerie_id": tresorerie,
+                    "montant": "500000"}]})
+    avant_lot = photo()
+    r = dos.appel("/api/factures/supprimer-lot", {
+        "societe_id": sid, "ids": [gardee, jetable],
+        "confirmation": "SUPPRIMER"})
+    v("la reglee est conservee, la jetable part",
+      r["supprimees"] == 1 and len(r["refusees"]) == 1, r)
+    v("… et le refus dit pourquoi",
+      "règlement" in r["refusees"][0]["raison"], r["refusees"])
+    v("la facture reglee est intacte, ecriture comprise",
+      bool(dos.sql("SELECT id FROM ecritures WHERE source_type = 'facture' "
+                   "AND source_id = ?", (gardee,))),
+      "l'ecriture de la facture conservee a disparu")
+    v("… son reglement aussi",
+      dos.sql("SELECT COUNT(*) n FROM reglements WHERE facture_id = ?",
+              (gardee,))[0]["n"] == 1)
+    fin_lot = photo()
+    v("le lot n'a retire que ce qu'il devait",
+      fin_lot["factures"] == avant_lot["factures"] - 1
+      and fin_lot["ecritures"] == avant_lot["ecritures"] - 1,
+      (avant_lot, fin_lot))
+    v("la comptabilite est equilibree", dos.equilibre_global())
+
+
 def suite_exercices(dos):
     """Corriger un exercice mal saisi, ou l'enlever.
 
@@ -4069,6 +4262,8 @@ SUITES = [
     ("grand_livre_vide", "Un grand livre vide dit pourquoi", suite_grand_livre_vide,
      False),
     ("vsp_hors", "Une vente sur plan et sa part non declaree", suite_vsp_hors,
+     False),
+    ("aller_retour", "Ecrire puis defaire, sans rien laisser", suite_aller_retour,
      False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),

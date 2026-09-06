@@ -670,10 +670,28 @@ def _supprime_facture(identifiant: int, utilisateur: str | None) -> str:
     arrête tout : de l'argent est passé, et cela se défait ailleurs.
     """
     f = facture_ou_erreur(identifiant)
-    if f["montant_regle"] or f["montant_hors_regle"]:
+
+    # L'encaissement que la validation a créé elle-même — « déjà encaissée
+    # sur », sur la part non déclarée — appartient à la facture et non au
+    # client : il part avec elle. Sans cela, une facture naissait avec un
+    # règlement qu'elle n'avait jamais reçu, et ne pouvait plus jamais être
+    # effacée : « j'appuie sur supprimer, elle ne se supprime pas ».
+    propres = db.lignes(
+        "SELECT * FROM reglements WHERE facture_id = ? AND operation_ref = ?",
+        (identifiant, f["operation_ref"])) if f.get("operation_ref") else []
+    for r in propres:
+        if r["ecriture_id"]:
+            compta.supprime_ecriture(r["ecriture_id"], utilisateur, forcer=True)
+        db.supprime("reglements", r["id"])
+
+    recu = (f["montant_regle"] + (f["montant_hors_regle"] or 0)
+            - sum(r["montant"] for r in propres))
+    if recu > 0:
         raise ErreurApplicative(
-            f"La facture n° {f['numero']} a reçu un règlement. Supprimez "
-            "d'abord le règlement, depuis la fiche de la facture.")
+            f"La facture n° {f['numero']} a reçu un règlement de "
+            f"{util.formate_montant(recu)}. Supprimez d'abord ce règlement, "
+            "depuis la fiche de la facture.")
+
     for cle in ("ecriture_id", "ecriture_hors_id"):
         if f.get(cle):
             compta.supprime_ecriture(f[cle], utilisateur, forcer=True)
@@ -704,7 +722,8 @@ def api_valide_lot(ctx):
                                  "raison": "déjà validée"})
                 continue
             try:
-                _valide(identifiant, ctx.nom_utilisateur)
+                with db.etape():
+                    _valide(identifiant, ctx.nom_utilisateur)
                 faites.append(f["numero"])
             except ErreurApplicative as err:
                 # Une facture qui coince ne doit pas retenir les autres : on
@@ -729,8 +748,11 @@ def api_supprime_lot(ctx):
     faites, refusees = [], []
     with db.transaction():
         for identifiant in identifiants:
+            # Chacune dans son point de reprise : celle qui résiste est
+            # entièrement défaite, et les autres passent quand même.
             try:
-                faites.append(_supprime_facture(identifiant, ctx.nom_utilisateur))
+                with db.etape():
+                    faites.append(_supprime_facture(identifiant, ctx.nom_utilisateur))
             except ErreurApplicative as err:
                 refusees.append({"id": identifiant, "raison": str(err)})
     return {"supprimees": len(faites), "refusees": refusees,

@@ -133,6 +133,34 @@ class transaction:
         return False
 
 
+class etape:
+    """Un point de reprise à l'intérieur d'une transaction (SAVEPOINT).
+
+    Une opération de lot traite des dizaines d'objets : celui qui échoue ne
+    doit ni arrêter les autres, ni laisser derrière lui la moitié de son
+    travail. Sans cela, supprimer vingt factures dont une résiste effacerait
+    l'écriture de celle-là sans effacer la facture — un demi-geste, et une
+    comptabilité fausse.
+    """
+
+    _compteur = 0
+
+    def __enter__(self):
+        etape._compteur += 1
+        self._nom = f"etape_{etape._compteur}"
+        connexion().execute(f"SAVEPOINT {self._nom}")
+        return self
+
+    def __exit__(self, type_exc, valeur_exc, trace):
+        conn = connexion()
+        if type_exc is None:
+            conn.execute(f"RELEASE SAVEPOINT {self._nom}")
+        else:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {self._nom}")
+            conn.execute(f"RELEASE SAVEPOINT {self._nom}")
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Initialisation du schéma
 # ---------------------------------------------------------------------------

@@ -279,6 +279,31 @@ def parcours(page) -> None:
     v("la colonne « Reste » est la", "Reste" in contenu)
 
     # ======================================================================
+    titre("3 bis 2. Supprimer une facture depuis sa fiche")
+    # ======================================================================
+    # « Il appuie sur supprimer mais elle ne se supprime pas vraiment. »
+    # On verifie ici que la ligne quitte reellement le tableau — la
+    # notification, elle, porte le numero et peut faire illusion.
+    cible = poste("/api/factures", {
+        "societe_id": SOCIETE[0], "sens": "vente", "numero": "VE — A-SUPPRIMER",
+        "tiers_id": CLIENT[0], "date": DATE_ESSAI[0], "valider": True,
+        "lignes": [{"designation": "A supprimer", "quantite": 1,
+                    "prix_unitaire": "900000", "taux_tva": 19,
+                    "compte": "7011"}]})["id"]
+    page.goto(BASE + f"/#/factures/{cible}", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    page.click("#actions-page button.danger")
+    page.wait_for_timeout(600)
+    v("la fenêtre de suppression s'ouvre", not page.is_hidden("#fenetre"))
+    page.click("#corps-modale .pied-modale button.danger")
+    page.wait_for_timeout(2500)
+    numeros = page.eval_on_selector_all(
+        "table tbody tr td:nth-child(2)", "l => l.map(c => c.textContent.trim())")
+    v("la facture a quitté le tableau",
+      not any("A-SUPPRIMER" in n for n in numeros), numeros)
+    v("… et les autres sont toujours là", len(numeros) >= 1, numeros)
+
+    # ======================================================================
     titre("3 ter. La documentation, dans la barre de gauche")
     # ======================================================================
     page.keyboard.press("Escape")
