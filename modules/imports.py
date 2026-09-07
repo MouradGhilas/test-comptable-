@@ -1364,6 +1364,21 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
                      if cle_unique and not erreurs else "")
         affichee = (brut.get(_nom_de_champ(modele, cle_unique))
                     if cle_unique else "")
+        if reference and reference in vus_dans_le_fichier:
+            # Le même compte cité deux fois dans un fichier, ce n'est pas une
+            # faute : c'est un fichier tiré d'un journal, où chaque compte
+            # revient à chaque mouvement. La première mention fait foi, les
+            # suivantes sont simplement déjà là. Les mettre de côté rendait
+            # 64 lignes sur 95 « à traiter », pour rien.
+            ignorees.append({
+                "ligne": numero_ligne,
+                "message": f"« {affichee} » est déjà repris à la ligne "
+                           f"{vus_dans_le_fichier[reference]} : rien à faire"})
+            apercu.append({"ligne": numero_ligne, "valeurs": brut, "erreurs": []})
+            continue
+        if reference:
+            vus_dans_le_fichier[reference] = numero_ligne
+
         if reference and reference in deja_en_base:
             identifiant, a_remplir = deja_en_base[reference]
             if a_remplir:
@@ -1388,12 +1403,6 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
                 "message": f"« {affichee} » est déjà enregistré : rien à faire"})
             apercu.append({"ligne": numero_ligne, "valeurs": brut, "erreurs": []})
             continue
-        if reference and reference in vus_dans_le_fichier:
-            erreurs.append(f"« {affichee} » apparaît déjà à la ligne "
-                           f"{vus_dans_le_fichier[reference]} de ce fichier")
-        elif reference:
-            vus_dans_le_fichier[reference] = numero_ligne
-
         erreurs += _controles_specifiques(societe_id, cle_modele, brut,
                                           enregistrement)
 
@@ -1409,7 +1418,7 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
                 "nb_completes": completes,
                 "nb_rejetes": len(apercu) - len(prets) - len(ignorees)}
     diagnostic = _fichier_suspect(modele, cle_unique, vus_dans_le_fichier,
-                                  ignorees, len(apercu))
+                                  len(apercu))
     if diagnostic:
         resultat["avertissement"] = diagnostic
     return resultat
@@ -1444,7 +1453,7 @@ def _pourquoi_exige(reference: str) -> str:
     return POURQUOI_EXIGE.get(reference, "")
 
 
-def _fichier_suspect(modele, cle_unique, vus, ignorees, nb_lignes) -> str | None:
+def _fichier_suspect(modele, cle_unique, vus, nb_lignes) -> str | None:
     """Le fichier ressemble-t-il à ce que ce modèle attend ?
 
     Une colonne d'identifiant qui porte la même valeur sur toutes les lignes
@@ -1454,8 +1463,9 @@ def _fichier_suspect(modele, cle_unique, vus, ignorees, nb_lignes) -> str | None
     """
     if not cle_unique or nb_lignes < 3:
         return None
-    distinctes = len(vus) + len({i["message"] for i in ignorees})
-    if distinctes > 1:
+    # « vus » porte une entrée par valeur distincte, les répétitions comprises :
+    # une seule valeur pour tout le fichier, c'est le mauvais type de données.
+    if len(vus) != 1:
         return None
     colonne = _nom_de_champ_lisible(modele, cle_unique)
     return (f"La colonne « {colonne} » porte la même valeur sur les "
@@ -1767,6 +1777,14 @@ def analyse_ecritures(societe_id, rangs, association, defaut_perimetre):
         if nom_tiers and not _tiers_id(societe_id, nom_tiers):
             manquants.tiers_nomme(nom_tiers, compte)
 
+    # Un journal exporté ne porte pas toujours de numéro d'écriture utile :
+    # celui de son fichier vaut 1 sur les quatre-vingt-quinze lignes. Ce qui
+    # sépare deux opérations, alors, c'est le retour du solde à zéro — c'est
+    # ainsi qu'un comptable lit son journal. On découpe donc chaque groupe à
+    # chaque fois qu'il se solde, plutôt que de fondre en une seule écriture
+    # tout ce qui partage un journal, une date et un libellé.
+    ordre, groupes = _decoupe_aux_soldes(ordre, groupes)
+
     prets = []
     for cle in ordre:
         groupe = groupes[cle]
@@ -2012,6 +2030,53 @@ def analyse_factures(societe_id, rangs, association, defaut_perimetre, sens):
             "a_creer": manquants.resume()}
 
 
+def _decoupe_aux_soldes(ordre: list, groupes: dict) -> tuple[list, dict]:
+    """Découpe chaque groupe en écritures, à chaque retour du solde à zéro.
+
+    Deux virements le même jour, sur le même journal, sous le même libellé,
+    sont deux écritures — pas une de quatre lignes. Le fichier ne le dit
+    pas ; le solde, lui, le dit : il retombe à zéro entre les deux.
+
+    Un groupe qui ne se solde jamais ressort tel quel : son écart ira au
+    compte d'attente, comme avant.
+    """
+    nouveau_ordre, nouveaux = [], {}
+    for cle in ordre:
+        groupe = groupes[cle]
+        if groupe["erreurs"] or len(groupe["lignes"]) < 2:
+            nouveau_ordre.append(cle)
+            nouveaux[cle] = groupe
+            continue
+
+        morceaux, courant, debit, credit = [], [], 0, 0
+        for ligne, numero_ligne in zip(groupe["lignes"],
+                                       groupe["lignes_fichier"]):
+            courant.append((ligne, numero_ligne))
+            debit += ligne["debit"]
+            credit += ligne["credit"]
+            if debit == credit and debit:
+                morceaux.append(courant)
+                courant, debit, credit = [], 0, 0
+        if courant:                      # un reste qui ne se solde pas
+            morceaux.append(courant)
+        if len(morceaux) < 2:
+            nouveau_ordre.append(cle)
+            nouveaux[cle] = groupe
+            continue
+
+        for rang, morceau in enumerate(morceaux, start=1):
+            part = dict(groupe)
+            part["lignes"] = [l for l, _ in morceau]
+            part["lignes_fichier"] = [n for _, n in morceau]
+            part["debit"] = sum(l["debit"] for l in part["lignes"])
+            part["credit"] = sum(l["credit"] for l in part["lignes"])
+            part["erreurs"] = []
+            sous_cle = (*cle, rang) if isinstance(cle, tuple) else (cle, rang)
+            nouveau_ordre.append(sous_cle)
+            nouveaux[sous_cle] = part
+    return nouveau_ordre, nouveaux
+
+
 def _montant_apercu(lignes: list[dict]) -> int:
     """Le total hors taxes d'une facture telle qu'elle sera écrite."""
     from modules.facturation import calcule_lignes
@@ -2109,6 +2174,25 @@ def analyse_reglements(societe_id, rangs, association):
 # Aiguillage
 # ---------------------------------------------------------------------------
 
+def _suggere_journal(entetes, cle_modele: str) -> str:
+    """Un journal général donné à un autre modèle : le dire plutôt que refuser.
+
+    C'est le fichier qu'un comptable a sous la main : il exporte son journal
+    de l'ancien logiciel et le donne tel quel. Présenté à « Tiers » ou à
+    « Comptes », il manque forcément des colonnes — autant lui indiquer le
+    modèle qui, lui, le lira en entier.
+    """
+    if cle_modele == "ecritures":
+        return ""
+    presentes = {str(e or "").strip().lower() for e in entetes}
+    if not ({"débit", "debit"} & presentes and {"crédit", "credit"} & presentes):
+        return ""
+    return (" Ce fichier ressemble à un journal (il a une colonne Débit et une "
+            "colonne Crédit) : choisissez « Écritures comptables » en haut de "
+            "l'écran, il sera repris en entier, et les comptes, journaux et "
+            "tiers qu'il cite seront créés au passage.")
+
+
 def _analyse(ctx, octets: bytes, cle_modele: str) -> dict:
     modele = MODELES[cle_modele]
     societe_id = ctx.entier("societe_id") or ctx.arg_int("societe")
@@ -2128,7 +2212,8 @@ def _analyse(ctx, octets: bytes, cle_modele: str) -> dict:
         raise ErreurApplicative(
             "Colonnes obligatoires absentes du fichier : "
             + ", ".join(manquantes)
-            + ". Téléchargez le modèle et conservez sa ligne d'en-têtes.")
+            + ". Téléchargez le modèle et conservez sa ligne d'en-têtes."
+            + _suggere_journal(entetes, cle_modele))
 
     defaut = db.valeur("SELECT perimetre_defaut FROM societes WHERE id = ?",
                        (societe_id,), "declare")
@@ -2280,10 +2365,19 @@ def importe(ctx, cle, octets, rejouer=True) -> dict:
     if not prets and not _quelque_chose_a_creer(a_creer) \
             and not resultat["anomalies"]:
         if resultat.get("nb_ignorees"):
-            raise ErreurApplicative(
-                f"{resultat['nb_ignorees']} ligne(s) sur {resultat['nb_ignorees']} "
-                "étaient déjà enregistrées : il n'y avait rien à reprendre. "
-                "Rien n'a été modifié.")
+            # Repasser le même fichier n'est pas une faute : c'est le réflexe
+            # de qui n'est pas sûr que la première fois a marché. Une erreur
+            # rouge là-dessus fait peur pour rien — on constate, simplement.
+            return {"crees": 0, "rejetes": 0, "comptabilisees": 0,
+                    "non_comptabilisees": [], "ignorees": resultat["nb_ignorees"],
+                    "completes": 0, "en_attente": 0, "non_affectes": 0,
+                    "repris": 0, "rattaches": 0, "import_id": None,
+                    "anomalies": [], "prealables": {},
+                    "libelle": resultat["libelle"],
+                    "rien_a_reprendre": (
+                        f"Ces {resultat['nb_ignorees']} ligne(s) étaient déjà "
+                        "enregistrées : il n'y avait rien à reprendre. Rien "
+                        "n'a été modifié, votre dossier est inchangé.")}
         raise ErreurApplicative("Aucune ligne exploitable dans ce fichier.")
 
     # Un seul bloc : ou tout passe, ou rien n'est écrit.

@@ -122,6 +122,45 @@ const TUTORIELS = [
         ],
       },
       {
+        titre: 'Reprendre votre journal général tel qu\'il sort d\'Excel',
+        quand: 'Vous avez un export de votre ancien logiciel : une ligne par '
+             + 'mouvement, avec Débit et Crédit.',
+        etapes: [
+          '<strong>Paramètres → Import</strong>, groupe Comptabilité, '
+          + '<strong>Écritures comptables</strong>.',
+          'Déposez votre fichier <strong>sans le retoucher</strong> : les '
+          + 'en-têtes sont reconnus même s\'ils ne sont pas ceux du modèle.',
+          'Lisez l\'aperçu : il vous dit combien d\'écritures il a reconnues '
+          + 'et ce qui reste à voir.',
+          'Validez. Les comptes, journaux et tiers cités sont créés au '
+          + 'passage, avec leur seul code, et marqués « à compléter ».',
+          'Si vous avez aussi la liste de vos comptes, déposez-la ensuite en '
+          + '<strong>Comptes</strong> : elle remplira les intitulés manquants.',
+        ],
+        route: '/parametres/import',
+        pieges: [
+          'La colonne <b>« N° écriture »</b> peut valoir 1 sur toutes les '
+          + 'lignes, ou se répéter d\'un mois à l\'autre : ce n\'est pas un '
+          + 'problème. L\'application sépare les opérations sur le journal, '
+          + 'la date, et le retour du solde à zéro — pas sur ce numéro.',
+          'Les <b>espaces</b> laissées par Excel autour d\'un code (« BQ&nbsp;» '
+          + 'avec une espace, un code tiers avec une espace insécable) ne '
+          + 'créent pas deux journaux ni deux tiers : elles sont enlevées.',
+          'Un <b>plan comptable tiré de ce même journal</b> répète chaque '
+          + 'compte à chaque mouvement. Ces répétitions ne sont pas des '
+          + 'fautes : la première mention fait foi, les suivantes sont '
+          + 'signalées comme « déjà là » et le fichier passe entier.',
+          'Vous n\'êtes pas sûr que l\'import a marché ? '
+          + '<b>Redéposez le même fichier.</b> S\'il était déjà repris, '
+          + 'l\'application répond « rien à reprendre » et ne touche à rien.',
+          'Votre journal n\'est pas une liste de tiers : présenté au modèle '
+          + '<b>Tiers</b>, il manquera des colonnes. L\'application vous '
+          + 'renvoie alors vers « Écritures comptables », qui le lit en entier.',
+          'Une reprise entière se défait : <b>« Reprises déjà faites »</b>, '
+          + 'en bas de l\'écran d\'import.',
+        ],
+      },
+      {
         titre: 'Importer vos factures',
         quand: 'Vous reprenez plusieurs mois — ou plusieurs années — de ventes.',
         etapes: [

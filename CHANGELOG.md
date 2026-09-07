@@ -3,6 +3,37 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.15.0
+
+- **Son journal exporté passe en entier, sans qu'il ait à le retoucher.** Son
+  fichier réel le disait : la colonne « N° écriture » vaut **1 sur les
+  quatre-vingt-quinze lignes**. Elle a été remplie parce que le modèle la
+  demandait, et elle ne sépare rien. L'application coupe désormais aussi
+  **au retour du solde à zéro** : deux versements de caisse le même jour, du
+  même journal et du même libellé redeviennent **deux opérations** au lieu
+  d'une seule déséquilibrée. Sur son fichier : **39 écritures, 0 mise de
+  côté, débit et crédit à l'unité près.**
+- **Un plan comptable tiré d'un journal n'est plus refusé aux trois quarts.**
+  Chaque compte y revient à chaque mouvement : **64 lignes sur 95** étaient
+  mises de côté pour « déjà présent ». Une répétition à l'intérieur d'un
+  fichier n'est pas une faute — la première mention fait foi, les suivantes
+  sont signalées **« déjà là »**, et le fichier passe entier. Ses 31 comptes
+  sont créés du premier coup.
+- **Redéposer le même fichier ne fait plus peur.** Quand on n'est pas sûr que
+  la première fois a marché, on recommence. L'application répondait par une
+  **erreur rouge**. Elle répond maintenant *« Rien à reprendre : ces lignes
+  étaient déjà enregistrées, votre dossier est inchangé »* — un constat, pas
+  une panne.
+- **Un journal présenté au mauvais modèle est réorienté.** Déposé en
+  « Tiers », il lui manque forcément des colonnes. Plutôt que de s'arrêter
+  là, l'application reconnaît le Débit et le Crédit et indique le modèle qui
+  le lira en entier : **« Écritures comptables »**.
+- **Un fichier qui n'est pas du bon type est toujours signalé.** La même
+  valeur sur toutes les lignes d'une colonne d'identifiant reste détectée —
+  les répétitions désormais admises ne masquent pas l'avertissement.
+- **Une fiche de documentation pour sa façon de faire :** *« Reprendre votre
+  journal général tel qu'il sort d'Excel »*, avec les six pièges rencontrés.
+
 ## 1.14.2
 
 - **La liste d'attente se traite en masse, plus une ligne à la fois.** Elle

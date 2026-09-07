@@ -2276,6 +2276,14 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
       const faits = Object.entries(r.prealables || {})
         .filter(([, n]) => n)
         .map(([t, n]) => `${n} ${NOMS_PREALABLES[t] || t}`);
+      if (r.rien_a_reprendre) {
+        notifie('Rien à reprendre : tout y était déjà.', 'succes', 7000);
+        zone.innerHTML = `<div class="message">
+          <strong>Rien à reprendre</strong>
+          ${ech(r.rien_a_reprendre)}</div>`;
+        rafraichitJournalImports(document);
+        return;
+      }
       notifie(`${r.crees} ligne(s) importée(s).`
             + (r.completes ? ` ${r.completes} fiche(s) complétée(s).` : '')
             + (r.en_attente ? ` ${r.en_attente} mise(s) de côté.` : '')

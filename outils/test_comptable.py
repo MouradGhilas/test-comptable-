@@ -4435,6 +4435,116 @@ def suite_attente_en_masse(dos):
                    "AND entite = 'attente'")))
 
 
+def suite_journal_exporte(dos):
+    """Sa maniere de faire : un journal general exporte, donne tel quel.
+
+    Son fichier reel le montre : la colonne « N° ecriture » vaut 1 sur les
+    quatre-vingt-quinze lignes — elle a ete remplie parce que le modele la
+    demandait, et elle ne separe rien. Ce qui separe deux operations, c'est
+    le journal, la date, le libelle — et le retour du solde a zero. Les
+    codes de journal trainent une espace, les codes tiers une espace
+    insecable : ce sont des sorties d'Excel.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "jx", "mot_de_passe": "motdepasse123",
+        "nom_complet": "Comptable", "raison_sociale": "SARL JOURNAL EXPORTE",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    annee = int(dos.appel(f"/api/exercices?societe={sid}")
+                ["exercices"][0]["date_debut"][:4])
+
+    # Le meme journal, la meme date, le meme libelle : deux operations
+    # distinctes, que seul le solde separe. Et « 1 » partout en numero.
+    fichier = (
+        "N° écriture;Date;Journal;Libellé;Compte;Tiers;Débit;Crédit\n"
+        f"1;{annee}-09-16;BQ ;vers especes;512000;;500000;0\n"
+        f"1;{annee}-09-16;BQ ;vers especes;455001;T00001\u00a0;0;450000\n"
+        f"1;{annee}-09-16;BQ ;vers especes;455002;T00002;0;50000\n"
+        f"1;{annee}-09-16;BQ ;vers especes;512000;;3000000;0\n"
+        f"1;{annee}-09-16;BQ ;vers especes;455001;T00001\u00a0;0;3000000\n"
+        f"1;{annee}-09-17;OD;CAPITAL SOCIAL;455001;T00001;450000;0\n"
+        f"1;{annee}-09-17;OD;CAPITAL SOCIAL;455002;T00002;50000;0\n"
+        f"1;{annee}-09-17;OD;CAPITAL SOCIAL;101000;;0;500000\n")
+
+    # ==================================================================
+    titre("1. Le solde separe ce que le numero ne separe pas")
+    # ==================================================================
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "ecritures", "contenu": b64(fichier)})
+    v("trois ecritures, pas une seule", a["nb_valides"] == 3, a["nb_valides"])
+    v("… aucune mise de cote", a["nb_rejetes"] == 0, a["nb_rejetes"])
+    v("… et aucun ecart au compte d'attente",
+      not [x for x in a["anomalies"] if x.get("bloquant") is False],
+      a["anomalies"][:3])
+    v("… la premiere porte ses trois lignes",
+      a["apercu"][0]["nb_lignes"] == 3, a["apercu"][0])
+    v("… la seconde ses deux",
+      a["apercu"][1]["nb_lignes"] == 2, a["apercu"][1])
+
+    # ==================================================================
+    titre("2. Les espaces d'Excel ne font pas trois journaux")
+    # ==================================================================
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "ecritures", "contenu": b64(fichier),
+        "fichier": "journal.csv"})
+    v("les trois ecritures sont enregistrees", r["crees"] == 3, r)
+    journaux = dos.sql("SELECT DISTINCT j.code FROM ecritures e "
+                       "JOIN journaux j ON j.id = e.journal_id ORDER BY j.code")
+    v("« BQ » et « BQ » ne font qu'un journal",
+      [j["code"] for j in journaux] == ["BQ", "OD"], journaux)
+    tiers = dos.sql("SELECT DISTINCT code FROM tiers ORDER BY code")
+    v("« T00001 » et « T00001 » insecable ne font qu'un tiers",
+      len([t for t in tiers if t["code"]]) <= 2, tiers)
+    v("la comptabilite est equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("3. Un plan comptable tire d'un journal : les doublons passent")
+    # ==================================================================
+    # « 512000 apparait deja a la ligne 6 » : soixante-quatre lignes sur
+    #   quatre-vingt-quinze etaient mises de cote pour cela.
+    plan = "Compte;Intitulé\n" + "".join(
+        f"{c};{lib}\n" for c, lib in [
+            ("606001", "Achats"), ("626001", "Telephone"),
+            ("606001", "Achats"), ("445001", "TVA a payer"),
+            ("606001", "Achats"), ("626001", "Telephone")])
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "comptes", "contenu": b64(plan)})
+    v("aucune ligne n'est mise de cote", a["nb_rejetes"] == 0,
+      [x["message"] for x in (a.get("anomalies") or [])][:3])
+    v("… les repetitions sont simplement deja la",
+      a["nb_ignorees"] == 3, a.get("nb_ignorees"))
+    v("… et chacune dit quelle ligne fait foi",
+      all("ligne" in i["message"] for i in a["ignorees"]), a["ignorees"][:1])
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "comptes", "contenu": b64(plan),
+        "fichier": "plan.csv"})
+    v("… et trois comptes seulement sont crees", r["crees"] == 3, r)
+
+    # Le meme fichier une seconde fois : rien n'est cree, rien n'est refuse.
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "comptes", "contenu": b64(plan),
+        "fichier": "plan.csv"})
+    v("le repasser ne fait pas peur", bool(r.get("rien_a_reprendre")), r)
+    v("… il ne cree rien de plus", r["crees"] == 0, r)
+    v("… et il le dit sans jargon",
+      "inchang" in r.get("rien_a_reprendre", ""), r.get("rien_a_reprendre"))
+    v("… le plan garde ses trois comptes",
+      dos.sql("SELECT COUNT(*) n FROM comptes WHERE numero IN "
+              "('606001','626001','445001')")[0]["n"] == 3)
+
+    # ==================================================================
+    titre("4. Un fichier qui n'est pas du bon type le dit tout de suite")
+    # ==================================================================
+    # La repetition ne doit pas etouffer l'avertissement : cinq lignes
+    # portant le meme compte, ce n'est pas un plan comptable.
+    faux = "Compte;Intitulé\n" + "".join(
+        f"606001;Achat n°{i}\n" for i in range(1, 6))
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "comptes", "contenu": b64(faux)})
+    v("le logiciel signale le mauvais type de donnees",
+      "type de donn" in (a.get("avertissement") or ""), a.get("avertissement"))
+
+
 def suite_exercices(dos):
     """Corriger un exercice mal saisi, ou l'enlever.
 
@@ -4554,6 +4664,8 @@ SUITES = [
      suite_numeros_repetes, False),
     ("attente_masse", "Vider ou rejouer une attente de masse",
      suite_attente_en_masse, False),
+    ("journal_exporte", "Un journal general exporte, donne tel quel",
+     suite_journal_exporte, False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),

@@ -318,6 +318,9 @@ def parcours(page) -> None:
     v("… rangées par domaine", "Reprendre un dossier déjà tenu" in contenu)
     v("… et chacune dit ce qui coince souvent",
       "Ce qui coince souvent" in contenu)
+    v("… sa facon de faire y a sa fiche",
+      "tel qu'il sort d'Excel" in contenu.replace("&#39;", "'")
+      .replace("\u2019", "'"), None)
     page.fill("#doc-q", "montant ht")
     page.wait_for_timeout(400)
     ouvertes = page.eval_on_selector_all(
