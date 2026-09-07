@@ -335,6 +335,52 @@ def parcours(page) -> None:
     v("… vider la recherche rend tout", page.is_hidden("#doc-vide"))
 
     # ======================================================================
+    titre("3 quater. Deposer un fichier sans dire ce qu'il contient")
+    # ======================================================================
+    # « Tu prends ce qu'on te donne. » Le type de donnees est une question
+    # pour qui connait le logiciel ; lui a un fichier, et il le depose.
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    page.goto(BASE + "/#/parametres/import", wait_until="networkidle")
+    page.wait_for_selector("#import-modele", timeout=15000)
+    v("« Détection automatique » est proposée d'office",
+      page.eval_on_selector("#import-modele", "s => s.value") == "auto",
+      page.eval_on_selector("#import-modele", "s => s.value"))
+
+    journal = Path(tempfile.gettempdir()) / "journal-depose.csv"
+    journal.write_text(
+        "N° écriture;Date;Journal;Libellé;Compte;Tiers;Débit;Crédit;"
+        "Raison sociale\n"
+        "1;2026-03-04;BQ ;Versement;512000;T00001\u00a0;500000;0;BENALI Karim\n"
+        "1;2026-03-04;BQ ;Versement;455001;T00001;0;500000;BENALI Karim\n"
+        "1;2026-03-05;OD;Achat;606001;;120000;0;\n"
+        "1;2026-03-05;OD;Achat;401001;T00002;0;120000;SARL DJAZAIR\n",
+        encoding="utf-8")
+    page.set_input_files("#import-fichier", str(journal))
+    page.click("#bouton-controler")
+    page.wait_for_selector("#import-resultat .message", timeout=20000)
+    apercu = page.content()
+    v("il dit ce qu'il a trouvé dans le fichier",
+      "Votre fichier contient" in apercu, apercu[apercu.find("import-resultat"):][:300])
+    v("… les écritures", "Écritures comptables" in apercu)
+    v("… et les clients qui étaient dedans", "Tiers (" in apercu)
+    page.click("#bouton-importer")
+    page.wait_for_selector("text=Import terminé", timeout=30000)
+    v("l'import passe en un seul dépôt", "Import terminé" in page.content())
+
+    ecrit = page.evaluate(
+        "fetch('/api/ecritures?societe=' + App.etat.societe.id)"
+        ".then(r => r.json()).then(d => d.ecritures"
+        ".filter(e => e.libelle === 'Versement' || e.libelle === 'Achat')"
+        ".length)")
+    v("… et les deux écritures sont au journal", ecrit == 2, ecrit)
+    noms = page.evaluate(
+        "fetch('/api/tiers?societe=' + App.etat.societe.id)"
+        ".then(r => r.json()).then(d => d.tiers.map(t => t.raison_sociale))")
+    v("… les clients portent leur nom, pas leur code",
+      "BENALI Karim" in noms and "SARL DJAZAIR" in noms, noms)
+
+    # ======================================================================
     titre("4. Corriger un exercice mal saisi")
     # ======================================================================
     page.keyboard.press("Escape")

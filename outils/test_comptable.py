@@ -4545,6 +4545,140 @@ def suite_journal_exporte(dos):
       "type de donn" in (a.get("avertissement") or ""), a.get("avertissement"))
 
 
+def suite_depot_libre(dos):
+    """« Tu prends ce qu'on te donne. »
+
+    Choisir un « type de données » dans une liste n'est une question que
+    pour qui connaît le logiciel. Celui qui tient la comptabilité a un
+    fichier — le journal exporté de son ancien logiciel — et veut qu'on le
+    reprenne. On le lit, on reconnaît ce qu'il contient, on prend tout.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "dl", "mot_de_passe": "motdepasse123",
+        "nom_complet": "Comptable", "raison_sociale": "SARL DEPOT LIBRE",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+    annee = int(dos.appel(f"/api/exercices?societe={sid}")
+                ["exercices"][0]["date_debut"][:4])
+
+    # ==================================================================
+    titre("1. Un journal deposé sans rien dire est repris en entier")
+    # ==================================================================
+    journal = (
+        "N° écriture;Date;Journal;Libellé;Compte;Tiers;Débit;Crédit\n"
+        f"1;{annee}-03-04;BQ ;Versement;512000;T00001\u00a0;500000;0\n"
+        f"1;{annee}-03-04;BQ ;Versement;455001;T00001;0;500000\n"
+        f"1;{annee}-03-05;OD;Achat;606001;;120000;0\n"
+        f"1;{annee}-03-05;OD;Achat;401001;T00002;0;120000\n")
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "auto", "contenu": b64(journal)})
+    v("le logiciel dit ce qu'il a reconnu",
+      [p["modele"] for p in a["parties"]] == ["ecritures"], a.get("parties"))
+    v("… et combien de lignes cela fait", a["nb_valides"] == 2, a["nb_valides"])
+    v("… sans rien mettre de cote", a["nb_rejetes"] == 0, a["nb_rejetes"])
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "auto", "contenu": b64(journal),
+        "fichier": "journal.csv"})
+    v("les deux ecritures entrent", r["crees"] == 2, r)
+    v("… avec les comptes crees au passage",
+      r["prealables"].get("comptes") == 4, r["prealables"])
+    v("… et les tiers cites", r["prealables"].get("tiers") == 2, r["prealables"])
+    v("la comptabilite est equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("2. Le libelle de l'ecriture n'est pas le nom du compte")
+    # ==================================================================
+    # Presente au plan comptable, la colonne « Libelle » d'un journal
+    # baptisait les comptes « ACHAT TERRAIN » ou « vers especes ».
+    comptes = {c["numero"]: c["intitule"] for c in
+               dos.appel(f"/api/comptes?societe={sid}")["comptes"]}
+    v("aucun compte ne porte le libelle d'une ecriture",
+      "Versement" not in comptes.values() and "Achat" not in comptes.values(),
+      [c for c in comptes.values() if c in ("Versement", "Achat")])
+    v("… l'intitule vient du compte de rattachement",
+      comptes.get("512000") and "banque" in comptes["512000"].lower(),
+      comptes.get("512000"))
+
+    # Meme fichier, type choisi a la main : meme protection.
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "comptes", "contenu": b64(journal)})
+    v("le plan comptable ne lit pas « Libelle » comme un intitule",
+      not [c for c in a["colonnes_reconnues"] if c["attendu"] == "Intitulé"],
+      a["colonnes_reconnues"])
+
+    # ==================================================================
+    titre("3. Les clients mis dans le fichier sont pris aussi")
+    # ==================================================================
+    complet = (
+        "N° écriture;Date;Journal;Libellé;Compte;Tiers;Débit;Crédit;"
+        "Raison sociale;NIF\n"
+        f"1;{annee}-04-04;BQ;Solde;512000;T00001;700000;0;"
+        "BENALI Karim;000116001111111\n"
+        f"1;{annee}-04-04;BQ;Solde;455001;T00001;0;700000;"
+        "BENALI Karim;000116001111111\n")
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "auto", "contenu": b64(complet)})
+    v("le fichier contient deux choses, et le logiciel les nomme",
+      [p["modele"] for p in a["parties"]] == ["tiers", "ecritures"],
+      a.get("parties"))
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "auto", "contenu": b64(complet),
+        "fichier": "journal2.csv"})
+    v("les deux parties sont reprises d'un seul depot",
+      len(r["parties"]) == 2, r.get("parties"))
+    tiers = {t["code"]: t for t in dos.appel(f"/api/tiers?societe={sid}")["tiers"]}
+    porte = [t for t in tiers.values() if t["raison_sociale"] == "BENALI Karim"]
+    v("le client porte son nom", len(porte) == 1, list(tiers))
+    v("… et pas un doublon a cote de son code",
+      not [t for t in tiers.values() if t["raison_sociale"] == "T00001"],
+      [t["raison_sociale"] for t in tiers.values()])
+    v("… avec son NIF", porte and porte[0]["nif"] == "000116001111111",
+      porte[:1])
+    v("la comptabilite reste equilibree", dos.equilibre_global())
+
+    # ==================================================================
+    titre("4. Ce qui ne se devine pas est demande, pas invente")
+    # ==================================================================
+    factures = ("N° facture;Date;Tiers;Désignation;Montant HT\n"
+                f"F-1;{annee}-05-02;BENALI Karim;Commission;100000\n")
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "auto", "contenu": b64(factures)})
+    v("vente ou achat : le logiciel ne tranche pas tout seul",
+      a["a_choisir"] and set(a["a_choisir"][0])
+      == {"factures_vente", "factures_achat"}, a.get("a_choisir"))
+    message = dos.refuse("/api/import/valider", {
+        "societe_id": sid, "modele": "auto", "contenu": b64(factures)})
+    v("… et il le dit au lieu d'ecrire un achat au credit d'un client",
+      "vente" in (message or "").lower(), message)
+
+    # Une balance d'ouverture ne se reprend jamais d'office : elle produit
+    # une ecriture d'a-nouveaux, a une date qu'il faut choisir.
+    balance = ("Compte;Intitulé;Débit;Crédit\n"
+               "512000;Banque;700000;0\n"
+               "101000;Capital;0;700000\n")
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "auto", "contenu": b64(balance)})
+    v("une balance est proposee, pas appliquee",
+      "balance_ouverture" in (a.get("aussi_possible") or []),
+      a.get("aussi_possible"))
+    v("… et les comptes, eux, sont bien repris",
+      [p["modele"] for p in a["parties"]] == ["comptes"], a.get("parties"))
+
+    # ==================================================================
+    titre("5. Un fichier qu'on ne reconnait pas ne fait pas peur")
+    # ==================================================================
+    inconnu = "Colonne A;Colonne B\nun;deux\ntrois;quatre\n"
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "auto", "contenu": b64(inconnu)})
+    v("il n'y a rien a reprendre", a["parties"] == [], a.get("parties"))
+    v("… et le logiciel montre les colonnes qu'il a vues",
+      a["colonnes_du_fichier"] == ["Colonne A", "Colonne B"],
+      a.get("colonnes_du_fichier"))
+    message = dos.refuse("/api/import/valider", {
+        "societe_id": sid, "modele": "auto", "contenu": b64(inconnu)})
+    v("… en disant quoi faire", "colonnes" in (message or "").lower(), message)
+
+
 def suite_exercices(dos):
     """Corriger un exercice mal saisi, ou l'enlever.
 
@@ -4666,6 +4800,8 @@ SUITES = [
      suite_attente_en_masse, False),
     ("journal_exporte", "Un journal general exporte, donne tel quel",
      suite_journal_exporte, False),
+    ("depot_libre", "Deposer un fichier sans choisir son type",
+     suite_depot_libre, False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),

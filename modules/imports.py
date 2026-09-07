@@ -385,8 +385,12 @@ MODELES = {
         "colonnes": [
             Colonne("Compte", "Numéro du compte", "4011", requis=True,
                     champ="numero", synonymes=("numero", "n° compte")),
-            Colonne("Intitulé", "Libellé du compte", "Fournisseurs de travaux",
-                    requis=True, champ="intitule", synonymes=("intitule", "libelle")),
+            # Pas obligatoire : un fichier qui ne donne que des numéros de
+            # compte doit passer. L'intitulé se déduit alors du compte de
+            # rattachement, et le compte est marqué « à compléter ».
+            Colonne("Intitulé", "Libellé du compte (facultatif)",
+                    "Fournisseurs de travaux",
+                    champ="intitule", synonymes=("intitule", "libelle")),
             Colonne("Lettrable", "oui / non — pour les comptes de tiers", "oui",
                     champ="lettrable", type="oui_non"),
         ],
@@ -474,7 +478,14 @@ MODELES = {
         "libelle": "Tiers (clients, fournisseurs, propriétaires, locataires)",
         "groupe": "Tiers",
         "table": "tiers", "cle_unique": "raison_sociale",
-        "defauts": {"actif": 1, "cree_le": util.maintenant,
+        # Une liste de clients porte presque toujours le code de l'ancien
+        # logiciel. C'est par lui qu'elle rejoint les tiers déjà créés par
+        # l'import d'un journal, qui n'ont que ce code pour tout nom.
+        "rattachement": ("Code", ("code", "raison_sociale")),
+        "defauts": {"actif": 1, "cree_le": util.maintenant, "type": "client",
+                    "compte_comptable":
+                        lambda societe_id, v: COMPTES_PAR_TYPE.get(
+                            v.get("type"), "411"),
                     "code": lambda societe_id, v: db.numero_suivant(societe_id, "tiers")},
         "notice": [
             "La colonne « Type » accepte : client, fournisseur, mandant,",
@@ -484,8 +495,13 @@ MODELES = {
             "bien ; « acquereur » l'acheteur d'un lot en promotion.",
         ],
         "colonnes": [
+            Colonne("Code", "Votre code, si vous en avez un (facultatif)",
+                    "T00001", champ="code",
+                    synonymes=("code tiers", "code client", "tiers")),
+            # Pas obligatoire : une liste de noms sans colonne « Type » doit
+            # passer. Ils sont repris comme clients et marqués « à compléter ».
             Colonne("Type", "client, fournisseur, mandant, locataire, acquereur",
-                    "client", requis=True, champ="type", type="minuscule",
+                    "client", champ="type", type="minuscule",
                     valeurs=TYPES_TIERS),
             Colonne("Raison sociale", "Nom de la personne ou de l'entreprise",
                     "BENALI Karim", requis=True, champ="raison_sociale",
@@ -969,10 +985,14 @@ def api_modeles(ctx):
         "groupes": GROUPES,
         # Ce que l'import crée de lui-même, et les quelques renvois qui
         # restent exigés — pour que l'écran le dise sans les énumérer à la main.
+        "auto": {"cle": CLE_AUTO, "libelle": LIBELLE_AUTO},
         "creables": sorted(LIBELLES_REFERENCE[r] for r in CREABLES),
         "exiges": [{"libelle": LIBELLES_REFERENCE[r], "pourquoi": p.lstrip(" —")}
                    for r, p in POURQUOI_EXIGE.items()],
-        "modeles": [
+        # En tête, et sélectionnée d'office : la question « quel type de
+        # données ? » n'a de sens que pour qui connaît déjà le logiciel.
+        "modeles": [{"cle": CLE_AUTO, "libelle": LIBELLE_AUTO,
+                     "groupe": "Comptabilité", "colonnes": [], "auto": True}] + [
             {"cle": cle, "libelle": MODELES[cle]["libelle"],
              "groupe": MODELES[cle].get("groupe", "Comptabilité"),
              "colonnes": [{"nom": c.nom, "requis": c.requis, "aide": c.aide}
@@ -1299,6 +1319,36 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
                 continue
             deja_en_base[str(r[cle_unique]).lower()] = (
                 r["id"], bool(r["incomplet"]) if a_completer else False)
+
+    # Le rattachement : une seconde façon de retrouver une fiche déjà là.
+    # Un tiers né d'un journal n'a pour tout nom que le code du fichier
+    # (« T00001 ») ; la liste des clients, elle, donne ce code et le vrai
+    # nom. Sans ce pont, elle créerait un doublon au lieu de le remplir.
+    colonne_lien, champs_lien = modele.get("rattachement", (None, ()))
+    par_lien: dict = {}
+    if colonne_lien and colonne_lien in association:
+        connus = set(db.colonnes(table))
+        champs = [c for c in champs_lien if c in connus]
+        if champs:
+            for r in db.lignes(
+                    f"SELECT id, {', '.join(champs)}"
+                    + (", incomplet" if "incomplet" in connus else "")
+                    + f" FROM {table} WHERE societe_id = ?", (societe_id,)):
+                for champ in champs:
+                    if r[champ] is None:
+                        continue
+                    par_lien.setdefault(str(r[champ]).strip().lower(), (
+                        r["id"],
+                        bool(r["incomplet"]) if "incomplet" in connus else False))
+    # Un code déjà porté par un autre : on garde le nôtre plutôt que de
+    # buter sur l'unicité — le fichier n'a pas à connaître nos contraintes.
+    codes_pris = set()
+    if colonne_lien == "Code" and "code" in db.colonnes(table):
+        codes_pris = {str(r["code"]).strip().lower()
+                      for r in db.lignes(f"SELECT code FROM {table} "
+                                         "WHERE societe_id = ?", (societe_id,))
+                      if r["code"]}
+
     vus_dans_le_fichier: dict = {}
     manquants = Manquants(societe_id)
     completes = 0
@@ -1378,6 +1428,34 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
             continue
         if reference:
             vus_dans_le_fichier[reference] = numero_ligne
+
+        # Retrouvée par son code plutôt que par son nom : c'est la même
+        # fiche, née d'un journal, qui n'avait pour tout nom que ce code.
+        lien = (str(brut.get(colonne_lien) or "").strip().lower()
+                if colonne_lien and not erreurs else "")
+        if lien and reference not in deja_en_base and lien in par_lien:
+            identifiant, a_remplir = par_lien[lien]
+            if a_remplir:
+                enregistrement["_completer"] = identifiant
+                erreurs += _controles_specifiques(societe_id, cle_modele, brut,
+                                                  enregistrement)
+                for message in erreurs:
+                    anomalies.append({"ligne": numero_ligne, "message": message})
+                apercu.append({"ligne": numero_ligne, "valeurs": brut,
+                               "erreurs": erreurs, "complete": True})
+                if not erreurs:
+                    prets.append(enregistrement)
+                    completes += 1
+                continue
+            ignorees.append({
+                "ligne": numero_ligne,
+                "message": f"« {affichee} » est déjà enregistré sous le code "
+                           f"« {brut.get(colonne_lien)} » : rien à faire"})
+            apercu.append({"ligne": numero_ligne, "valeurs": brut, "erreurs": []})
+            continue
+        # Ce code appartient déjà à quelqu'un d'autre : on garde le nôtre.
+        if lien and lien in codes_pris:
+            enregistrement.pop("code", None)
 
         if reference and reference in deja_en_base:
             identifiant, a_remplir = deja_en_base[reference]
@@ -1497,6 +1575,18 @@ def _controles_specifiques(societe_id, cle_modele, brut, enregistrement) -> list
         if numero and not numero.isdigit():
             erreurs.append(f"le numéro de compte « {numero} » "
                            "doit être composé de chiffres")
+        # Un fichier qui ne donne que des numéros : l'intitulé se déduit du
+        # compte de rattachement, comme pour un compte cité par une écriture.
+        if numero and numero.isdigit() and not enregistrement.get("intitule"):
+            propose = compte_a_creer(societe_id, numero)
+            enregistrement["intitule"] = propose["intitule"]
+            enregistrement["incomplet"] = 1
+    elif cle_modele == "tiers":
+        # Une liste de noms sans colonne « Type » : ce sont des clients, et
+        # la fiche le dit — marquée « à compléter », elle se retrouve.
+        if not enregistrement.get("type"):
+            enregistrement["type"] = "client"
+            enregistrement["incomplet"] = 1
     elif cle_modele == "lots":
         # Le numéro d'un lot n'est unique qu'à l'intérieur de son programme.
         programme_id = enregistrement.get("programme_id")
@@ -2174,6 +2264,122 @@ def analyse_reglements(societe_id, rangs, association):
 # Aiguillage
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Détection automatique : ce que le fichier contient
+# ---------------------------------------------------------------------------
+#
+# « Tu prends ce qu'on te donne. » Le type de données à choisir dans une liste
+# déroulante n'est une question que pour qui connaît le logiciel. Celui qui
+# tient la comptabilité, lui, a un fichier — souvent le journal exporté de
+# l'ancien logiciel — et veut qu'on le reprenne. Alors on le lit, on reconnaît
+# ce qu'il contient, et on reprend tout ce qu'on y trouve.
+
+CLE_AUTO = "auto"
+
+LIBELLE_AUTO = "Détection automatique — reprendre tout ce qu'il y a dedans"
+
+#: Une balance d'ouverture ne se devine pas : elle produit une écriture
+#: d'à-nouveaux à une date qu'il faut choisir. Elle n'est jamais reprise
+#: d'office — mais elle reste proposée quand le fichier y ressemble.
+AUTO_EXCLUS = {"balance_ouverture"}
+
+#: Vente ou achat, les deux fichiers ont exactement les mêmes colonnes. Rien
+#: dans le fichier ne permet de trancher : on demande, plutôt que de deviner
+#: de travers et d'écrire un achat au crédit d'un client.
+AUTO_JUMEAUX = ({"factures_vente", "factures_achat"},)
+
+
+def _association_complete(entetes: list[str], cle: str) -> dict | None:
+    """L'association des colonnes, ou None s'il manque une colonne exigée."""
+    modele = MODELES[cle]
+    association = associe_colonnes(entetes, modele)
+    if any(c.requis and c.nom not in association for c in modele["colonnes"]):
+        return None
+    return _desambigue(entetes, association, cle)
+
+
+def detecte_contenu(entetes: list[str]) -> dict:
+    """Ce que ce fichier contient, dans l'ordre où il faut le reprendre.
+
+    Un modèle n'est retenu que s'il apporte quelque chose : s'il n'utilise
+    que des colonnes déjà lues par un modèle plus complet, il ne dirait rien
+    de neuf. C'est ce qui évite qu'un journal — qui a bien une colonne
+    « Compte » — soit aussi pris pour un plan comptable, où la colonne
+    « Libellé » désignerait le nom du compte au lieu du libellé de l'écriture.
+
+    Renvoie aussi ce qu'on n'a pas osé décider tout seul : les fichiers dont
+    les colonnes ne disent pas le sens (vente ou achat), et les colonnes du
+    fichier que rien de ce qu'on a retenu ne lit — c'est souvent le signe
+    qu'il y a autre chose dedans.
+    """
+    candidats = []
+    for cle in MODELES:
+        association = _association_complete(entetes, cle)
+        if association:
+            rang = (ORDRE_AFFICHAGE.index(cle)
+                    if cle in ORDRE_AFFICHAGE else 99)
+            candidats.append((-len(association), rang, cle, association))
+    candidats.sort()
+    par_cle = {cle: association for _, _, cle, association in candidats}
+
+    retenus, lues = [], set()
+    for _, _, cle, association in candidats:
+        if cle in AUTO_EXCLUS:
+            continue
+        if set(association.values()) - lues:
+            retenus.append(cle)
+            lues |= set(association.values())
+
+    # Deux modèles aux colonnes identiques et au sens opposé : on demande.
+    a_choisir = []
+    for famille in AUTO_JUMEAUX:
+        possibles = sorted(famille & set(par_cle))
+        if len(possibles) > 1 and [c for c in retenus if c in famille]:
+            retenus = [c for c in retenus if c not in famille]
+            lues = set().union(*(set(par_cle[c].values()) for c in retenus)) \
+                if retenus else set()
+            a_choisir.append(possibles)
+
+    # Un modèle écarté qui lirait des colonnes que personne ne lit : ce
+    # fichier contient peut-être autre chose. On le propose, sans l'imposer.
+    autres = [cle for cle in par_cle
+              if cle not in retenus
+              and not any(cle in f for f in AUTO_JUMEAUX)
+              and set(par_cle[cle].values()) - lues]
+    autres.sort(key=lambda c: -len(set(par_cle[c].values()) - lues))
+    if a_choisir:
+        autres = []          # une question à la fois : le sens d'abord
+
+    retenus.sort(key=lambda c: ORDRE_AFFICHAGE.index(c)
+                 if c in ORDRE_AFFICHAGE else 99)
+    return {"modeles": retenus, "a_choisir": a_choisir,
+            "aussi_possible": autres[:2],
+            "colonnes_lues": sorted(lues)}
+
+
+def _desambigue(entetes: list[str], association: dict, cle: str) -> dict:
+    """Une même colonne ne veut pas dire la même chose dans tous les fichiers.
+
+    « Libellé », dans un journal, est le libellé de l'écriture — pas le nom
+    du compte. Présenté au plan comptable, il baptisait les comptes « ACHAT
+    TERRAIN » ou « vers especes ». Mieux vaut un compte sans intitulé, que
+    l'application déduit de son compte de rattachement, qu'un compte mal
+    nommé qu'il faudra retrouver un par un.
+    """
+    if cle not in ("comptes", "balance_ouverture"):
+        return association
+    if "Intitulé" not in association:
+        return association
+    presents = {_normalise_entete(e) for e in entetes}
+    est_journal = ({"debit"} & presents and {"credit"} & presents
+                   and ({"journal"} & presents or {"n ecriture"} & presents))
+    if est_journal and _normalise_entete(
+            entetes[association["Intitulé"]]) == "libelle":
+        association = dict(association)
+        association.pop("Intitulé")
+    return association
+
+
 def _suggere_journal(entetes, cle_modele: str) -> str:
     """Un journal général donné à un autre modèle : le dire plutôt que refuser.
 
@@ -2193,8 +2399,7 @@ def _suggere_journal(entetes, cle_modele: str) -> str:
             "tiers qu'il cite seront créés au passage.")
 
 
-def _analyse(ctx, octets: bytes, cle_modele: str) -> dict:
-    modele = MODELES[cle_modele]
+def _lit(ctx, octets: bytes):
     societe_id = ctx.entier("societe_id") or ctx.arg_int("societe")
     if not societe_id:
         raise ErreurApplicative("Aucun dossier sélectionné.")
@@ -2204,8 +2409,76 @@ def _analyse(ctx, octets: bytes, cle_modele: str) -> dict:
         raise ErreurApplicative(
             "Fichier illisible. Attendu : un classeur Excel (.xlsx) ou un "
             f"fichier CSV. Détail : {err}") from err
+    return societe_id, entetes, rangs
 
-    association = associe_colonnes(entetes, modele)
+
+def _analyse_auto(ctx, octets: bytes) -> dict:
+    """Reprendre tout ce qu'il y a dans le fichier, sans rien demander.
+
+    Un seul dépôt : on reconnaît ce que le fichier contient et on analyse
+    chaque partie séparément, dans l'ordre où il faut la reprendre. Le compte
+    rendu additionne les parties, en disant laquelle a donné quoi.
+    """
+    _, entetes, _rangs = _lit(ctx, octets)
+    trouve = detecte_contenu(entetes)
+    if not trouve["modeles"]:
+        return {"modele": CLE_AUTO, "libelle": LIBELLE_AUTO,
+                "auto": True, "parties": [],
+                "nb_valides": 0, "nb_rejetes": 0, "nb_ignorees": 0,
+                "nb_completes": 0, "anomalies": [], "apercu": [],
+                "a_creer": {}, "a_choisir": trouve["a_choisir"],
+                "aussi_possible": trouve["aussi_possible"],
+                "colonnes_du_fichier": [str(e).strip() for e in entetes
+                                        if str(e).strip()],
+                "societe_id": ctx.entier("societe_id") or ctx.arg_int("societe")}
+
+    parties, cumul = [], None
+    for cle in trouve["modeles"]:
+        partie = _analyse(ctx, octets, cle)
+        parties.append({
+            "modele": cle, "libelle": MODELES[cle]["libelle"],
+            "nb_valides": partie["nb_valides"],
+            "nb_rejetes": partie["nb_rejetes"],
+            "nb_ignorees": partie.get("nb_ignorees", 0),
+            "nb_completes": partie.get("nb_completes", 0),
+            "a_creer": partie.get("a_creer") or {}})
+        if cumul is None:
+            cumul = partie
+            continue
+        for champ in ("nb_valides", "nb_rejetes", "nb_ignorees",
+                      "nb_completes"):
+            cumul[champ] = cumul.get(champ, 0) + partie.get(champ, 0)
+        cumul["anomalies"] = cumul["anomalies"] + partie["anomalies"]
+    # « Comment votre fichier a été lu » doit valoir pour le fichier entier,
+    # pas pour la première de ses parties : on réunit les lectures.
+    lues, vues = [], set()
+    for cle in trouve["modeles"]:
+        association = _association_complete(entetes, cle) or {}
+        for nom, index in sorted(association.items()):
+            if index < len(entetes) and (nom, index) not in vues:
+                vues.add((nom, index))
+                lues.append({"attendu": nom,
+                             "trouve": str(entetes[index]).strip(),
+                             "partie": MODELES[cle]["libelle"]})
+    cumul.update({"modele": CLE_AUTO, "libelle": LIBELLE_AUTO, "auto": True,
+                  "parties": parties, "a_choisir": trouve["a_choisir"],
+                  "aussi_possible": trouve["aussi_possible"],
+                  "colonnes_reconnues": lues,
+                  "colonnes_ignorees": [
+                      str(e).strip() for i, e in enumerate(entetes)
+                      if str(e).strip()
+                      and i not in {x[1] for x in vues}]})
+    return cumul
+
+
+def _analyse(ctx, octets: bytes, cle_modele: str) -> dict:
+    if cle_modele == CLE_AUTO:
+        return _analyse_auto(ctx, octets)
+    modele = MODELES[cle_modele]
+    societe_id, entetes, rangs = _lit(ctx, octets)
+
+    association = _desambigue(entetes,
+                              associe_colonnes(entetes, modele), cle_modele)
     manquantes = [c.nom for c in modele["colonnes"]
                   if c.requis and c.nom not in association]
     if manquantes:
@@ -2256,7 +2529,7 @@ def _analyse(ctx, octets: bytes, cle_modele: str) -> dict:
 def api_analyse(ctx):
     ctx.interdit_lecture_seule()
     cle = ctx.champ_requis("modele")
-    if cle not in MODELES:
+    if cle not in MODELES and cle != CLE_AUTO:
         raise ErreurApplicative("Modèle inconnu.", 404)
     resultat = _analyse(ctx, _decode_fichier(ctx), cle)
     for interne in ("prets", "_rangs", "_entetes"):
@@ -2347,13 +2620,66 @@ def api_valide(ctx):
     ctx.interdit_lecture_seule()
     ctx.exige_role("admin", "comptable")
     cle = ctx.champ_requis("modele")
-    if cle not in MODELES:
+    if cle not in MODELES and cle != CLE_AUTO:
         raise ErreurApplicative("Modèle inconnu.", 404)
     return importe(ctx, cle, _decode_fichier(ctx))
 
 
+def _importe_auto(ctx, octets: bytes) -> dict:
+    """Un dépôt, tout ce qu'il y a dedans — comptes, tiers, écritures…
+
+    Chaque partie est reprise séparément et garde sa ligne au journal des
+    imports : une seule d'entre elles peut être défaite sans emporter les
+    autres. Ce qui attendait n'est rejoué qu'à la fin, quand tout est là.
+    """
+    _, entetes, _rangs = _lit(ctx, octets)
+    trouve = detecte_contenu(entetes)
+    if not trouve["modeles"]:
+        colonnes = ", ".join(str(e).strip() for e in entetes if str(e).strip())
+        if trouve["a_choisir"]:
+            libelles = " ou ".join(MODELES[c]["libelle"]
+                                   for c in trouve["a_choisir"][0])
+            raise ErreurApplicative(
+                "Ce fichier est une liste de factures, mais rien dedans ne dit "
+                f"si ce sont des ventes ou des achats. Choisissez : {libelles}.")
+        raise ErreurApplicative(
+            "Je n'ai pas reconnu ce que contient ce fichier. Ses colonnes "
+            f"sont : {colonnes}. Choisissez le type de données en haut de "
+            "l'écran, ou téléchargez un modèle pour voir les colonnes attendues.")
+
+    bilan, parties = None, []
+    for cle in trouve["modeles"]:
+        partie = importe(ctx, cle, octets, rejouer=False)
+        parties.append({"modele": cle, "libelle": MODELES[cle]["libelle"],
+                        "crees": partie["crees"], "rejetes": partie["rejetes"],
+                        "ignorees": partie["ignorees"],
+                        "completes": partie["completes"],
+                        "en_attente": partie["en_attente"],
+                        "import_id": partie["import_id"]})
+        if bilan is None:
+            bilan = dict(partie)
+            continue
+        for champ in ("crees", "rejetes", "comptabilisees", "ignorees",
+                      "completes", "en_attente", "non_affectes", "rattaches"):
+            bilan[champ] = bilan.get(champ, 0) + partie.get(champ, 0)
+        bilan["anomalies"] = bilan["anomalies"] + partie["anomalies"]
+        for quoi, combien in (partie.get("prealables") or {}).items():
+            bilan["prealables"][quoi] = bilan["prealables"].get(quoi, 0) + combien
+
+    societe_id = ctx.entier("societe_id") or ctx.arg_int("societe")
+    repris = rejoue_attente(ctx, societe_id) if bilan.get("crees") else {}
+    bilan["repris"] = bilan.get("repris", 0) + repris.get("repris", 0)
+    bilan.update({"auto": True, "parties": parties, "libelle": LIBELLE_AUTO,
+                  "aussi_possible": trouve["aussi_possible"]})
+    if bilan.get("crees"):
+        bilan.pop("rien_a_reprendre", None)
+    return bilan
+
+
 def importe(ctx, cle, octets, rejouer=True) -> dict:
     """Écrit ce qui est écrivable, range le reste, rejoue ce qui attendait."""
+    if cle == CLE_AUTO:
+        return _importe_auto(ctx, octets)
     resultat = _analyse(ctx, octets, cle)
 
     # Un fichier n'est plus refusé en bloc parce que neuf lignes sur quatre

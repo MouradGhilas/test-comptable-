@@ -122,6 +122,42 @@ const TUTORIELS = [
         ],
       },
       {
+        titre: 'Déposer un fichier sans savoir quoi choisir',
+        quand: 'Vous avez un fichier et vous voulez qu\'il rentre. Point.',
+        etapes: [
+          '<strong>Paramètres → Import</strong>. Laissez le type de données '
+          + 'sur <strong>« Détection automatique »</strong> — c\'est le choix '
+          + 'par défaut.',
+          'Déposez votre fichier et cliquez sur <strong>Contrôler le '
+          + 'fichier</strong>.',
+          'L\'application vous dit ce qu\'elle a reconnu&nbsp;: '
+          + '<em>« Votre fichier contient : Écritures comptables (39 lignes) · '
+          + 'Tiers (2 lignes) »</em>.',
+          'Cliquez sur <strong>Importer</strong>. Tout entre en une fois, dans '
+          + 'le bon ordre.',
+        ],
+        route: '/parametres/import',
+        pieges: [
+          'Vous n\'avez <b>rien à préparer</b>. Les comptes, journaux et tiers '
+          + 'que votre fichier cite sont créés au passage.',
+          'Mettez tout ce que vous avez dans le même fichier&nbsp;: si vous '
+          + 'ajoutez une colonne <b>Raison sociale</b> à côté de vos codes '
+          + 'tiers, les clients sont repris avec, et rattachés à leurs '
+          + 'écritures. Idem pour le NIF, l\'adresse, le téléphone.',
+          'Deux cas seulement ne se devinent pas, et l\'application vous les '
+          + 'demande au lieu de choisir à votre place&nbsp;: une liste de '
+          + 'factures (ventes ou achats&nbsp;? les colonnes sont les mêmes), '
+          + 'et une balance d\'ouverture (elle produit une écriture '
+          + 'd\'à-nouveaux, à une date que vous choisissez).',
+          'Fichier non reconnu&nbsp;? L\'application affiche les colonnes '
+          + 'qu\'elle a lues. Choisissez alors le type à la main, ou '
+          + 'téléchargez le modèle correspondant pour voir ce qu\'il attend.',
+          'La détection ne devine <b>jamais le contenu d\'une colonne</b>, '
+          + 'seulement son rôle. Un montant mal placé dans votre fichier reste '
+          + 'mal placé&nbsp;: relisez l\'aperçu avant de valider.',
+        ],
+      },
+      {
         titre: 'Reprendre votre journal général tel qu\'il sort d\'Excel',
         quand: 'Vous avez un export de votre ancien logiciel : une ligne par '
              + 'mouvement, avec Débit et Crédit.',
@@ -139,6 +175,14 @@ const TUTORIELS = [
         ],
         route: '/parametres/import',
         pieges: [
+          'Le plus simple&nbsp;: laissez <b>« Détection automatique »</b> '
+          + 'et déposez le fichier. Vous n\'avez pas à choisir « Écritures '
+          + 'comptables » vous-même.',
+          'La colonne <b>« Libellé »</b> de votre journal est le libellé de '
+          + 'l\'écriture, <b>pas le nom du compte</b>. L\'application ne s\'en '
+          + 'sert jamais pour baptiser vos comptes&nbsp;: leur intitulé vient '
+          + 'du plan SCF (compte de rattachement), et ils sont marqués '
+          + '« à compléter ».',
           'La colonne <b>« N° écriture »</b> peut valoir 1 sur toutes les '
           + 'lignes, ou se répéter d\'un mois à l\'autre : ce n\'est pas un '
           + 'problème. L\'application sépare les opérations sur le journal, '

@@ -1697,6 +1697,9 @@ async function montreResultatMaj(conclut) {
 
 /** Fichier choisi par l'utilisateur, gardé entre le contrôle et la validation. */
 let _fichierImport = null;
+//: {clé : libellé} des types de données, pour nommer un type dans un message
+//  sans avoir à repasser la liste des modèles de fonction en fonction.
+let LIBELLES_MODELES = {};
 
 async function ongletImport(zone) {
   const d = await api('/api/import/modeles');
@@ -1793,6 +1796,8 @@ async function ongletImport(zone) {
       <div id="journal-imports"><div class="vide">Chargement…</div></div>`)}`;
 
   _fichierImport = null;
+  LIBELLES_MODELES = Object.fromEntries(
+    (d.modeles || []).map((m) => [m.cle, m.libelle]));
   const choix = $('#import-modele');
   // La balance d'ouverture est la seule à demander une date.
   const majDateReprise = () => {
@@ -2153,6 +2158,50 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
        le crédit sont tous deux remplis est comprise comme un total de
        tableau.</p>` : '';
 
+  // Détection automatique : ce que le fichier contient, avant tout le reste.
+  // C'est la réponse à « qu'est-ce que tu as compris de mon fichier ? », et
+  // elle doit tenir en une phrase lisible sans connaître le logiciel.
+  const parties = d.parties || [];
+  const contenu2 = !d.auto ? '' : (parties.length ? `
+    <div class="message succes">
+      <strong>Votre fichier contient&nbsp;: ${parties.map((p) =>
+        `${ech(p.libelle)} (${p.nb_valides} ligne(s))`).join(' · ')}</strong>
+      Tout sera repris en une fois, dans l'ordre&nbsp;: ${parties.map((p) =>
+        ech(p.libelle)).join(', puis ')}.
+    </div>` : `
+    <div class="message alerte">
+      <strong>Je n'ai pas reconnu ce que contient ce fichier</strong>
+      Ses colonnes sont&nbsp;: ${(d.colonnes_du_fichier || []).map(ech)
+        .join(', ') || '(aucune)'}. Choisissez le type de données ci-dessus,
+      ou téléchargez un modèle pour voir les colonnes attendues.
+    </div>`);
+
+  // Vente ou achat : rien dans le fichier ne le dit. On demande, une fois.
+  const aChoisir = (d.a_choisir || []).length ? `
+    <div class="message alerte">
+      <strong>Ventes ou achats&nbsp;?</strong>
+      Ce fichier est une liste de factures, mais ses colonnes sont les mêmes
+      dans les deux cas. Dites-le, et tout est repris&nbsp;:
+      <div class="rangee" style="margin-top:8px">
+        ${d.a_choisir[0].map((cle) => `<button class="petit-bouton"
+          data-bascule="${ech(cle)}">${ech(LIBELLES_MODELES[cle] || cle)}</button>`)
+          .join('')}
+      </div>
+    </div>` : '';
+
+  const aussi = (d.aussi_possible || []).length ? `
+    <div class="message info">
+      <strong>Ce fichier contient peut-être autre chose</strong>
+      Certaines de ses colonnes ne sont lues par aucune des parties reprises.
+      S'il s'agit d'${ech(LIBELLES_MODELES[d.aussi_possible[0]]
+        || d.aussi_possible[0])}, choisissez ce type de données&nbsp;:
+      <div class="rangee" style="margin-top:8px">
+        ${d.aussi_possible.map((cle) => `<button class="petit-bouton"
+          data-bascule="${ech(cle)}">${ech(LIBELLES_MODELES[cle] || cle)}</button>`)
+          .join('')}
+      </div>
+    </div>` : '';
+
   // Le diagnostic du serveur passe avant tout le reste : quand il tombe,
   // il dit la cause, là où les anomalies ne disent que les symptômes.
   const diagnostic = d.avertissement
@@ -2245,7 +2294,9 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
       + `${anomalies.length} mise(s) de côté`
     : `Importer ${d.nb_valides} ligne(s)`;
 
-  zone.innerHTML = diagnostic + resume + ecarts + prealables + aRemplir + dejaLa + lecture + ignorees
+  zone.innerHTML = contenu2 + aChoisir + aussi + diagnostic
+    + (parties.length || !d.auto ? resume : '')
+    + ecarts + prealables + aRemplir + dejaLa + lecture + ignorees
     + lignesIgnorees + detail + `
     ${modele.startsWith('factures_') ? `
     <label class="rangee" style="margin-top:12px; gap:8px; align-items:center">
@@ -2257,6 +2308,15 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
       ${d.nb_valides || anomalies.length ? `<button class="primaire" id="bouton-importer">
         ${libelleImport}</button>` : ''}
     </div>`;
+
+  // Les boutons qui changent le type de données et relancent le contrôle.
+  zone.querySelectorAll('[data-bascule]').forEach((b) => {
+    b.onclick = () => {
+      const choix = $('#import-modele');
+      if (choix) { choix.value = b.dataset.bascule; choix.onchange?.(); }
+      controleImport(document, b.dataset.bascule);
+    };
+  });
 
   if (!d.nb_valides && !anomalies.length) return;
   $('#bouton-importer', zone).onclick = async () => {
@@ -2302,6 +2362,9 @@ function afficheControleImport(zone, d, modele, contenu, options = {}) {
               + 'grand livre.') : '');
       zone.innerHTML = `<div class="message succes">
         <strong>Import terminé</strong>
+        ${(r.parties || []).length > 1 ? `<div>${r.parties.map((p) =>
+          `${ech(p.libelle)}&nbsp;: ${p.crees} ligne(s)`).join(' · ')}</div>`
+          : ''}
         ${r.crees} ligne(s) enregistrée(s)${
           r.ignorees ? `, ${r.ignorees} déjà enregistrée(s) et laissée(s) de côté` : ''}.
         ${faits.length ? `<div>Créé(s) au passage&nbsp;: ${ech(faits.join(', '))},

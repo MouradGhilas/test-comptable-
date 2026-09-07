@@ -3,6 +3,38 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.16.0
+
+- **On ne choisit plus « le type de données ».** La liste déroulante était une
+  question pour qui connaît le logiciel ; celui qui tient la comptabilité, lui,
+  a un fichier. **« Détection automatique »** est désormais le choix par
+  défaut&nbsp;: on dépose, l'application lit les en-têtes, dit ce qu'elle a
+  reconnu — *« Votre fichier contient : Écritures comptables (39 lignes) »* —
+  et reprend tout.
+- **Un fichier peut contenir plusieurs choses, et elles sont toutes prises.**
+  Un journal auquel on a ajouté une colonne **Raison sociale** donne, en un
+  seul dépôt, les tiers *puis* les écritures — dans cet ordre, pour que les
+  écritures se rattachent aux bons clients.
+- **Un client donné par son code rejoint sa fiche au lieu d'en créer une
+  seconde.** Un tiers né d'un journal n'a pour tout nom que « T00001 ». La
+  liste des clients, qui porte ce code et le vrai nom, le **complète**
+  maintenant : plus de doublon à côté du code.
+- **Le « Libellé » d'un journal ne baptise plus les comptes.** Déposé au plan
+  comptable, il créait des comptes appelés « ACHAT TERRAIN » ou « vers
+  especes ». L'intitulé vient désormais du **compte de rattachement du plan
+  SCF** (512000 → « Banque »), et le compte est marqué « à compléter ».
+- **Deux colonnes cessent d'être obligatoires.** L'**intitulé** d'un compte
+  (il se déduit du plan) et le **type** d'un tiers (repris comme client, marqué
+  « à compléter »). Un fichier qui ne donne que des numéros passe.
+- **Ce qui ne se devine pas est demandé, pas inventé.** Une liste de factures a
+  exactement les mêmes colonnes en vente et en achat&nbsp;: l'application pose
+  la question en deux boutons plutôt que d'écrire un achat au crédit d'un
+  client. Une balance d'ouverture est proposée, jamais appliquée d'office —
+  elle produit une écriture d'à-nouveaux à une date qu'il faut choisir.
+- **Un fichier non reconnu affiche ses colonnes** et renvoie au type à choisir,
+  au lieu de s'arrêter sur « colonnes obligatoires absentes ».
+- Documentation : **« Déposer un fichier sans savoir quoi choisir »**.
+
 ## 1.15.0
 
 - **Son journal exporté passe en entier, sans qu'il ait à le retoucher.** Son
