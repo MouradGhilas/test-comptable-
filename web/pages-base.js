@@ -181,6 +181,7 @@ App.pages.tiers = {
     const q = route.parametres.q || '';
     actionsPage(`<button class="primaire" onclick="editeTiers()">+ Nouveau tiers</button>`
       + boutonImport('tiers', 'Importer des tiers')
+      + boutonExport('tiers', 'Exporter la liste')
       + `<button onclick="telecharge('/api/export/balance-auxiliaire',{type:'${type || 'client'}'})">Balance auxiliaire</button>`);
 
     const d = await charge('/api/tiers', { type, q, limite: 500 });
@@ -1708,14 +1709,19 @@ async function ongletImport(zone) {
   const tableauModeles = (modeles) => `
     <table class="tableau"><thead><tr>
       <th style="width:30%">Données</th>
-      <th>Colonnes attendues</th><th style="width:150px"></th>
+      <th>Colonnes attendues</th><th style="width:220px"></th>
     </tr></thead><tbody>
       ${modeles.map((m) => `<tr>
         <td><strong>${ech(m.libelle)}</strong></td>
         <td class="tres-petit">${m.colonnes.map((c) =>
           c.requis ? `<strong>${ech(c.nom)}</strong>` : ech(c.nom)).join(' · ')}</td>
         <td><button class="petit-bouton" onclick="telechargeModele('${m.cle}')">
-          Télécharger</button></td>
+          Modèle vierge</button>${
+          (d.exportables || []).includes(m.cle) ? `
+          <button class="petit-bouton" data-export="${ech(m.cle)}"
+            onclick="telecharge('/api/export/liste', { modele: this.dataset.export })"
+            title="Le contenu de votre dossier, dans ce même fichier"
+            >Ce que j'ai déjà</button>` : ''}</td>
       </tr>`).join('')}
     </tbody></table>`;
 
@@ -1728,6 +1734,10 @@ async function ongletImport(zone) {
         données, sans toucher à la ligne d'en-têtes. 3. Déposez-le plus bas :
         l'application contrôle tout et vous montre les anomalies
         <em>avant</em> d'enregistrer quoi que ce soit.
+        <div style="margin-top:8px"><strong>Vous avez déjà saisi des
+        données&nbsp;?</strong> « Ce que j'ai déjà » les ressort dans ce même
+        fichier. Corrigez-les sous Excel, redéposez-le&nbsp;: les fiches en
+        place sont complétées, pas dupliquées.</div>
       </div>
       <div class="message succes">
         <strong>Aucun ordre à respecter</strong>
@@ -2029,6 +2039,17 @@ function telechargeModele(cle) {
 function boutonImport(cle, titre) {
   return `<button data-import="${ech(cle)}" data-titre="${ech(titre)}"
     onclick="modaleImport(this.dataset.import, this.dataset.titre)">Importer</button>`;
+}
+
+/**
+ * Ce qui s'importe doit pouvoir ressortir. Le fichier produit porte
+ * exactement les en-têtes du modèle d'import : on le corrige sous Excel et
+ * on le redépose — les fiches déjà là sont complétées, pas dupliquées.
+ */
+function boutonExport(cle, libelle) {
+  return `<button data-export="${ech(cle)}"
+    onclick="telecharge('/api/export/liste', { modele: this.dataset.export })"
+    >${ech(libelle || 'Exporter')}</button>`;
 }
 
 /**

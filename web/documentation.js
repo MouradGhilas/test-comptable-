@@ -122,6 +122,41 @@ const TUTORIELS = [
         ],
       },
       {
+        titre: 'Ressortir vos listes sous Excel, et les remettre',
+        quand: 'Vous voulez relire, corriger en masse, ou garder une copie '
+             + 'de vos tiers, biens, lots, salariés…',
+        etapes: [
+          'Sur l\'écran concerné (Tiers, Biens, Baux, Programmes, Lots, '
+          + 'Contrats VSP, Salariés), cliquez sur <strong>Exporter la '
+          + 'liste</strong>.',
+          'Pour les autres listes&nbsp;: <strong>Paramètres → Import</strong>, '
+          + 'puis le bouton <strong>« Ce que j\'ai déjà »</strong> sur la '
+          + 'ligne du type de données.',
+          'Corrigez le fichier sous Excel — <strong>sans toucher à la ligne '
+          + 'd\'en-têtes</strong>.',
+          'Redéposez-le dans <strong>Paramètres → Import</strong>. Laissez '
+          + '« Détection automatique »&nbsp;: il est reconnu tout seul.',
+        ],
+        route: '/parametres/import',
+        pieges: [
+          'Le fichier exporté porte <b>exactement les en-têtes de l\'import</b>. '
+          + 'C\'est fait pour&nbsp;: il revient dans l\'application tel quel.',
+          'Redéposé sans modification, il ne crée <b>rien</b> — il dit «&nbsp;ces '
+          + 'lignes étaient déjà enregistrées&nbsp;». C\'est une façon sûre de '
+          + 'vérifier que tout est bien là.',
+          'Une fiche que vous complétez dans le fichier est <b>remplie, pas '
+          + 'dupliquée</b>. C\'est ainsi qu\'on donne leur vrai nom aux tiers '
+          + 'que l\'import d\'un journal avait créés avec leur seul code.',
+          'Cet export <b>n\'est pas une sauvegarde</b>&nbsp;: il ne contient que '
+          + 'les colonnes que l\'import sait relire, ni les écritures ni les '
+          + 'pièces jointes. Pour sauvegarder, '
+          + '<b>Paramètres → Sauvegardes</b>.',
+          'Les <b>écritures</b>, les <b>factures</b> et le <b>grand livre</b> '
+          + 'ont leur propre export, depuis leur écran&nbsp;: il en dit bien '
+          + 'plus que la liste des colonnes d\'import.',
+        ],
+      },
+      {
         titre: 'Déposer un fichier sans savoir quoi choisir',
         quand: 'Vous avez un fichier et vous voulez qu\'il rentre. Point.',
         etapes: [

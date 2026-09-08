@@ -669,7 +669,8 @@ async function payeSalaires(periode) {
 async function vueSalaries(zone) {
   const d = await charge('/api/salaries');
   actionsPage('<button class="primaire" onclick="editeSalarie()">+ Salarié</button>'
-    + boutonImport('salaries', 'Importer des salariés'));
+    + boutonImport('salaries', 'Importer des salariés')
+    + boutonExport('salaries', 'Exporter la liste'));
   zone.innerHTML = carte('Salariés', tableau([
     { titre: 'Matricule', cle: 'matricule' },
     { titre: 'Nom', rendu: (s) => `<strong>${ech(s.nom)} ${ech(s.prenom)}</strong>` },

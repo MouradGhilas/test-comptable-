@@ -381,6 +381,39 @@ def parcours(page) -> None:
       "BENALI Karim" in noms and "SARL DJAZAIR" in noms, noms)
 
     # ======================================================================
+    titre("3 quinquies. Ressortir ses tiers")
+    # ======================================================================
+    page.goto(BASE + "/#/tiers", wait_until="networkidle")
+    page.wait_for_timeout(900)
+    v("le bouton « Exporter la liste » est sur l'ecran des tiers",
+      page.query_selector("[data-export='tiers']") is not None,
+      page.content()[:400])
+    with page.expect_download(timeout=30000) as attente:
+        page.click("[data-export='tiers']")
+    fichier = attente.value
+    depose = Path(tempfile.gettempdir()) / "tiers-exportes.xlsx"
+    fichier.save_as(str(depose))
+    v("… il produit bien un classeur", depose.stat().st_size > 2000,
+      depose.stat().st_size)
+
+    # Et ce classeur se redepose : c'est tout l'interet.
+    page.goto(BASE + "/#/parametres/import", wait_until="networkidle")
+    page.wait_for_selector("#import-modele", timeout=15000)
+    v("« Ce que j'ai déjà » est proposé à côté du modèle vierge",
+      page.query_selector("#zone-page [data-export='tiers']") is not None
+      or "Ce que j'ai déjà" in page.content())
+    page.set_input_files("#import-fichier", str(depose))
+    page.click("#bouton-controler")
+    page.wait_for_selector("#import-resultat .message", timeout=20000)
+    lu = page.content()
+    v("… et il est reconnu tout seul comme une liste de tiers",
+      "Votre fichier contient" in lu and "Tiers" in lu,
+      lu[lu.find("import-resultat"):][:300])
+    v("… sans mettre une seule ligne de côté",
+      "mise(s) de côté" not in lu.split("import-resultat")[1][:600],
+      lu.split("import-resultat")[1][:300])
+
+    # ======================================================================
     titre("4. Corriger un exercice mal saisi")
     # ======================================================================
     page.keyboard.press("Escape")

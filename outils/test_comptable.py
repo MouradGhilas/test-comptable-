@@ -51,6 +51,9 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from noyau.tableur import lit_tableau                       # noqa: E402
+
 RACINE = Path(__file__).resolve().parent.parent
 
 
@@ -93,6 +96,8 @@ def fm(centimes):
 
 
 def b64(texte):
+    if isinstance(texte, bytes):          # un classeur, pas du texte
+        return base64.b64encode(texte).decode()
     return base64.b64encode(texte.encode("utf-8")).decode()
 
 
@@ -153,6 +158,10 @@ class Dossier:
                 return contenu, r.headers.get("Content-Type", "")
             texte = contenu.decode()
             return json.loads(texte) if texte else {}
+
+    def telecharge(self, chemin):
+        """Les octets d'un classeur produit par l'application."""
+        return self.appel(chemin, brut=True)[0]
 
     def refuse(self, chemin, corps=None, methode=None):
         """Renvoie le message si la requete est refusee, None si elle passe."""
@@ -4679,6 +4688,114 @@ def suite_depot_libre(dos):
     v("… en disant quoi faire", "colonnes" in (message or "").lower(), message)
 
 
+def suite_ressortir(dos):
+    """Ce qui rentre doit pouvoir ressortir.
+
+    « Mon frere ne peut pas exporter ses tiers. » Il ne le pouvait pas : la
+    liste des tiers n'avait aucun export. Ni les biens, ni les baux, ni les
+    lots — treize listes s'importaient sans jamais ressortir. La reprise
+    etait un aller simple : impossible de relire ce que l'application avait
+    compris, de corriger sous Excel, de redeposer.
+    """
+    dos.appel("/api/installation", {
+        "identifiant": "rs", "mot_de_passe": "motdepasse123",
+        "nom_complet": "Comptable", "raison_sociale": "SARL RESSORTIR",
+        "nif": "000116001234567", "commune": "Alger", "wilaya": "16 Alger"})
+    sid = dos.appel("/api/societes")["societes"][0]["id"]
+
+    # ==================================================================
+    titre("1. La liste des tiers ressort, avec ce qu'on y a mis")
+    # ==================================================================
+    fichier = ("Code;Type;Raison sociale;NIF;Commune\n"
+               "C001;client;BENALI Karim;000116001111111;Alger-Centre\n"
+               "F001;fournisseur;SARL MATERIAUX;000116002222222;Blida\n"
+               "N001;notaire;Maitre AMRANI;000116003333333;Alger\n")
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "tiers", "contenu": b64(fichier),
+        "fichier": "tiers.csv"})
+    v("les trois tiers entrent", r["crees"] == 3, r)
+    v("… « notaire » compris, que le logiciel employait sans l'accepter",
+      len([t for t in dos.appel(f"/api/tiers?societe={sid}")["tiers"]
+           if t["type"] == "notaire"]) == 1)
+
+    octets = dos.telecharge(f"/api/export/liste?societe={sid}&modele=tiers")
+    v("l'export produit un classeur", len(octets) > 2000, len(octets))
+    entetes, rangs = lit_tableau(octets)
+    v("… avec les en-tetes du modele d'import", "Raison sociale" in entetes,
+      entetes)
+    noms = {str(r[entetes.index("Raison sociale")]) for r in rangs}
+    v("… et les trois tiers dedans",
+      {"BENALI Karim", "SARL MATERIAUX", "Maitre AMRANI"} <= noms, noms)
+    v("… le NIF n'est pas perdu en route",
+      "000116001111111" in {str(r[entetes.index("NIF")]) for r in rangs})
+
+    # ==================================================================
+    titre("2. Ce qui sort rentre : redepose, il ne double rien")
+    # ==================================================================
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "auto", "contenu": b64(octets)})
+    v("le fichier exporte est reconnu tout seul",
+      [p["modele"] for p in a["parties"]] == ["tiers"], a.get("parties"))
+    v("… aucune ligne mise de cote", a["nb_rejetes"] == 0, a["nb_rejetes"])
+    v("… elles sont simplement deja la", a["nb_ignorees"] == 3, a)
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "auto", "contenu": b64(octets),
+        "fichier": "tiers.xlsx"})
+    v("rien n'est cree une seconde fois", r["crees"] == 0, r)
+    v("… et le dossier a toujours ses trois tiers",
+      len(dos.appel(f"/api/tiers?societe={sid}")["tiers"]) == 3)
+
+    # ==================================================================
+    titre("3. Corrige sous Excel, il complete au lieu de dupliquer")
+    # ==================================================================
+    corrige = ("Code;Type;Raison sociale;NIF;Commune;Téléphone\n"
+               "C001;client;BENALI Karim;000116001111111;Oran;0550112233\n")
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "tiers", "contenu": b64(corrige),
+        "fichier": "corrige.csv"})
+    tiers = [t for t in dos.appel(f"/api/tiers?societe={sid}")["tiers"]
+             if t["raison_sociale"] == "BENALI Karim"]
+    v("il n'y a toujours qu'un BENALI Karim", len(tiers) == 1, tiers)
+
+    # ==================================================================
+    titre("4. Un lot ne se refuse plus a lui-meme")
+    # ==================================================================
+    # Le numero d'un lot n'est unique que dans son programme : sans cette
+    # cle a deux colonnes, chaque ligne redeposee butait sur « existe deja ».
+    dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "programmes",
+        "contenu": b64("Code;Intitulé\nPRG1;Residence A\nPRG2;Residence B\n"),
+        "fichier": "programmes.csv"})
+    lots = ("Programme;N° lot;Type;Prix de vente;Statut\n"
+            "PRG1;A01;logement;5000000;disponible\n"
+            "PRG2;A01;logement;6000000;disponible\n")
+    r = dos.appel("/api/import/valider", {
+        "societe_id": sid, "modele": "lots", "contenu": b64(lots),
+        "fichier": "lots.csv"})
+    v("le meme numero dans deux programmes fait deux lots",
+      r["crees"] == 2, r)
+    a = dos.appel("/api/import/analyse", {
+        "societe_id": sid, "modele": "lots", "contenu": b64(lots)})
+    v("… et redepose, il ne refuse plus rien", a["nb_rejetes"] == 0, a)
+    v("… il constate simplement qu'ils sont deja la",
+      a["nb_ignorees"] == 2, a)
+
+    octets = dos.telecharge(f"/api/export/liste?societe={sid}&modele=lots")
+    entetes, rangs = lit_tableau(octets)
+    v("l'export des lots donne bien les deux", len(rangs) == 2, rangs)
+    v("… et leur statut est celui du logiciel, pas un autre mot",
+      {str(r[entetes.index("Statut")]) for r in rangs} == {"disponible"},
+      [r[entetes.index("Statut")] for r in rangs])
+
+    # ==================================================================
+    titre("5. Ce qui n'a pas d'export par ce chemin le dit")
+    # ==================================================================
+    message = dos.refuse(f"/api/export/liste?societe={sid}&modele=ecritures")
+    v("les ecritures renvoient a leur propre export",
+      "factures" in (message or "").lower() or "ecritures" in
+      (message or "").lower().replace("é", "e"), message)
+
+
 def suite_exercices(dos):
     """Corriger un exercice mal saisi, ou l'enlever.
 
@@ -4802,6 +4919,8 @@ SUITES = [
      suite_journal_exporte, False),
     ("depot_libre", "Deposer un fichier sans choisir son type",
      suite_depot_libre, False),
+    ("ressortir", "Ce qui rentre doit pouvoir ressortir", suite_ressortir,
+     False),
     ("sante", "Controles de sante du dossier", suite_sante, True),
     ("annuelles", "DAS et etat des clients", suite_annuelles, True),
     ("relances", "Relances clients", suite_relances, False),

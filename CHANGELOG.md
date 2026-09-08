@@ -3,6 +3,43 @@
 Ce que chaque version apporte, en clair. L'application affiche ces notes avant
 et après une mise à jour.
 
+## 1.17.0
+
+- **Treize listes s'importaient sans jamais ressortir.** Les tiers, d'abord —
+  *« mon frère ne peut pas exporter ses tiers »* — mais aussi les biens, les
+  baux, les mandats, les quittances, les programmes, les lots, les contrats
+  VSP, les échéanciers, les salariés, le plan comptable, la trésorerie, les
+  immobilisations. La reprise était un aller simple. **Un bouton « Exporter la
+  liste »** est sur chaque écran, et **« Ce que j'ai déjà »** sur l'écran
+  d'import, à côté du modèle vierge.
+- **Ce qui sort rentre.** Le fichier produit porte **exactement les en-têtes du
+  modèle d'import**. On le corrige sous Excel, on le redépose, il est reconnu
+  tout seul : les fiches en place sont **complétées, pas dupliquées**. Vérifié
+  liste par liste — exporté d'un dossier, réimporté dans un dossier vide, les
+  deux exports sont **identiques ligne pour ligne**.
+
+Cet aller-retour a mis au jour six défauts que rien ne signalait :
+
+- **Un lot ne pouvait pas être réimporté.** Son numéro n'est unique que dans
+  son programme ; l'import ne connaissait que le numéro et refusait chaque
+  ligne — « le lot A01 existe déjà dans ce programme ». L'identité tient
+  désormais au **couple (programme, numéro)**.
+- **Un échéancier VSP redéposé se dédoublait en silence.** Même cause, même
+  correctif : **(contrat, rang)**.
+- **Un lot importé n'apparaissait dans aucun tableau de bord.** L'import
+  l'écrivait « libre » là où toute l'application dit **« disponible »** —
+  il n'était donc jamais compté parmi les lots disponibles. « libre » reste
+  accepté et vaut « disponible ».
+- **Deux types de tiers que le logiciel emploie étaient refusés à l'import** :
+  **notaire** et **administration**.
+- **Le statut « a_encaisser » d'une quittance était refusé**, alors que c'est
+  celui que l'application donne à toute quittance qu'elle émet.
+- **« Nombre de pièces » d'un bien** était attendu comme un nombre quand la
+  base y garde « F3 ».
+- **Les échéances d'un dossier ressortaient avec celles des autres** : la table
+  ne porte pas le dossier, l'export ne passait pas par le contrat.
+- Documentation : **« Ressortir vos listes sous Excel, et les remettre »**.
+
 ## 1.16.0
 
 - **On ne choisit plus « le type de données ».** La liste déroulante était une

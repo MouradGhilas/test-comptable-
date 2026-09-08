@@ -37,7 +37,8 @@ const TYPES_BIEN = [['appartement', 'Appartement'], ['villa', 'Villa'],
 
 async function vueBiens(zone, route) {
   actionsPage('<button class="primaire" onclick="editeBien()">+ Bien</button>'
-    + boutonImport('biens', 'Importer des biens'));
+    + boutonImport('biens', 'Importer des biens')
+    + boutonExport('biens', 'Exporter la liste'));
   const d = await charge('/api/biens', { statut: route.parametres.statut, q: route.parametres.q });
   zone.innerHTML = carte(`${d.biens.length} bien(s) au portefeuille`, tableau([
     { titre: 'Réf.', cle: 'reference', largeur: '80px' },
@@ -269,7 +270,8 @@ async function factureCommission(id) {
 
 async function vueBaux(zone) {
   actionsPage('<button class="primaire" onclick="editeBail()">+ Bail</button>'
-    + boutonImport('baux', 'Importer des baux'));
+    + boutonImport('baux', 'Importer des baux')
+    + boutonExport('baux', 'Exporter la liste'));
   const d = await charge('/api/baux');
   zone.innerHTML = carte('Baux en portefeuille', tableau([
     { titre: 'N°', cle: 'numero' },

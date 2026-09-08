@@ -250,8 +250,11 @@ _COLONNES_FACTURES = [
             synonymes=("perimetre",)),
 ]
 
+#: Tous ceux que l'application sait créer — « notaire » et « administration »
+#: y manquaient, si bien qu'un fichier de tiers exporté du logiciel lui-même
+#: se voyait refuser ses propres lignes.
 TYPES_TIERS = {"client", "fournisseur", "mandant", "locataire", "acquereur",
-               "salarie", "autre"}
+               "salarie", "notaire", "administration", "autre"}
 MODES_REGLEMENT = {"espece", "cheque", "virement", "traite"}
 
 
@@ -500,7 +503,8 @@ MODELES = {
                     synonymes=("code tiers", "code client", "tiers")),
             # Pas obligatoire : une liste de noms sans colonne « Type » doit
             # passer. Ils sont repris comme clients et marqués « à compléter ».
-            Colonne("Type", "client, fournisseur, mandant, locataire, acquereur",
+            Colonne("Type", "client, fournisseur, mandant, locataire, "
+                    "acquereur, salarie, notaire, administration, autre",
                     "client", champ="type", type="minuscule",
                     valeurs=TYPES_TIERS),
             Colonne("Raison sociale", "Nom de la personne ou de l'entreprise",
@@ -584,8 +588,10 @@ MODELES = {
                     synonymes=("type bien", "nature")),
             Colonne("Surface", "Surface en m²", "95", champ="surface",
                     type="surface"),
-            Colonne("Nombre de pièces", "F3 => 3", "3", champ="nb_pieces",
-                    type="entier", synonymes=("pieces", "nb pieces")),
+            # La base garde « F3 » tel quel : la colonne est du texte, et
+            # l'import refusait ce que l'application elle-même y écrit.
+            Colonne("Nombre de pièces", "F3, F4… ou un nombre", "F3",
+                    champ="nb_pieces", synonymes=("pieces", "nb pieces")),
             Colonne("Étage", "Étage", "2", champ="etage", type="entier"),
             Colonne("Adresse", "Adresse du bien", "14 rue des Frères Aïssou",
                     champ="adresse"),
@@ -708,7 +714,9 @@ MODELES = {
             "",
             "« Période » s'écrit AAAA-MM (2026-03) ou 03/2026.",
             "",
-            "« Statut » accepte : emise, encaissee, reversee, impayee.",
+            "« Statut » accepte : a_encaisser, emise, encaissee, reversee,",
+            "impayee. Une quittance émise par l'application est « a_encaisser »",
+            "tant qu'elle n'a rien reçu.",
             "Laissez « Montant encaissé » vide pour un loyer impayé.",
         ],
         "colonnes": [
@@ -739,9 +747,11 @@ MODELES = {
             Colonne("Date d'encaissement", "Date de perception", "05/03/2026",
                     champ="date_encaissement", type="date",
                     synonymes=("date encaissement",)),
-            Colonne("Statut", "emise, encaissee, reversee, impayee", "encaissee",
+            Colonne("Statut", "a_encaisser, emise, encaissee, reversee, impayee",
+                    "encaissee",
                     champ="statut", type="minuscule",
-                    valeurs={"emise", "encaissee", "reversee", "impayee"}),
+                    valeurs={"a_encaisser", "emise", "encaissee", "reversee",
+                             "impayee"}),
             Colonne("Périmètre", "Déclaré ou Non déclaré", "Déclaré",
                     champ="perimetre", synonymes=("perimetre",)),
         ],
@@ -798,15 +808,22 @@ MODELES = {
     },
     "lots": {
         "libelle": "Lots des programmes", "groupe": "Promotion immobilière",
+        # Un numéro de lot n'est unique que dans son programme : c'est le
+        # couple qui fait l'identité, sans quoi le fichier ne se redépose
+        # jamais — chaque ligne butait sur « ce lot existe déjà ».
         "table": "lots", "cle_unique": None,
-        "defauts": {"statut": "libre"},
+        "cle_composee": ("programme_id", "numero"),
+        # « disponible » est le mot que l'application emploie partout ailleurs :
+        # un lot importé « libre » ne se comptait dans aucun tableau de bord.
+        "defauts": {"statut": "disponible"},
         "notice": [
             "Un lot = un logement ou un local à vendre.",
             "",
             "Le programme est créé s'il est inconnu, avec son seul code : le",
             "fichier des programmes le complétera, avant ou après celui-ci.",
             "",
-            "« Statut » accepte : libre, reserve, vendu, livre.",
+            "« Statut » accepte : disponible, reserve, vendu, livre.",
+            "« libre » est accepté et vaut « disponible ».",
             "",
             "Le numéro doit être unique à l'intérieur d'un programme.",
         ],
@@ -829,9 +846,10 @@ MODELES = {
             Colonne("Prix de vente", "Prix du lot", "8500000",
                     champ="prix_vente", type="montant",
                     synonymes=("prix", "prix vente")),
-            Colonne("Statut", "libre, reserve, vendu, livre", "libre",
+            Colonne("Statut", "disponible, reserve, vendu, livre", "disponible",
                     champ="statut", type="minuscule",
-                    valeurs={"libre", "reserve", "vendu", "livre"}),
+                    valeurs={"disponible", "libre", "reserve", "vendu",
+                             "livre"}),
         ],
     },
     "contrats_vsp": {
@@ -886,7 +904,10 @@ MODELES = {
     },
     "echeances_vsp": {
         "libelle": "Échéanciers VSP", "groupe": "Promotion immobilière",
+        # Une échéance n'existe que dans son contrat, et son rang l'y situe.
+        # Sans ce couple, redéposer l'échéancier le doublait en silence.
         "table": "echeances_vsp", "cle_unique": None,
+        "cle_composee": ("contrat_id", "ordre"),
         "defauts": {"statut": "a_venir"},
         "sans_societe": True,
         "notice": [
@@ -979,6 +1000,168 @@ def construit_modele(cle: str) -> bytes:
     return classeur.octets()
 
 
+# ---------------------------------------------------------------------------
+# Ressortir ce qu'on a déjà : l'export, exactement dans la forme de l'import
+# ---------------------------------------------------------------------------
+#
+# Tout ce qui s'importe doit pouvoir ressortir. Sans quoi la reprise est un
+# aller simple : on ne peut ni relire ce que l'application a compris, ni
+# corriger sous Excel, ni redéposer. Le fichier produit porte exactement les
+# en-têtes du modèle d'import — il se redépose tel quel, et complète les
+# fiches qui n'avaient que leur nom.
+
+#: Depuis l'identifiant stocké, ce que le fichier écrivait : table et colonne.
+RETOUR_REFERENCE = {
+    "tiers": ("tiers", "raison_sociale"),
+    "bien": ("biens", "reference"),
+    "programme": ("programmes", "code"),
+    "lot": ("lots", "numero"),
+    "bail": ("baux", "numero"),
+    "tresorerie": ("comptes_tresorerie", "code"),
+    "contrat_vsp": ("contrats_vsp", "numero"),
+}
+
+#: Ce qui s'exporte par ce chemin : les modèles adossés à une table. Les
+#: écritures, les factures et les règlements ont leur propre export, qui dit
+#: bien plus que la liste de leurs colonnes d'import.
+def exportables() -> list[str]:
+    return [cle for cle in ORDRE_AFFICHAGE
+            if cle in MODELES and MODELES[cle].get("table")]
+
+
+def _portee_societe(modele: dict, societe_id: int) -> tuple[str, tuple]:
+    """Comment ne voir que le dossier courant, table par table.
+
+    Certaines tables ne portent pas `societe_id` : une échéance appartient à
+    son contrat, qui appartient au dossier. Sans ce détour, l'export d'un
+    dossier ressortait aussi les échéances des autres.
+    """
+    table = modele["table"]
+    if not modele.get("sans_societe"):
+        return "WHERE societe_id = ?", (societe_id,)
+    for colonne in modele["colonnes"]:
+        parent = RETOUR_REFERENCE.get(colonne.reference or "")
+        if parent and colonne.champ:
+            return (f"WHERE {colonne.champ} IN (SELECT id FROM {parent[0]} "
+                    "WHERE societe_id = ?)", (societe_id,))
+    return "", ()
+
+
+def _texte_reference(reference: str, valeur) -> str:
+    """Le nom que le fichier portait, retrouvé depuis ce qui est stocké."""
+    if valeur in (None, ""):
+        return ""
+    if reference == "compte":
+        return str(valeur)               # le numéro est stocké tel quel
+    table, champ = RETOUR_REFERENCE.get(reference, (None, None))
+    if not table:
+        return str(valeur)
+    return db.valeur(f"SELECT {champ} FROM {table} WHERE id = ?",
+                     (valeur,), "") or ""
+
+
+def _cellule_export(colonne, ligne: dict):
+    """Une valeur de la base, remise dans la forme que l'import relit."""
+    if not colonne.champ:
+        return tableur.texte("")
+    valeur = ligne.get(colonne.champ)
+    if colonne.reference:
+        return tableur.texte(_texte_reference(colonne.reference, valeur))
+    if valeur in (None, ""):
+        return tableur.texte("")
+    if colonne.champ == "primes":
+        valeur = _somme_primes(valeur)
+    if colonne.type in ("montant", "surface", "quantite", "taux", "entier"):
+        # Une colonne peut porter autre chose que ce que le modèle annonce —
+        # « F3 » là où on attend un nombre. Le fichier doit sortir quand
+        # même : on écrit ce qu'il y a, l'import le relira tel quel.
+        if not isinstance(valeur, (int, float)):
+            return tableur.texte(str(valeur))
+        if colonne.type in ("montant", "surface"):
+            return tableur.monnaie(valeur)
+        if colonne.type == "quantite":
+            return tableur.nombre(valeur / 1000)
+        if colonne.type == "taux":
+            return tableur.nombre(valeur / 100)  # centièmes de % -> %
+        return tableur.nombre(valeur)
+    if colonne.type == "date":
+        return tableur.date_cel(valeur)
+    if colonne.type == "oui_non":
+        return tableur.texte("oui" if valeur else "non")
+    return tableur.texte(str(valeur))
+
+
+def _somme_primes(valeur):
+    """La fiche du salarié garde ses primes en détail ; l'import, un total."""
+    if isinstance(valeur, (int, float)):
+        return valeur
+    try:
+        lignes = json.loads(valeur)
+    except (TypeError, ValueError):
+        return valeur
+    if not isinstance(lignes, list):
+        return valeur
+    return sum(int(p.get("montant") or 0) for p in lignes
+               if isinstance(p, dict))
+
+
+def construit_export(societe_id: int, cle: str) -> bytes:
+    """Le contenu du dossier, dans le fichier même que l'import attend."""
+    modele = MODELES[cle]
+    table = modele["table"]
+    colonnes_sql = db.colonnes(table)
+    filtre, params = _portee_societe(modele, societe_id)
+    ordre = (modele.get("cle_unique")
+             or (", ".join(modele["cle_composee"])
+                 if modele.get("cle_composee") else None)
+             or ("id" if "id" in colonnes_sql else None))
+    lignes = db.lignes(f"SELECT * FROM {table} {filtre}"
+                       + (f" ORDER BY {ordre}" if ordre else ""), params)
+
+    classeur = tableur.Classeur()
+    feuille = classeur.feuille("Données")
+    feuille.entetes(*[c.nom for c in modele["colonnes"]])
+    feuille.largeurs_auto(*[max(12, min(34, len(c.nom) + 6))
+                            for c in modele["colonnes"]])
+    for ligne in lignes:
+        feuille.ajoute(*[_cellule_export(c, ligne)
+                         for c in modele["colonnes"]])
+
+    notice = classeur.feuille("Notice")
+    notice.titre(f"{modele['libelle']} — {len(lignes)} ligne(s)")
+    notice.vide()
+    for texte in [
+        "Ce fichier porte les en-têtes attendus par l'import : il se",
+        "redépose tel quel dans Paramètres > Import de données.",
+        "",
+        "Corrigez ce que vous voulez sous Excel, puis redéposez-le : les",
+        "fiches déjà là sont complétées, pas dupliquées. Les lignes que vous",
+        "n'avez pas touchées sont simplement signalées « déjà là ».",
+        "",
+        "Les colonnes que l'import n'utilise pas ne figurent pas ici : ce",
+        "fichier est fait pour revenir dans l'application, pas pour tenir",
+        "lieu de sauvegarde. Pour cela, Paramètres > Sauvegardes.",
+    ]:
+        notice.ajoute(tableur.texte(texte))
+    return classeur.octets()
+
+
+@route("GET", "/api/export/liste")
+def api_export_liste(ctx):
+    societe_id = ctx.arg_int("societe")
+    if not societe_id:
+        raise ErreurApplicative("Aucun dossier sélectionné.")
+    cle = ctx.arg("modele") or ""
+    if cle not in MODELES or not MODELES[cle].get("table"):
+        raise ErreurApplicative(
+            "Cette liste n'a pas d'export par ce chemin. Les écritures, les "
+            "factures et les règlements ont le leur, depuis leur écran.", 404)
+    return Reponse(
+        construit_export(societe_id, cle),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        nom_fichier=f"{cle}.xlsx")
+
+
 @route("GET", "/api/import/modeles")
 def api_modeles(ctx):
     return {
@@ -986,6 +1169,7 @@ def api_modeles(ctx):
         # Ce que l'import crée de lui-même, et les quelques renvois qui
         # restent exigés — pour que l'écran le dise sans les énumérer à la main.
         "auto": {"cle": CLE_AUTO, "libelle": LIBELLE_AUTO},
+        "exportables": exportables(),
         "creables": sorted(LIBELLES_REFERENCE[r] for r in CREABLES),
         "exiges": [{"libelle": LIBELLES_REFERENCE[r], "pourquoi": p.lstrip(" —")}
                    for r, p in POURQUOI_EXIGE.items()],
@@ -1112,7 +1296,9 @@ def _tiers_id(societe_id: int, nom: str):
 
 #: Compte collectif à donner au tiers créé, selon sa nature.
 COMPTES_PAR_TYPE = {"client": "411", "fournisseur": "401",
-                    "mandant": "4671", "salarie": "421", "autre": "411"}
+                    "mandant": "4671", "salarie": "421", "acquereur": "411",
+                    "locataire": "411", "notaire": "401",
+                    "administration": "401", "autre": "411"}
 
 #: Compte collectif -> nature du tiers qui s'y rattache.
 TYPES_PAR_COLLECTIF = (
@@ -1295,10 +1481,18 @@ def cree_manquants(societe_id: int, a_creer: dict, utilisateur=None) -> dict:
 # Contrôle générique d'une table
 # ---------------------------------------------------------------------------
 
+def _identite(donnees: dict, cles) -> str:
+    """La clé qui dit « c'est la même fiche », sur une colonne ou sur deux."""
+    return "\x1f".join(str(donnees.get(c, "")).strip().lower() for c in cles)
+
+
 def analyse_generique(societe_id, rangs, association, modele, cle_modele):
     """Contrôle et prépare les lignes d'une table décrite de façon déclarative."""
     prets, anomalies, apercu, ignorees = [], [], [], []
     cle_unique = modele.get("cle_unique")
+    # L'identité d'une fiche tient parfois à deux colonnes : un numéro de lot
+    # n'existe que dans son programme, une échéance que dans son contrat.
+    cles = modele.get("cle_composee") or ((cle_unique,) if cle_unique else ())
     table = modele["table"]
     # Deux situations que l'on confondait, et qui n'appellent pas la même
     # réponse : l'élément est déjà enregistré — il n'y a rien à faire, ce
@@ -1309,15 +1503,16 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
     # arrive, il doit la remplir, pas passer son chemin : c'est ce qui rend
     # l'ordre des imports indifférent.
     deja_en_base: dict = {}
-    if cle_unique:
+    if cles:
         a_completer = "incomplet" in db.colonnes(table)
+        filtre, portee = _portee_societe(modele, societe_id)
         for r in db.lignes(
-                f"SELECT id, {cle_unique}"
+                f"SELECT id, {', '.join(cles)}"
                 + (", incomplet" if a_completer else "")
-                + f" FROM {table} WHERE societe_id = ?", (societe_id,)):
-            if r[cle_unique] is None:
+                + f" FROM {table} {filtre}", portee):
+            if any(r[c] is None for c in cles):
                 continue
-            deja_en_base[str(r[cle_unique]).lower()] = (
+            deja_en_base[_identite(r, cles)] = (
                 r["id"], bool(r["incomplet"]) if a_completer else False)
 
     # Le rattachement : une seconde façon de retrouver une fiche déjà là.
@@ -1410,10 +1605,12 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
                     date_illisible(valeur) if colonne.type == "date"
                     else f"« {colonne.nom} » : valeur « {valeur} » illisible")
 
-        reference = (str(enregistrement.get(cle_unique, "")).lower()
-                     if cle_unique and not erreurs else "")
-        affichee = (brut.get(_nom_de_champ(modele, cle_unique))
-                    if cle_unique else "")
+        reference = (_identite(enregistrement, cles)
+                     if cles and not erreurs
+                     and all(enregistrement.get(c) not in (None, "")
+                             for c in cles) else "")
+        affichee = " ".join(
+            str(brut.get(_nom_de_champ(modele, c)) or "") for c in cles).strip()
         if reference and reference in vus_dans_le_fichier:
             # Le même compte cité deux fois dans un fichier, ce n'est pas une
             # faute : c'est un fichier tiré d'un journal, où chaque compte
@@ -1495,8 +1692,8 @@ def analyse_generique(societe_id, rangs, association, modele, cle_modele):
                 "nb_valides": len(prets), "a_creer": manquants.resume(),
                 "nb_completes": completes,
                 "nb_rejetes": len(apercu) - len(prets) - len(ignorees)}
-    diagnostic = _fichier_suspect(modele, cle_unique, vus_dans_le_fichier,
-                                  len(apercu))
+    diagnostic = _fichier_suspect(modele, cle_unique if len(cles) == 1 else None,
+                                  vus_dans_le_fichier, len(apercu))
     if diagnostic:
         resultat["avertissement"] = diagnostic
     return resultat
@@ -1588,14 +1785,10 @@ def _controles_specifiques(societe_id, cle_modele, brut, enregistrement) -> list
             enregistrement["type"] = "client"
             enregistrement["incomplet"] = 1
     elif cle_modele == "lots":
-        # Le numéro d'un lot n'est unique qu'à l'intérieur de son programme.
-        programme_id = enregistrement.get("programme_id")
-        numero = enregistrement.get("numero")
-        if programme_id and numero and db.ligne(
-                "SELECT id FROM lots WHERE societe_id = ? AND programme_id = ? "
-                "AND numero = ? COLLATE NOCASE",
-                (societe_id, programme_id, numero)):
-            erreurs.append(f"le lot {numero} existe déjà dans ce programme")
+        # Le doublon est vu plus haut, par la clé composée (programme, numéro) :
+        # un lot déjà là est « déjà enregistré », plus une ligne refusée.
+        if enregistrement.get("statut") == "libre":
+            enregistrement["statut"] = "disponible"
     elif cle_modele == "salaries":
         # La colonne « Primes » du fichier est un simple montant ; la fiche du
         # salarié, elle, porte une liste détaillée (libellé, soumis CNAS,
